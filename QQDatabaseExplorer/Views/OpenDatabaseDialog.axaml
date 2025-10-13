@@ -1,0 +1,48 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+        mc:Ignorable="d"
+        Width="400"
+        Height="300"
+        x:Class="QQDatabaseExplorer.OpenDatabaseDialog"
+        Title="打开数据库"
+        x:DataType="vm:OpenDatabaseDialogViewModel"
+        WindowStartupLocation="CenterOwner">
+
+    <Border Padding="8">
+        <Grid RowDefinitions="* Auto">
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <DockPanel>
+                    <TextBlock Text="数据库路径: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding DatabaseFilePath}" />
+                </DockPanel>
+                <DockPanel>
+                    <TextBlock Text="数据库类型: " VerticalAlignment="Center" />
+                    <ComboBox ItemsSource="{Binding DatabaseTypes}"
+                              DisplayMemberBinding="{Binding Value}" SelectedValueBinding="{Binding Key}" SelectedValue="{Binding DatabaseType}" />
+                </DockPanel>
+                <DockPanel ToolTip.Tip="数据库密码, 如果数据库没有加密可以不用填">
+                    <TextBlock Text="数据库密码: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding Key}" />
+                </DockPanel>
+                <DockPanel ToolTip.Tip="自动根据NtUid和Rand来获取数据库密码, Rand自动从数据库头部获取">
+                    <TextBlock Text="NtUid: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding NtUid}" />
+                </DockPanel>
+                <DockPanel ToolTip.Tip="QQAndroid数据库的Rand可以自动从数据库头部获取, WindowsQQNT无法获取">
+                    <TextBlock Text="Rand: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding Rand}" />
+                </DockPanel>
+            </StackPanel>
+            <DockPanel Grid.Row="1">
+                <Button DockPanel.Dock="Left" Content="登录QQ自动获取Key" Command="{Binding FindDatabaseKeyCommand}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                    <Button Content="确定" Command="{Binding Ok}" />
+                    <Button Content="取消" Command="{Binding Cancel}" />
+                </StackPanel>
+            </DockPanel>
+        </Grid>
+    </Border>
+</Window>

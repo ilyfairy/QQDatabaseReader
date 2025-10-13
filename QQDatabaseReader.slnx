@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="QQDatabaseExplorer.Desktop/QQDatabaseExplorer.Desktop.csproj" />
+  <Project Path="QQDatabaseExplorer/QQDatabaseExplorer.csproj" />
+  <Project Path="QQDatabaseReader/QQDatabaseReader.csproj" />
+  <Project Path="QQDatabaseKeyFinder/QQDatabaseKeyFinder.csproj" Id="a6ed6b99-dfae-450b-8b92-6b310842e6fd" />
+</Solution>

@@ -1,0 +1,105 @@
+<UserControl
+    x:Class="QQDatabaseExplorer.Views.MainView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:QQDatabaseExplorer.Models"
+    xmlns:qqdb="using:QQDatabaseReader.Database"
+    xmlns:vm="clr-namespace:QQDatabaseExplorer.ViewModels"
+    d:DesignHeight="500"
+    d:DesignWidth="800"
+    x:DataType="vm:MainViewModel"
+    DragDrop.AllowDrop="True"
+    mc:Ignorable="d"
+    DragDrop.Drop="UserControl_Drop">
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <UserControl.Styles>
+        <Styles>
+            <Style Selector="TabItem">
+                <Setter Property="Padding" Value="4" />
+            </Style>
+        </Styles>
+    </UserControl.Styles>
+
+    <TabControl
+        Padding="0"
+        TabIndex="{Binding TabIndex, Mode=TwoWay}"
+        TabStripPlacement="Left">
+
+        <TabItem>
+            <TabItem.Header>
+                <Image Width="32">
+                    <Image.Source>
+                        <SvgImage Css="* { fill: #777; }" Source="/Assets/message.svg" />
+                    </Image.Source>
+                </Image>
+            </TabItem.Header>
+
+            <Grid ColumnDefinitions="200 5 *">
+                <ListBox
+                    Grid.Column="0"
+                    ItemsSource="{Binding Groups}"
+                    SelectedItem="{Binding SelectedGroup}">
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="qqdb:QQGroup">
+                            <TextBlock Text="{Binding GroupName}" />
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+
+                <GridSplitter Grid.Column="1" />
+
+                <Border Grid.Column="2" Padding="8">
+                    <ScrollViewer Name="MessageScrollViewer">
+                        <StackPanel>
+                            <ItemsControl ItemsSource="{Binding Messages}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Vertical" Spacing="4" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.DataTemplates>
+                                    <DataTemplate DataType="models:AvaQQMessage">
+                                        <StackPanel Orientation="Vertical" Spacing="4">
+                                            <TextBlock
+                                                FontSize="12"
+                                                FontWeight="SemiBold"
+                                                Foreground="#666"
+                                                Text="{Binding Name}" />
+                                            <Border
+                                                Margin="12,0,0,0"
+                                                Padding="8"
+                                                HorizontalAlignment="Left"
+                                                BorderBrush="#AAAAAAAA"
+                                                BorderThickness="1"
+                                                CornerRadius="8">
+                                                <SelectableTextBlock
+                                                    HorizontalAlignment="Left"
+                                                    Text="{Binding DisplayText}"
+                                                    TextWrapping="Wrap" />
+                                            </Border>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.DataTemplates>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </TabItem>
+
+        <TabItem>
+            <TabItem.Header>
+                <Image Width="32">
+                    <Image.Source>
+                        <SvgImage Css="* { fill: #777; }" Source="/Assets/database.svg" />
+                    </Image.Source>
+                </Image>
+            </TabItem.Header>
+        </TabItem>
+    </TabControl>
+</UserControl>
