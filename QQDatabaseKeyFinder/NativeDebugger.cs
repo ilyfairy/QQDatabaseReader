@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace QQNTDatabaseKeyFinder;
+namespace QQDatabaseKeyFinder;
 
 public class NativeDebugger
 {

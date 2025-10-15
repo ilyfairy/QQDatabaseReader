@@ -1,4 +1,4 @@
-# QQNTDatabaseReader
+# QQDatabaseReader
 
 QQNT数据库读取
 
@@ -8,11 +8,14 @@ QQNT数据库读取
 
 ## 数据库密码
 
+
+### Windows QQNT
+
 数据库密码可以通过QQDatabaseKeyFinder来自动获取, 或者可以手动用调试器来获取
 
-### 手动找 QQNT Windows 数据库密码
+手动找 QQNT Windows 数据库密码:
 
-- 用x64dbg打开一个新的QQ进程(C:\Program Files\Tencent\QQNT\QQ.exe), 或者附加进程, 进入到QQ的登录界面
+- 用x64dbg打开一个新的QQ进程(C:\Program Files\Tencent\QQNT\QQ.exe), 或者附加进程, 进入到QQ的登录界面(需要关掉自动登录)
 - 等到模块列表里有这个模块: `wrapper.node`
 - 然后转到CPU, 右键->搜索->所有用户模块->字符串, 搜索`nt_sqlite3_key_v2` (这个字符串在`wrapper.node`模块的`.rdata`段里)
 - 找到`nt_sqlite3_key_v2: db=%p zDb=%s`, 右键选择切换断点或者按F2来切换断点, 设置上断点
@@ -24,6 +27,13 @@ QQNT数据库读取
 
 ![断点触发](./x64dbg_qqnt2.png)
 
+### Anroid(QQNT架构)
+
+TODO
+
+### 旧版QQ, QQTIM (非NT架构)
+
+TODO
 
 ## 鸣谢
 - https://github.com/mobyw/GroupChatAnnualReport
@@ -31,3 +41,4 @@ QQNT数据库读取
 - https://github.com/artiga033/ntdb_unwrap
 - https://docs.aaqwq.top/view/db_file_analysis/
 - https://blog.reincarnatey.net/2024/0707-qqnt-history-export/
+- https://github.com/QQBackup/qq-win-db-key

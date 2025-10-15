@@ -8,6 +8,9 @@ using Avalonia.Input;
 using QQDatabaseExplorer.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseReader;
+using QQDatabaseExplorer.Services;
+using CommunityToolkit.Mvvm.Messaging;
+using QQDatabaseExplorer.Models.Messenger;
 
 namespace QQDatabaseExplorer.Views;
 
@@ -15,14 +18,15 @@ public partial class MainView : UserControl
 {
     private readonly IServiceProvider _serviceProvider;
 
-    public MainViewModel ViewModel { get; }
-
-    public MainView(MainViewModel mainViewModel, IServiceProvider serviceProvider)
+    public MainView(MainViewModel mainViewModel, IServiceProvider serviceProvider, MessageTab messageTab, DatabaseTab databaseTab)
     {
-        ViewModel = mainViewModel;
-        _serviceProvider = serviceProvider;
         DataContext = mainViewModel;
+        _serviceProvider = serviceProvider;
+
         InitializeComponent();
+
+        this.messageTab.Content = messageTab;
+        this.databaseTab.Content = databaseTab;
     }
 
 
@@ -63,6 +67,7 @@ public partial class MainView : UserControl
     //    }
     //}
 
+
     private async void UserControl_Drop(object? sender, DragEventArgs e)
     {
         var file = e.DataTransfer.TryGetFiles()?.FirstOrDefault();
@@ -77,40 +82,6 @@ public partial class MainView : UserControl
             vm.DatabaseFilePath = file.Path.LocalPath;
 
             await dialog.ShowDialog(TopLevel.GetTopLevel(this) as Window);
-
-            if (!vm.IsOpen)
-                return;
-
-            if (string.IsNullOrWhiteSpace(vm.Key))
-            {
-                if(!string.IsNullOrWhiteSpace(vm.NtUid) && !string.IsNullOrWhiteSpace(vm.Rand))
-                {
-                    vm.Key = RawDatabase.GetQQKey(vm.NtUid, vm.Rand);
-                }
-            }
-
-            if (vm.DatabaseType is Models.QQDatabaseType.Message)
-            {
-                if (string.IsNullOrWhiteSpace(vm.Key))
-                {
-                    ViewModel.OpenMessageDatabase(vm.DatabaseFilePath);
-                }
-                else
-                {
-                    ViewModel.OpenMessageDatabase(vm.DatabaseFilePath, vm.Key);
-                }
-            }
-            else if (vm.DatabaseType is Models.QQDatabaseType.GroupInfo)
-            {
-                if (string.IsNullOrWhiteSpace(vm.Key))
-                {
-                    ViewModel.OpenGroupInfoDatabase(vm.DatabaseFilePath);
-                }
-                else
-                {
-                    ViewModel.OpenGroupInfoDatabase(vm.DatabaseFilePath, vm.Key);
-                }
-            }
         }
     }
 }

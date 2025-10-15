@@ -2,12 +2,12 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
-
 using QQDatabaseExplorer.ViewModels;
 using QQDatabaseExplorer.Views;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using QQDatabaseExplorer.Services;
 
 namespace QQDatabaseExplorer;
 
@@ -24,13 +24,24 @@ public partial class App : Application
     {
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
 
+        builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
+        builder.Services.AddSingleton<QQDatabaseService>();
+
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddSingleton<MainView>();
         builder.Services.AddSingleton<MainViewModel>();
+
+        builder.Services.AddScoped<MessageTab>();
+        builder.Services.AddScoped<MessageTabViewModel>();
+
+        builder.Services.AddScoped<DatabaseTab>();
+        builder.Services.AddScoped<DatabaseTabViewModel>();
+
         builder.Services.AddScoped<OpenDatabaseDialog>();
         builder.Services.AddScoped<OpenDatabaseDialogViewModel>();
 
-        builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
+        builder.Services.AddScoped<ExportDatabaseDialog>();
+        builder.Services.AddScoped<ExportDatabaseDialogViewModel>();
 
         Host = builder.Build();
 

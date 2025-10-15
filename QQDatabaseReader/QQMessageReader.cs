@@ -6,11 +6,13 @@ using QQDatabaseReader.Database;
 
 namespace QQDatabaseReader;
 
-public class QQGroupInfoReader : IDisposable
+public class QQGroupInfoReader : IQQDatabase
 {
     public QQGroupInfoDbContext DbContext { get; private set; } = null!;
 
     public RawDatabase RawDatabase { get; }
+    public QQDatabaseType DatabaseType => QQDatabaseType.GroupInfo;
+    public string DatabaseFilePath => RawDatabase.DatabaseFilePath;
 
     public QQGroupInfoReader(string databaseFilePath, bool useVFS = false)
     {
@@ -37,11 +39,14 @@ public class QQGroupInfoReader : IDisposable
     }
 }
 
-public class QQMessageReader : IDisposable
+public class QQMessageReader : IQQDatabase
 {
     public QQMessageDbContext DbContext { get; private set; } = null!;
 
     public RawDatabase RawDatabase { get; init; }
+    public QQDatabaseType DatabaseType => QQDatabaseType.Message;
+
+    public string DatabaseFilePath => RawDatabase.DatabaseFilePath;
 
     public QQMessageReader(string databaseFilePath, bool useVFS = false)
     {

@@ -23,15 +23,15 @@
                     <ComboBox ItemsSource="{Binding DatabaseTypes}"
                               DisplayMemberBinding="{Binding Value}" SelectedValueBinding="{Binding Key}" SelectedValue="{Binding DatabaseType}" />
                 </DockPanel>
-                <DockPanel ToolTip.Tip="数据库密码, 如果数据库没有加密可以不用填">
+                <DockPanel ToolTip.Tip="数据库密码, 如果数据库没有加密可以不用填, 对于AndroidQQNT 可以通过NtUid和Rand来自动计算出Key">
                     <TextBlock Text="数据库密码: " VerticalAlignment="Center" />
                     <TextBox Text="{Binding Key}" />
                 </DockPanel>
-                <DockPanel ToolTip.Tip="自动根据NtUid和Rand来获取数据库密码, Rand自动从数据库头部获取">
+                <DockPanel ToolTip.Tip="[AndroidQQNT]">
                     <TextBlock Text="NtUid: " VerticalAlignment="Center" />
                     <TextBox Text="{Binding NtUid}" />
                 </DockPanel>
-                <DockPanel ToolTip.Tip="QQAndroid数据库的Rand可以自动从数据库头部获取, WindowsQQNT无法获取">
+                <DockPanel ToolTip.Tip="[AndroidQQNT] 可以自动从数据库头部获取">
                     <TextBlock Text="Rand: " VerticalAlignment="Center" />
                     <TextBox Text="{Binding Rand}" />
                 </DockPanel>

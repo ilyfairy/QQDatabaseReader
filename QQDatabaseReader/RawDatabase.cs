@@ -154,164 +154,6 @@ public class RawDatabase : IDisposable
     }
 
     /// <summary>
-    /// 打印数据库中所有的索引信息
-    /// </summary>
-    public void PrintAllIndexes()
-    {
-        Console.WriteLine("=== 数据库索引信息 ===");
-        Console.WriteLine();
-
-        // 1. 获取所有表名
-        var tables = new List<string>();
-        string getTablesSQL = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;";
-        
-        raw.sqlite3_prepare_v2(Database, getTablesSQL, out var tablesStmt);
-        while (raw.sqlite3_step(tablesStmt) == raw.SQLITE_ROW)
-        {
-            var tableName = raw.sqlite3_column_text(tablesStmt, 0).utf8_to_string();
-            tables.Add(tableName);
-        }
-        raw.sqlite3_finalize(tablesStmt);
-
-        Console.WriteLine($"找到 {tables.Count} 个用户表:");
-        foreach (var table in tables)
-        {
-            Console.WriteLine($"  - {table}");
-        }
-        Console.WriteLine();
-
-        // 2. 获取所有索引的基本信息
-        Console.WriteLine("=== 所有索引列表 ===");
-        string getAllIndexesSQL = @"
-            SELECT 
-                name as index_name,
-                tbl_name as table_name,
-                sql as create_sql,
-                CASE WHEN [unique] = 1 THEN 'UNIQUE' ELSE 'NON-UNIQUE' END as uniqueness
-            FROM sqlite_master 
-            WHERE type='index' 
-            ORDER BY tbl_name, name;";
-        
-        raw.sqlite3_prepare_v2(Database, getAllIndexesSQL, out var indexesStmt);
-        int indexCount = 0;
-        
-        while (raw.sqlite3_step(indexesStmt) == raw.SQLITE_ROW)
-        {
-            indexCount++;
-            var indexName = raw.sqlite3_column_text(indexesStmt, 0).utf8_to_string();
-            var tableName = raw.sqlite3_column_text(indexesStmt, 1).utf8_to_string();
-            var createSQL = raw.sqlite3_column_text(indexesStmt, 2).utf8_to_string();
-            var uniqueness = raw.sqlite3_column_text(indexesStmt, 3).utf8_to_string();
-            
-            Console.WriteLine($"索引 #{indexCount}: {indexName}");
-            Console.WriteLine($"  表名: {tableName}");
-            Console.WriteLine($"  类型: {uniqueness}");
-            Console.WriteLine($"  创建语句: {createSQL ?? "AUTO (自动创建)"}");
-            Console.WriteLine();
-        }
-        raw.sqlite3_finalize(indexesStmt);
-
-        Console.WriteLine($"总共找到 {indexCount} 个索引");
-        Console.WriteLine();
-
-        // 3. 分析每个表的索引详情
-        Console.WriteLine("=== 各表索引详情 ===");
-        foreach (var table in tables)
-        {
-            Console.WriteLine($"表: {table}");
-            
-            // 获取表的索引列表
-            string getTableIndexesSQL = $"PRAGMA index_list('{table}');";
-            raw.sqlite3_prepare_v2(Database, getTableIndexesSQL, out var tableIndexStmt);
-            
-            var tableIndexes = new List<(string name, bool unique, string origin)>();
-            while (raw.sqlite3_step(tableIndexStmt) == raw.SQLITE_ROW)
-            {
-                var indexName = raw.sqlite3_column_text(tableIndexStmt, 1).utf8_to_string();
-                var isUnique = raw.sqlite3_column_int(tableIndexStmt, 2) == 1;
-                var origin = raw.sqlite3_column_text(tableIndexStmt, 3).utf8_to_string();
-                tableIndexes.Add((indexName, isUnique, origin));
-            }
-            raw.sqlite3_finalize(tableIndexStmt);
-
-            if (!tableIndexes.Any())
-            {
-                Console.WriteLine("  ❌ 无索引 - 这可能是查询慢的原因！");
-            }
-            else
-            {
-                foreach (var (name, unique, origin) in tableIndexes)
-                {
-                    Console.WriteLine($"  ✅ {name} ({(unique ? "UNIQUE" : "NON-UNIQUE")}, {origin})");
-                    
-                    // 获取索引的列信息
-                    string getIndexInfoSQL = $"PRAGMA index_info('{name}');";
-                    raw.sqlite3_prepare_v2(Database, getIndexInfoSQL, out var indexInfoStmt);
-                    
-                    var columns = new List<string>();
-                    while (raw.sqlite3_step(indexInfoStmt) == raw.SQLITE_ROW)
-                    {
-                        var columnName = raw.sqlite3_column_text(indexInfoStmt, 2).utf8_to_string();
-                        columns.Add(columnName);
-                    }
-                    raw.sqlite3_finalize(indexInfoStmt);
-                    
-                    Console.WriteLine($"     列: [{string.Join(", ", columns)}]");
-                }
-            }
-            Console.WriteLine();
-        }
-
-        // 4. 性能分析建议
-        Console.WriteLine("=== 性能分析建议 ===");
-        
-        // 检查常用查询字段是否有索引
-        var recommendedIndexes = new List<string>();
-        
-        foreach (var table in tables)
-        {
-            // 检查是否有时间相关字段的索引
-            if (HasColumn(table, "MessageTime") && !HasIndexOnColumn(table, "MessageTime"))
-            {
-                recommendedIndexes.Add($"CREATE INDEX idx_{table}_MessageTime ON {table}(MessageTime);");
-            }
-            
-            if (HasColumn(table, "GroupId") && !HasIndexOnColumn(table, "GroupId"))
-            {
-                recommendedIndexes.Add($"CREATE INDEX idx_{table}_GroupId ON {table}(GroupId);");
-            }
-            
-            if (HasColumn(table, "MessageType") && !HasIndexOnColumn(table, "MessageType"))
-            {
-                recommendedIndexes.Add($"CREATE INDEX idx_{table}_MessageType ON {table}(MessageType);");
-            }
-            
-            // 组合索引建议
-            if (HasColumn(table, "GroupId") && HasColumn(table, "MessageTime") && 
-                !HasIndexOnColumns(table, new[] { "GroupId", "MessageTime" }))
-            {
-                recommendedIndexes.Add($"CREATE INDEX idx_{table}_GroupId_MessageTime ON {table}(GroupId, MessageTime);");
-            }
-        }
-        
-        if (recommendedIndexes.Any())
-        {
-            Console.WriteLine("建议创建以下索引来提升性能:");
-            foreach (var indexSQL in recommendedIndexes)
-            {
-                Console.WriteLine($"  {indexSQL}");
-            }
-        }
-        else
-        {
-            Console.WriteLine("当前索引配置看起来是合理的。");
-        }
-        
-        Console.WriteLine();
-        Console.WriteLine("=== 索引分析完成 ===");
-    }
-
-    /// <summary>
     /// 检查表是否包含指定列
     /// </summary>
     private bool HasColumn(string tableName, string columnName)
@@ -506,31 +348,31 @@ public class RawDatabase : IDisposable
             }
             reportTotalRows?.Invoke(totalRows);
 
-            // 开启事务
-            raw.sqlite3_exec(newDb, "BEGIN IMMEDIATE", null, IntPtr.Zero, out _);
+            // 复制前性能优化参数（目标库）
+            raw.sqlite3_exec(newDb, "PRAGMA synchronous=OFF", null, IntPtr.Zero, out _);
+            raw.sqlite3_exec(newDb, "PRAGMA journal_mode=OFF", null, IntPtr.Zero, out _);
+            raw.sqlite3_exec(newDb, "PRAGMA temp_store=MEMORY", null, IntPtr.Zero, out _);
+            raw.sqlite3_exec(newDb, "PRAGMA foreign_keys=OFF", null, IntPtr.Zero, out _);
 
             long copiedTotal = 0;
-            try
+            // 每张表独立事务复制，避免单表失败导致全部数据回滚
+            foreach (var (table, _, _) in tables)
             {
-                foreach (var (table, _, _) in tables)
+                // 开启表级事务
+                raw.sqlite3_exec(newDb, "BEGIN IMMEDIATE", null, IntPtr.Zero, out _);
+                try
                 {
-                    try
-                    {
-                        CopySingleTableData(_db!, newDb, table, batchSize, commitEvery, ref copiedTotal, progress);
-                        progress?.Report(copiedTotal);
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new Exception($"表 {table} 复制失败: {ex.Message}");
-                    }
+                    CopySingleTableData(_db!, newDb, table, batchSize, commitEvery, ref copiedTotal, progress);
+                    progress?.Report(copiedTotal);
+                    raw.sqlite3_exec(newDb, "COMMIT", null, IntPtr.Zero, out _);
                 }
-
-                raw.sqlite3_exec(newDb, "COMMIT", null, IntPtr.Zero, out _);
-            }
-            catch
-            {
-                raw.sqlite3_exec(newDb, "ROLLBACK", null, IntPtr.Zero, out _);
-                throw;
+                catch (Exception)
+                {
+                    // 回滚当前表，继续下一张，避免整库失败
+                    raw.sqlite3_exec(newDb, "ROLLBACK", null, IntPtr.Zero, out _);
+                    // 可选：输出错误以便诊断
+                    // Console.WriteLine($"[WARN] 表 {table} 复制失败");
+                }
             }
 
             // 重建所有索引/触发器
@@ -609,7 +451,7 @@ public class RawDatabase : IDisposable
 
         // 准备 INSERT 语句
         string placeholders = string.Join(",", Enumerable.Range(1, orderedCols.Count).Select(i => $"?{i}"));
-        string insertSql = $"INSERT OR IGNORE INTO {QuoteIdent(table)}({quotedCols}) VALUES({placeholders})";
+        string insertSql = $"INSERT INTO {QuoteIdent(table)}({quotedCols}) VALUES({placeholders})";
         if (raw.sqlite3_prepare_v2(destDb, insertSql, out var insertStmt) != raw.SQLITE_OK)
         {
             var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
@@ -712,7 +554,7 @@ public class RawDatabase : IDisposable
                         }
 
                         int irc = raw.sqlite3_step(insertStmt);
-                        if (irc != raw.SQLITE_DONE && irc != raw.SQLITE_CONSTRAINT)
+                        if (irc != raw.SQLITE_DONE)
                         {
                             var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
                             throw new Exception($"插入失败({table}): {em} (code {irc})");
@@ -820,7 +662,7 @@ public class RawDatabase : IDisposable
                     }
 
                     int irc = raw.sqlite3_step(insertStmt);
-                    if (irc != raw.SQLITE_DONE && irc != raw.SQLITE_CONSTRAINT)
+                    if (irc != raw.SQLITE_DONE)
                     {
                         var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
                         throw new Exception($"插入失败({table}): {em} (code {irc})");
@@ -899,9 +741,9 @@ public class RawDatabase : IDisposable
         {
             return RewriteFts5TokenizerSafe(originalSql, tableName);
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"⚠️ 表 {tableName} FTS tokenizer重写失败: {ex.Message}，使用原始SQL");
+            //Console.WriteLine($"⚠️ 表 {tableName} FTS tokenizer重写失败: {ex.Message}，使用原始SQL");
             return originalSql;
         }
     }
@@ -968,7 +810,7 @@ public class RawDatabase : IDisposable
                     {
                         result = replacement_full;
                         wasModified = true;
-                        Console.WriteLine($"🔧 表 {tableName}: 替换tokenizer '{unsupported}' -> '{replacement}'");
+                        //Console.WriteLine($"🔧 表 {tableName}: 替换tokenizer '{unsupported}' -> '{replacement}'");
                         break; // 替换成功，跳出内层循环
                     }
                 }

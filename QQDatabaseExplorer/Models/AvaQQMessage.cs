@@ -11,7 +11,6 @@ public class AvaQQMessage
     public int MessageTime { get; set; }
     public long MessageId { get; set; }
     
-    // 重写 Equals 和 GetHashCode 以支持 Dictionary 查找
     public override bool Equals(object? obj)
     {
         return obj is AvaQQMessage other && MessageId == other.MessageId;

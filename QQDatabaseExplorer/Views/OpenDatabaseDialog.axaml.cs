@@ -13,7 +13,7 @@ public partial class OpenDatabaseDialog : Window, IRecipient<CloseDatabaseDialog
 
     public OpenDatabaseDialog(IMessenger messenger, OpenDatabaseDialogViewModel viewModel)
     {
-        ViewModel = new(messenger);
+        ViewModel = viewModel;
         DataContext = viewModel;
         InitializeComponent();
 

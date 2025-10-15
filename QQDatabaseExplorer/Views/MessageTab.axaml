@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="QQDatabaseExplorer.Views.MessageTab"
+             xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+             xmlns:models="using:QQDatabaseExplorer.Models"
+             xmlns:conv="using:QQDatabaseExplorer.Converters"
+             x:DataType="vm:MessageTabViewModel">
+
+    <Grid ColumnDefinitions="200 5 *">
+                <ListBox
+                    Grid.Column="0"
+                    ItemsSource="{Binding Groups}"
+                    SelectedItem="{Binding SelectedGroup}">
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="models:AvaQQGroup">
+                            <TextBlock Text="{Binding Converter={x:Static conv:QQGroupDisplayConverter.Instance}}" />
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+
+                <GridSplitter Grid.Column="1" />
+
+                <Border Grid.Column="2" Padding="8">
+                    <ScrollViewer Name="MessageScrollViewer">
+                        <StackPanel>
+                            <ItemsControl ItemsSource="{Binding Messages}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Vertical" Spacing="4" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.DataTemplates>
+                                    <DataTemplate DataType="models:AvaQQMessage">
+                                        <StackPanel Orientation="Vertical" Spacing="4">
+                                            <TextBlock
+                                                FontSize="12"
+                                                FontWeight="SemiBold"
+                                                Foreground="#666"
+                                                Text="{Binding Name}" />
+                                            <Border
+                                                Margin="12,0,0,0"
+                                                Padding="8"
+                                                HorizontalAlignment="Left"
+                                                BorderBrush="#AAAAAAAA"
+                                                BorderThickness="1"
+                                                CornerRadius="8">
+                                                <SelectableTextBlock
+                                                    HorizontalAlignment="Left"
+                                                    Text="{Binding DisplayText}"
+                                                    TextWrapping="Wrap" />
+                                            </Border>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.DataTemplates>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+</UserControl>

@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+             xmlns:db="using:QQDatabaseReader.Database"
+             xmlns:conv="using:QQDatabaseExplorer.Converters"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="QQDatabaseExplorer.Views.DatabaseTab"
+             x:DataType="vm:DatabaseTabViewModel">
+
+    <Border>
+        <DataGrid ItemsSource="{Binding DatabaseList}" 
+                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                  Name="databaseDataGrid">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="导出成无加密数据库(同时可以修复损坏的数据)" Command="{Binding ExportDatabaseCommand}" CommandParameter="{Binding #databaseDataGrid.SelectedItem}" />
+                    <MenuItem Header="移除列表项" Command="{Binding RemoveDatabaseCommand}" CommandParameter="{Binding #databaseDataGrid.SelectedItem}" />
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="数据库类型" Binding="{Binding DatabaseType, Converter={x:Static conv:QQDatabaseTypeToStringConverter.Instance}}" />
+                <DataGridTextColumn Header="文件路径" Binding="{Binding DatabaseFilePath}" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </Border>
+</UserControl>

@@ -1,23 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using QQDatabaseExplorer.Models;
-using QQDatabaseExplorer.Models.Messenger;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using QQDatabaseReader;
-using QQNTDatabaseKeyFinder;
+using QQDatabaseKeyFinder;
 using Ursa.Controls;
+using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Models.Messenger;
 
 namespace QQDatabaseExplorer.ViewModels;
 
 public partial class OpenDatabaseDialogViewModel : ViewModelBase
 {
     private readonly IMessenger _messenger;
+    private readonly QQDatabaseService _qqDatabaseService;
 
     [ObservableProperty]
     public partial string DatabaseFilePath { get; set; } = string.Empty;
@@ -43,9 +42,10 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public bool IsOpen { get; set; }
 
 
-    public OpenDatabaseDialogViewModel(IMessenger messenger)
+    public OpenDatabaseDialogViewModel(IMessenger messenger, QQDatabaseService qqDatabaseService)
     {
         _messenger = messenger;
+        _qqDatabaseService = qqDatabaseService;
     }
 
     partial void OnDatabaseFilePathChanged(string value)
@@ -67,18 +67,59 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         {
             DatabaseType = QQDatabaseType.GroupInfo;
         }
+    }
 
+
+    partial void OnNtUidChanged(string value)
+    {
+        EnsureKey();
+    }
+
+    partial void OnRandChanged(string value)
+    {
+        EnsureKey();
+    }
+
+
+    public void EnsureKey()
+    {
+        if (!string.IsNullOrWhiteSpace(NtUid) && !string.IsNullOrWhiteSpace(Rand))
+        {
+            Key = RawDatabase.GetQQKey(NtUid, Rand);
+        }
     }
 
     public void Ok()
     {
-        IsOpen = true;
+        EnsureKey();
+
+        if (DatabaseType is QQDatabaseType.Message)
+        {
+            if (string.IsNullOrWhiteSpace(Key))
+            {
+                _qqDatabaseService.LoadMessageDatabase(DatabaseFilePath);
+            }
+            else
+            {
+                _qqDatabaseService.LoadMessageDatabase(DatabaseFilePath, Key);
+            }
+        }
+        else if (DatabaseType is QQDatabaseType.GroupInfo)
+        {
+            if (string.IsNullOrWhiteSpace(Key))
+            {
+                _qqDatabaseService.LoadGroupInfoDatabase(DatabaseFilePath);
+            }
+            else
+            {
+                _qqDatabaseService.LoadGroupInfoDatabase(DatabaseFilePath, Key);
+            }
+        }
         _messenger.Send<CloseDatabaseDialogMessage>();
     }
 
     public void Cancel()
     {
-        IsOpen = false;
         _messenger.Send<CloseDatabaseDialogMessage>();
     }
 
@@ -109,13 +150,12 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
         await MessageBox.ShowAsync("请登录QQ, 登录后会自动获取key");
 
-        IReadOnlyCollection<string>? keys = null;
+        string? key = null;
         await Task.Run(() =>
         {
-            keys = QQDebugger.NewProcess(qqntFilePath);
+            key = QQDebugger.NewProcess(qqntFilePath);
         });
 
-        var key = keys?.FirstOrDefault(v => v.Any(v => char.IsSymbol(v)));
         if(key == null)
         {
             await MessageBox.ShowOverlayAsync("Key获取失败");

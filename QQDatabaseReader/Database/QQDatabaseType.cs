@@ -1,5 +1,5 @@
 
-namespace QQDatabaseExplorer.Models;
+namespace QQDatabaseReader;
 
 public enum QQDatabaseType
 {
