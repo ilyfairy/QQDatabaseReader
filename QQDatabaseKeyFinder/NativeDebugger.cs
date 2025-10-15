@@ -14,6 +14,7 @@ public class NativeDebugger
     private const uint PROCESS_VM_WRITE = 0x0020;
     private const uint PROCESS_VM_OPERATION = 0x0008;
     private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    private const uint PROCESS_TERMINATE = 0x0001;
 
     private const uint THREAD_GET_CONTEXT = 0x0008;
     private const uint THREAD_SET_CONTEXT = 0x0010;
@@ -52,9 +53,9 @@ public class NativeDebugger
         if (!DebugActiveProcess(_processId))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
-        DebugSetProcessKillOnExit(false);
+        DebugSetProcessKillOnExit(true);
 
-        _hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION, false, _processId);
+        _hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, false, _processId);
         if (_hProcess == IntPtr.Zero)
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
@@ -72,6 +73,8 @@ public class NativeDebugger
 
         if (_attached)
         {
+            // 在脱离调试前先终止进程
+            TerminateProcess(_hProcess, 0);
             DebugActiveProcessStop(_processId);
             _attached = false;
         }
@@ -622,4 +625,7 @@ public class NativeDebugger
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
 }
