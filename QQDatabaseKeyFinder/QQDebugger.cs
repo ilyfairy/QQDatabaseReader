@@ -40,6 +40,7 @@ public class QQDebugger
                 if (IsBestKey(tempKey))
                 {
                     key = tempKey;
+                    debugger.Detach();
                 }
             }
         });
