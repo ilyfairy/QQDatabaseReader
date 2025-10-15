@@ -17,7 +17,7 @@
               <TextBlock Text="导出路径: " VerticalAlignment="Center" />
               <TextBox Text="{Binding ExportFilePath}" />
           </DockPanel>
-          <ProgressBar Value="{Binding Progress}" />
+          <ProgressBar Value="{Binding Progress}" ShowProgressText="True" Minimum="0" Maximum="100" />
           <Button Command="{Binding ExportCommand}" Content="开始导出" HorizontalAlignment="Center" />
       </StackPanel>
   </Border>

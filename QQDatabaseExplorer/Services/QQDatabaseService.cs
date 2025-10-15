@@ -1,7 +1,5 @@
 using System;
-using System.Collections.ObjectModel;
 using System.Threading.Tasks;
-using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseExplorer.Models.Messenger;
@@ -86,6 +84,6 @@ public class QQDatabaseService
         var vm = scope.ServiceProvider.GetRequiredService<ExportDatabaseDialogViewModel>();
         vm.Database = qqDatabase;
         var dialog = scope.ServiceProvider.GetRequiredService<ExportDatabaseDialog>();
-        dialog.Show();
+        await dialog.ShowDialog();
     }
 }
