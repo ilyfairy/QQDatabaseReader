@@ -27,23 +27,28 @@ public partial class App : Application
 
         builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
         builder.Services.AddSingleton<QQDatabaseService>();
-        builder.Services.AddTransient<MessageBoxToken>();
+        builder.Services.AddTransient<MessageBoxService>();
+        builder.Services.AddSingleton<ViewModelTokenService>();
+        builder.Services.AddTransient<ViewModelToken>();
 
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddSingleton<MainView>();
         builder.Services.AddSingleton<MainViewModel>();
 
-        builder.Services.AddScoped<MessageTab>();
-        builder.Services.AddScoped<MessageTabViewModel>();
+        builder.Services.AddSingleton<MessageTab>();
+        builder.Services.AddSingleton<MessageTabViewModel>();
 
-        builder.Services.AddScoped<DatabaseTab>();
-        builder.Services.AddScoped<DatabaseTabViewModel>();
+        builder.Services.AddSingleton<DatabaseTab>();
+        builder.Services.AddSingleton<DatabaseTabViewModel>();
 
         builder.Services.AddScoped<OpenDatabaseDialog>();
         builder.Services.AddScoped<OpenDatabaseDialogViewModel>();
 
         builder.Services.AddScoped<ExportDatabaseDialog>();
         builder.Services.AddScoped<ExportDatabaseDialogViewModel>();
+
+        builder.Services.AddScoped<QQDebuggerWindow>();
+        builder.Services.AddScoped<QQDebuggerWindowViewModel>();
 
         Host = builder.Build();
 

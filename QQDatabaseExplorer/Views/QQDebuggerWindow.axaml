@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+        mc:Ignorable="d"
+        Width="400"
+        Height="300"
+        x:Class="QQDatabaseExplorer.QQDebuggerWindow"
+        Title="QQDebuggerWindow"
+        x:DataType="vm:QQDebuggerWindowViewModel"
+        WindowStartupLocation="CenterOwner">
+
+    <Border Padding="8">
+        <Grid RowDefinitions="Auto *">
+            <StackPanel Grid.Row="0" Orientation="Vertical" Spacing="8">
+                <DockPanel>
+                    <TextBlock Text="QQ文件路径: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding QQFilePath}" />
+                </DockPanel>
+                <DockPanel>
+                    <TextBlock Text="数据库Key: " VerticalAlignment="Center" />
+                    <TextBox Text="{Binding Key}" IsReadOnly="True" />
+                </DockPanel>
+            </StackPanel>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12"
+                        HorizontalAlignment="Right" VerticalAlignment="Bottom">
+                <Button Content="开始调试" Command="{Binding StartDebugCommand}" />
+                <Button Content="取消" Command="{Binding CancelCommand}" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

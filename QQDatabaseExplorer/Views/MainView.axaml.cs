@@ -18,9 +18,10 @@ public partial class MainView : UserControl
 {
     private readonly IServiceProvider _serviceProvider;
 
-    public MainView(MainViewModel mainViewModel, IServiceProvider serviceProvider, MessageTab messageTab, DatabaseTab databaseTab)
+    public MainView(MainViewModel viewModel, IServiceProvider serviceProvider, MessageTab messageTab, DatabaseTab databaseTab, ViewModelTokenService viewModelTokenService)
     {
-        DataContext = mainViewModel;
+        viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
+        DataContext = viewModel;
         _serviceProvider = serviceProvider;
 
         InitializeComponent();

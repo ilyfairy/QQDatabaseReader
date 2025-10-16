@@ -18,8 +18,10 @@ public partial class MessageTab : UserControl
     private readonly IMessenger _messenger;
     private readonly IServiceProvider _serviceProvider;
 
-    public MessageTab(MessageTabViewModel viewModel, QQDatabaseService qqDatabaseService, IMessenger messenger, IServiceProvider serviceProvider)
+    public MessageTab(MessageTabViewModel viewModel, QQDatabaseService qqDatabaseService, IMessenger messenger, IServiceProvider serviceProvider, ViewModelTokenService viewModelTokenService)
     {
+        viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
+
         _qqDatabaseService = qqDatabaseService;
         _messenger = messenger;
         _serviceProvider = serviceProvider;

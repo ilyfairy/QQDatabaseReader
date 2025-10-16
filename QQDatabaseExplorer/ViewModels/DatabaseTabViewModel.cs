@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
+using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Models.Messenger;
 using QQDatabaseExplorer.Services;
 using QQDatabaseReader.Database;
@@ -12,6 +13,8 @@ public partial class DatabaseTabViewModel : ViewModelBase, IRecipient<AddDatabas
 {
     private readonly IMessenger _messenger;
     private readonly QQDatabaseService _qqDatabaseService;
+
+    public ViewModelToken ViewModelToken { get; } = new();
 
     public ObservableCollection<IQQDatabase> DatabaseList { get; } = new();
 

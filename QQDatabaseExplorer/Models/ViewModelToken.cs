@@ -1,4 +1,4 @@
 
 namespace QQDatabaseExplorer.Models;
 
-public class MessageBoxToken;
+public class ViewModelToken;

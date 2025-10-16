@@ -1,4 +1,3 @@
-
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -7,14 +6,15 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Models.Messenger;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader.Database;
-using Ursa.Controls;
 
 namespace QQDatabaseExplorer.ViewModels;
 
 public partial class ExportDatabaseDialogViewModel : ViewModelBase
 {
     private readonly IMessenger _messenger;
+    private readonly MessageBoxService _messageBoxService;
 
     public IQQDatabase? Database { get; set; }
 
@@ -22,12 +22,15 @@ public partial class ExportDatabaseDialogViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial double Progress { get; set; }
-    public MessageBoxToken MessageBoxToken { get; }
+    public ViewModelToken MessageBoxToken { get; }
 
-    public ExportDatabaseDialogViewModel(IMessenger messenger, MessageBoxToken messageBoxToken)
+    public ViewModelToken ViewModelToken { get; } = new();
+
+    public ExportDatabaseDialogViewModel(IMessenger messenger, ViewModelToken messageBoxToken, MessageBoxService messageBoxService)
     {
         _messenger = messenger;
         MessageBoxToken = messageBoxToken;
+        _messageBoxService = messageBoxService;
     }
 
     [RelayCommand]
@@ -35,19 +38,19 @@ public partial class ExportDatabaseDialogViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(ExportFilePath))
         {
-            await _messenger.Send(new ShowMessageBoxMessage("请输入文件名", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+            await _messageBoxService.ShowAsync("请输入文件名", "错误", MessageBoxToken);
             return;
         }
 
         if (!File.Exists(ExportFilePath))
         {
-            await _messenger.Send(new ShowMessageBoxMessage("文件不存在", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+            await _messageBoxService.ShowAsync("文件不存在", "错误", MessageBoxToken);
             return;
         }
 
         if (Database is null)
         {
-            await _messenger.Send(new ShowMessageBoxMessage("数据库未选择", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+            await _messageBoxService.ShowAsync("数据库未选择", "错误", MessageBoxToken);
             return;
         }
 
@@ -65,7 +68,8 @@ public partial class ExportDatabaseDialogViewModel : ViewModelBase
             }));
         });
         Progress = 100;
-        await _messenger.Send(new ShowMessageBoxMessage("导出成功", null, MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+        await _messageBoxService.ShowAsync("导出成功", null, MessageBoxToken);
         _messenger.Send<CloseExportDatabaseDialogMessage>();
+        
     }
 }

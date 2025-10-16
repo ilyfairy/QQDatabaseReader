@@ -16,6 +16,8 @@ public partial class MessageTabViewModel : ViewModelBase, IRecipient<AddDatabase
     private readonly IMessenger _messenger;
     private readonly ObservableList<AvaQQGroup> _groups = new();
 
+    public ViewModelToken ViewModelToken { get; } = new();
+
 
     /// <summary>
     /// 当前在聊天栏中显示的消息
