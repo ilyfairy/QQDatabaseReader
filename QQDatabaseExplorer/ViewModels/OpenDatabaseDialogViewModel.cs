@@ -7,9 +7,9 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using QQDatabaseReader;
 using QQDatabaseKeyFinder;
-using Ursa.Controls;
 using QQDatabaseExplorer.Services;
 using QQDatabaseExplorer.Models.Messenger;
+using QQDatabaseExplorer.Models;
 
 namespace QQDatabaseExplorer.ViewModels;
 
@@ -40,12 +40,13 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     };
 
     public bool IsOpen { get; set; }
+    public MessageBoxToken MessageBoxToken { get; }
 
-
-    public OpenDatabaseDialogViewModel(IMessenger messenger, QQDatabaseService qqDatabaseService)
+    public OpenDatabaseDialogViewModel(IMessenger messenger, QQDatabaseService qqDatabaseService, MessageBoxToken messageBoxToken)
     {
         _messenger = messenger;
         _qqDatabaseService = qqDatabaseService;
+        MessageBoxToken = messageBoxToken;
     }
 
     partial void OnDatabaseFilePathChanged(string value)
@@ -89,8 +90,20 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         }
     }
 
-    public void Ok()
+    public async Task Ok()
     {
+        if (string.IsNullOrWhiteSpace(DatabaseFilePath))
+        {
+            await _messenger.Send(new ShowMessageBoxMessage("请输入文件名", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+            return;
+        }
+
+        if (!File.Exists(DatabaseFilePath))
+        {
+            await _messenger.Send(new ShowMessageBoxMessage("文件不存在", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
+            return;
+        }
+
         EnsureKey();
 
         if (DatabaseType is QQDatabaseType.Message)
@@ -144,11 +157,11 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
         if (qqntFilePath == null)
         {
-            await MessageBox.ShowOverlayAsync("没有找到QQ.exe");
+            await _messenger.Send(new ShowMessageBoxMessage("没有找到QQ.exe", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
             return;
         }
 
-        await MessageBox.ShowAsync("请登录QQ, 登录后会自动获取key");
+        await _messenger.Send(new ShowMessageBoxMessage("请登录QQ, 登录后会自动获取key", null, MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
 
         string? key = null;
         await Task.Run(() =>
@@ -158,7 +171,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
         if(key == null)
         {
-            await MessageBox.ShowOverlayAsync("Key获取失败");
+            await _messenger.Send(new ShowMessageBoxMessage("Key获取失败", "错误", MessageBoxToken, new TaskCompletionSource())).TaskCompletionSource.Task;
         }
         else
         {

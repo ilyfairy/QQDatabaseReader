@@ -17,9 +17,7 @@ public class QQDatabaseService
     public QQGroupInfoReader? GroupInfoDatabase { get; private set; }
 
     public QQMessageReader? MessageDatabase { get; private set; }
-
-    //public ObservableCollection<IQQDatabase> DatabaseList { get; } = new();
-
+    
     public QQDatabaseService(IMessenger messenger, IServiceProvider serviceProvider)
     {
         _messenger = messenger;
@@ -39,7 +37,6 @@ public class QQDatabaseService
         }
         groupInfoDatabase.Initialize();
         GroupInfoDatabase = groupInfoDatabase;
-        //DatabaseList.Add(groupInfoDatabase);
         _messenger.Send(new AddDatabaseMessage(groupInfoDatabase));
 
         return groupInfoDatabase;
@@ -58,7 +55,6 @@ public class QQDatabaseService
         }
         messageDatabase.Initialize();
         MessageDatabase = messageDatabase;
-        //DatabaseList.Add(messageDatabase);
         _messenger.Send(new AddDatabaseMessage(messageDatabase));
 
         return messageDatabase;

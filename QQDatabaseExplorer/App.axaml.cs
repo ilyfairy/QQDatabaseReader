@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Models;
 
 namespace QQDatabaseExplorer;
 
@@ -26,6 +27,7 @@ public partial class App : Application
 
         builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
         builder.Services.AddSingleton<QQDatabaseService>();
+        builder.Services.AddTransient<MessageBoxToken>();
 
         builder.Services.AddSingleton<MainWindow>();
         builder.Services.AddSingleton<MainView>();

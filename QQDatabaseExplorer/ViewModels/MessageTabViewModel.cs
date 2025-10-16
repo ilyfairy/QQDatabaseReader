@@ -16,12 +16,11 @@ public partial class MessageTabViewModel : ViewModelBase, IRecipient<AddDatabase
     private readonly IMessenger _messenger;
     private readonly ObservableList<AvaQQGroup> _groups = new();
 
+
     /// <summary>
     /// 当前在聊天栏中显示的消息
     /// </summary>
     private readonly ObservableRingBuffer<AvaQQMessage> _messages = new();
-
-
 
     public NotifyCollectionChangedSynchronizedViewList<AvaQQGroup> Groups { get; }
     public NotifyCollectionChangedSynchronizedViewList<AvaQQMessage> Messages { get; }
