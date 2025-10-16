@@ -9,7 +9,7 @@ using Ursa.Controls;
 
 namespace QQDatabaseExplorer.Views;
 
-public partial class MainWindow : Window, IRecipient<ShowMessageBoxMessage>, IRecipient<ShowQQDebuggerWindowMessage>
+public partial class MainWindow : Window, IRecipient<ShowMessageBoxMessage>, IRecipient<ShowOpenDatabaseDialogMessage>, IRecipient<ShowQQDebuggerWindowMessage>
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IMessenger _messenger;
@@ -23,6 +23,7 @@ public partial class MainWindow : Window, IRecipient<ShowMessageBoxMessage>, IRe
         _messenger = messenger;
         _viewModelTokenService = viewModelTokenService;
         _messenger.Register<ShowMessageBoxMessage>(this);
+        _messenger.Register<ShowOpenDatabaseDialogMessage>(this);
         _messenger.Register<ShowQQDebuggerWindowMessage>(this);
 
         InitializeComponent();
@@ -41,15 +42,28 @@ public partial class MainWindow : Window, IRecipient<ShowMessageBoxMessage>, IRe
 
     public async void Receive(ShowQQDebuggerWindowMessage message)
     {
-        if(message.Token is null || !_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
+        if (message.Token is null || !_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
         {
             owner = this;
         }
 
-        var scope = _serviceProvider.CreateScope();
+        using var scope = _serviceProvider.CreateScope();
         var window = scope.ServiceProvider.GetRequiredService<QQDebuggerWindow>();
         await window.ShowDialog(GetTopLevel(owner) as Window ?? this);
         message.Completion.SetResult(scope.ServiceProvider.GetRequiredService<QQDebuggerWindowViewModel>());
     }
 
+    public async void Receive(ShowOpenDatabaseDialogMessage message)
+    {
+        if (message.Token is null || !_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
+        {
+            owner = this;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var window = scope.ServiceProvider.GetRequiredService<OpenDatabaseDialog>();
+        scope.ServiceProvider.GetRequiredService<OpenDatabaseDialogViewModel>().DatabaseFilePath = message.DatabaseFilePath;
+        await window.ShowDialog(GetTopLevel(owner) as Window ?? this);
+        message.Completion.SetResult(scope.ServiceProvider.GetRequiredService<OpenDatabaseDialogViewModel>());
+    }
 }

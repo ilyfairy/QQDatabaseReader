@@ -1,13 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using QQDatabaseExplorer.ViewModels;
-using Microsoft.Extensions.DependencyInjection;
-using QQDatabaseReader;
 using QQDatabaseExplorer.Services;
 using CommunityToolkit.Mvvm.Messaging;
 using QQDatabaseExplorer.Models.Messenger;
@@ -17,13 +13,14 @@ namespace QQDatabaseExplorer.Views;
 public partial class MainView : UserControl
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly IMessenger _messenger;
 
-    public MainView(MainViewModel viewModel, IServiceProvider serviceProvider, MessageTab messageTab, DatabaseTab databaseTab, ViewModelTokenService viewModelTokenService)
+    public MainView(MainViewModel viewModel, IServiceProvider serviceProvider, IMessenger messenger, MessageTab messageTab, DatabaseTab databaseTab, ViewModelTokenService viewModelTokenService)
     {
         viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
         DataContext = viewModel;
         _serviceProvider = serviceProvider;
-
+        _messenger = messenger;
         InitializeComponent();
 
         this.messageTab.Content = messageTab;
@@ -69,20 +66,16 @@ public partial class MainView : UserControl
     //}
 
 
-    private async void UserControl_Drop(object? sender, DragEventArgs e)
+    private void UserControl_Drop(object? sender, DragEventArgs e)
     {
         var file = e.DataTransfer.TryGetFiles()?.FirstOrDefault();
         if (file is { })
         {
-            if (!File.Exists(file.Path.LocalPath))
+            var filePath = file.Path.LocalPath;
+            if (!File.Exists(filePath))
                 return;
 
-            using var scope = _serviceProvider.CreateScope();
-            var dialog = scope.ServiceProvider.GetRequiredService<OpenDatabaseDialog>();
-            var vm = scope.ServiceProvider.GetRequiredService<OpenDatabaseDialogViewModel>();
-            vm.DatabaseFilePath = file.Path.LocalPath;
-
-            await dialog.ShowDialog(TopLevel.GetTopLevel(this) as Window);
+            _messenger.Send(new ShowOpenDatabaseDialogMessage(filePath, null, new()));
         }
     }
 }

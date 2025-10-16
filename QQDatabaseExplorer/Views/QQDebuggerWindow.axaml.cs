@@ -11,7 +11,7 @@ using Ursa.Controls;
 
 namespace QQDatabaseExplorer;
 
-public partial class QQDebuggerWindow : Window
+public partial class QQDebuggerWindow : Window, IRecipient<CloseQQDebuggerWindowMessage>
 {
     private readonly IServiceProvider _serviceProvider;
 
@@ -21,10 +21,15 @@ public partial class QQDebuggerWindow : Window
     {
         viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
 
+        messenger.Register<CloseQQDebuggerWindowMessage>(this);
         DataContext = viewModel;
         ViewModel = viewModel;
         _serviceProvider = serviceProvider;
         InitializeComponent();
     }
 
+    public void Receive(CloseQQDebuggerWindowMessage message)
+    {
+        Close();
+    }
 }

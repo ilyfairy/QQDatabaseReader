@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Win32;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Models.Messenger;
 using QQDatabaseExplorer.Services;
 using QQDatabaseKeyFinder;
 
@@ -79,12 +80,15 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
             Key = QQDebugger.NewProcess(QQFilePath) ?? string.Empty;
         });
 
-        await _messageBoxService.ShowAsync("Key获取失败", "错误", ViewModelToken);
+        if (string.IsNullOrWhiteSpace(Key))
+        {
+            await _messageBoxService.ShowAsync("Key获取失败", "错误", ViewModelToken);
+        }
     }
 
     [RelayCommand]
-    public void Cancel()
+    public void Close()
     {
-        
+        _messenger.Send<CloseQQDebuggerWindowMessage>();
     }
 }
