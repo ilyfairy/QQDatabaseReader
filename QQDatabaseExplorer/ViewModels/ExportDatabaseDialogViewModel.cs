@@ -42,12 +42,6 @@ public partial class ExportDatabaseDialogViewModel : ViewModelBase
             return;
         }
 
-        if (!File.Exists(ExportFilePath))
-        {
-            await _messageBoxService.ShowAsync("文件不存在", "错误", MessageBoxToken);
-            return;
-        }
-
         if (Database is null)
         {
             await _messageBoxService.ShowAsync("数据库未选择", "错误", MessageBoxToken);
