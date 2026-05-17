@@ -1,17 +1,46 @@
-<Window
+<u:UrsaWindow
     x:Class="QQDatabaseExplorer.Views.MainWindow"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:u="https://irihi.tech/ursa"
     xmlns:views="clr-namespace:QQDatabaseExplorer.Views"
     xmlns:vm="using:QQDatabaseExplorer.ViewModels"
     Title="QQDatabaseExplorer"
-    Width="800"
-    Height="500"
-    d:DesignHeight="500"
-    d:DesignWidth="800"
+    Width="1200"
+    Height="800"
+    d:DesignWidth="1200"
+    d:DesignHeight="800"
     Icon="/Assets/avalonia-logo.ico"
+    Padding="0,32,0,0"
     WindowStartupLocation="CenterScreen"
     mc:Ignorable="d">
-</Window>
+    <u:UrsaWindow.LeftContent>
+        <StackPanel
+            Height="32"
+            Margin="8,0,0,0"
+            VerticalAlignment="Top"
+            Orientation="Horizontal"
+            Spacing="8">
+            <Image
+                Width="20"
+                Height="20"
+                VerticalAlignment="Center"
+                Source="/Assets/avalonia-logo.ico" />
+            <Menu VerticalAlignment="Center">
+                <MenuItem Header="文件">
+                    <MenuItem Header="打开QQNT数据库" Click="OpenMenuItem_Click" />
+                    <MenuItem Header="打开PCQQ数据库" Click="OpenPCQQMenuItem_Click" />
+                    <MenuItem Header="打开AndroidQQNT数据库" Click="OpenAndroidQQNTMenuItem_Click" />
+                    <Separator />
+                    <MenuItem Header="打开数据库配置" Click="LoadConfigMenuItem_Click" />
+                    <MenuItem Header="保存数据库配置" Click="SaveConfigMenuItem_Click" />
+                    <MenuItem Header="关闭数据库配置" Click="CloseConfigMenuItem_Click" />
+                    <Separator />
+                    <MenuItem Header="退出" Click="ExitMenuItem_Click" />
+                </MenuItem>
+            </Menu>
+        </StackPanel>
+    </u:UrsaWindow.LeftContent>
+</u:UrsaWindow>

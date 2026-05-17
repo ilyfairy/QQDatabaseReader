@@ -15,19 +15,19 @@ public class GroupMessage
     /// </summary>
     [Key]
     [Column("40001")]
-    public int MessageId { get; set; }
+    public long MessageId { get; set; }
 
     /// <summary>
     /// 消息随机值，用于对消息去重
     /// </summary>
     [Column("40002")]
-    public int MessageRandom { get; set; }
+    public long MessageRandom { get; set; }
 
     /// <summary>
     /// 群聊消息ID，在每个聊天中依次递增
     /// </summary>
     [Column("40003")]
-    public int MessageSeq { get; set; }
+    public long MessageSeq { get; set; }
 
     /// <summary>
     /// 聊天类型，私聊为1，群聊为2，频道为4，公众号为103，企业客服为102，临时会话为100
@@ -69,7 +69,7 @@ public class GroupMessage
     /// 会话ID
     /// </summary>
     [Column("40027")]
-    public int GroupId { get; set; }
+    public uint GroupId { get; set; }
 
     /// <summary>
     /// 发送状态，2为成功，0为发送被阻止（如不是对方好友），1为尚未发送成功（比如网络问题），3为消息被和谐
@@ -145,7 +145,7 @@ public class GroupMessage
     /// 回复消息序号	该消息所回复的消息的序号
     /// </summary>
     [Column("40850")]
-    public int ReplyToMessageSeq { get; set; }
+    public long ReplyToMessageSeq { get; set; }
     
     [Column("40801")]
     public byte[]? Unknown2 { get; set; }
@@ -154,13 +154,13 @@ public class GroupMessage
     /// 群号
     /// </summary>
     [Column("40030")]
-    public int SavedGroupId { get; set; }
+    public uint SavedGroupId { get; set; }
     
     /// <summary>
     /// 发送者QQ号
     /// </summary>
     [Column("40033")]
-    public int SenderId { get; set; }
+    public uint SenderId { get; set; }
 
     /// <summary>
     /// 存贮详细表态信息（包括表态表情和表态数量）, 其数字与QQBOT中表情编号对应（超级表情不在此列表中）
@@ -173,10 +173,6 @@ public class GroupMessage
 
     [Column("40084")]
     public int TotalReactionCount2 { get; set; }
-
-
-
-
 
     public string GetText()
     {
@@ -198,14 +194,44 @@ public class GroupMessage
 [Table("recent_contact_v3_table")]
 public class RecentContact
 {
+    /// <summary>
+    /// 最近联系人主分类。QQNT 对 40055 + 40021 建了唯一索引。
+    /// </summary>
+    [Column("40055")]
+    public int RecentCategory { get; set; }
+
+    /// <summary>
+    /// recent_contact_v3_table 的内部自增主键。
+    /// </summary>
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    [Column("41102")]
+    public long RecentContactId { get; set; }
+
     [Column("40010")]
     public ChatType ChatType { get; set; }
+
+    /// <summary>
+    /// 最近一条消息的消息类型。
+    /// </summary>
+    [Column("40011")]
+    public MessageType LastMessageType { get; set; }
 
     [Column("40021")]
     public string? PeerUin { get; set; }
 
+    /// <summary>
+    /// 最近联系人子类型/状态。真实 QQNT 数据中该列对群聊和私聊通常都是 1，不是群号。
+    /// 群聊的群号在 40021 中以文本形式保存。
+    /// </summary>
+    [Column("40027")]
+    public int ContactSubType { get; set; }
+
+    /// <summary>
+    /// 私聊时通常是 QQ 号；群聊最近联系人中通常为 0。
+    /// </summary>
     [Column("40030")]
-    public int Uin { get; set; }
+    public uint Uin { get; set; }
 
     [Column("40051")]
     public byte[]? LastMessage { get; set; }
@@ -216,9 +242,24 @@ public class RecentContact
     [Column("40050")]
     public int LastTime { get; set; } // seconds
 
-    [Column("40003")]
-    public string? MessageSeq { get; set; }
+    /// <summary>
+    /// recent_contact_v3_table 的索引时间列，真实数据中通常和 40050 一致。
+    /// </summary>
+    [Column("41136")]
+    public int SortTime { get; set; }
 
+    [Column("40003")]
+    public long MessageSeq { get; set; }
+
+    /// <summary>
+    /// 最近一条消息的随机值，用于和消息序号一起辅助定位/去重。
+    /// </summary>
+    [Column("40002")]
+    public long MessageRandom { get; set; }
+
+    /// <summary>
+    /// 最近联系人显示名称。群聊时通常是群名，私聊时通常是对方昵称。
+    /// </summary>
     [Column("40094")]
     public string? Source { get; set; }
 
@@ -240,13 +281,13 @@ public class RecentContact
 
 
     [Column("40033")]
-    public int Uin2 { get; set; }
+    public uint Uin2 { get; set; }
 
     /// <summary>
     /// 群头像本地缓存路径
     /// </summary>
     [Column("41110")]
-    public int GroupAvatar { get; set; }
+    public string? GroupAvatar { get; set; }
     
     [Column("41135")]
     public string? _41135 { get; set; }

@@ -1,6 +1,7 @@
 ﻿using System;
 
 using Avalonia;
+using Avalonia.Rendering.Composition;
 
 namespace QQDatabaseExplorer.Desktop;
 
@@ -17,7 +18,27 @@ class Program
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
+            .With(new CompositionOptions
+            {
+                UseRegionDirtyRectClipping = true,
+            })
+            .With(new Win32PlatformOptions
+            {
+                RenderingMode =
+                [
+                    Win32RenderingMode.AngleEgl,
+                    Win32RenderingMode.Software,
+                ],
+                CompositionMode =
+                [
+                    Win32CompositionMode.WinUIComposition,
+                    Win32CompositionMode.DirectComposition,
+                    Win32CompositionMode.RedirectionSurface,
+                ],
+            })
+#if DEBUG
+            .WithDeveloperTools()
+#endif
             .WithInterFont()
             .LogToTrace();
-
 }

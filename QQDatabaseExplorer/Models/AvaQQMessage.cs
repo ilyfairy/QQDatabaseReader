@@ -1,23 +1,113 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
+using Avalonia;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace QQDatabaseExplorer.Models;
 
-public class AvaQQMessage
+public partial class AvaQQMessage : ObservableObject
 {
+    private byte[]? _protobufContent;
+    private string? _protobufBase64;
+
     public string DisplayText { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
+    public IReadOnlyList<AvaQQMessageSegment> Segments { get; set; } = [];
+    public IReadOnlyList<AvaQQMessage> ForwardedMessages { get; set; } = [];
+    public AvaReplyMessage? Reply { get; set; }
     public int MessageTime { get; set; }
     public long MessageId { get; set; }
-    
-    public override bool Equals(object? obj)
+    public long MessageRandom { get; set; }
+    public long MessageSeq { get; set; }
+    public long PCQQMessageSeq { get; set; }
+    public uint SenderId { get; set; }
+    public uint GroupId { get; set; }
+    public AvaConversationType ConversationType { get; set; } = AvaConversationType.Group;
+    public string ConversationKey { get; set; } = string.Empty;
+    public long PrivateConversationId { get; set; }
+    public uint PrivateUin { get; set; }
+    public string? PeerUid { get; set; }
+    public string? CachedAvatarUrl { get; set; }
+    public bool IsSystemHint { get; set; }
+    public string SystemHintSourceName { get; set; } = string.Empty;
+    public string SystemHintSourceUin { get; set; } = string.Empty;
+    public string SystemHintTargetName { get; set; } = string.Empty;
+    public string SystemHintTargetUin { get; set; } = string.Empty;
+    public string SystemHintAction { get; set; } = string.Empty;
+    public string SystemHintSuffix { get; set; } = string.Empty;
+    public string? SystemHintActionImageUrl { get; set; }
+
+    public byte[]? ProtobufContent
     {
-        return obj is AvaQQMessage other && MessageId == other.MessageId;
+        get => _protobufContent;
+        set
+        {
+            if (SetProperty(ref _protobufContent, value))
+            {
+                _protobufBase64 = null;
+                OnPropertyChanged(nameof(ProtobufBase64));
+            }
+        }
     }
-    
-    public override int GetHashCode()
+
+    public string? ProtobufBase64 => ProtobufContent is null
+        ? null
+        : _protobufBase64 ??= Convert.ToBase64String(ProtobufContent);
+
+    public string? AvatarUrl => !string.IsNullOrWhiteSpace(CachedAvatarUrl)
+        ? CachedAvatarUrl
+        : SenderId == 0
+            ? null
+            : $"http://q1.qlogo.cn/g?b=qq&nk={SenderId}&s=100";
+
+    public bool IsForwardedCardOnly =>
+        Segments.Count == 1 && Segments[0].Type == AvaQQMessageSegmentType.ForwardedMessage;
+
+    public bool IsCardOnly =>
+        Segments.Count == 1 &&
+        Segments[0].Type is AvaQQMessageSegmentType.ForwardedMessage or AvaQQMessageSegmentType.SharedContact;
+
+    public bool HasReply => Reply is not null;
+
+    public bool CanSelect => !IsSystemHint;
+
+    public bool IsNormalMessage => !IsSystemHint;
+
+    public bool HasSystemHintActionImage => !string.IsNullOrWhiteSpace(SystemHintActionImageUrl);
+
+    public bool HasSystemHintTargetName => !string.IsNullOrWhiteSpace(SystemHintTargetName);
+
+    public bool HasSystemHintSuffix => !string.IsNullOrWhiteSpace(SystemHintSuffix);
+
+    public double MessageMinHeight => IsSystemHint ? 28 : 42;
+
+    public Thickness MessageContentPadding => IsCardOnly
+        ? new Thickness(0)
+        : new Thickness(10, 8);
+
+    public string HoverTimeText
     {
-        return MessageId.GetHashCode();
+        get
+        {
+            if (MessageTime <= 0)
+                return string.Empty;
+
+            var messageTime = DateTimeOffset.FromUnixTimeSeconds(MessageTime).LocalDateTime;
+            var now = DateTime.Now;
+            return messageTime.Year == now.Year
+                ? messageTime.ToString("MM-dd HH:mm:ss")
+                : messageTime.ToString("yyyy-MM-dd HH:mm:ss");
+        }
     }
+
+    [ObservableProperty]
+    public partial bool IsHoverTimeVisible { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSelected { get; set; }
+
+    [ObservableProperty]
+    public partial string Name { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsJumpHighlightVisible { get; set; }
 }

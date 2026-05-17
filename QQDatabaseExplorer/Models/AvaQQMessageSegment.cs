@@ -1,0 +1,155 @@
+namespace QQDatabaseExplorer.Models;
+
+public sealed class AvaQQMessageSegment
+{
+    public AvaQQMessageSegmentType Type { get; init; }
+    public AvaQQMessageSegmentTone Tone { get; init; }
+    public string Text { get; init; } = string.Empty;
+    public string? LinkUrl { get; init; }
+    public int? FaceId { get; init; }
+    public string? FaceName { get; init; }
+    public string? FaceAssetPath { get; init; }
+    public string? ImageLocalPath { get; init; }
+    public int? ImageWidth { get; init; }
+    public int? ImageHeight { get; init; }
+    public int? ImageMaxWidth { get; init; }
+    public int? ImageMaxHeight { get; init; }
+    public string? ImageDisplayText { get; init; }
+    public bool IsImageAvailable { get; init; }
+    public ForwardedMessageCard? ForwardedMessage { get; init; }
+    public SharedContactCard? SharedContact { get; init; }
+
+    public string DisplayText
+    {
+        get
+        {
+            if (Type is AvaQQMessageSegmentType.Text or AvaQQMessageSegmentType.Unsupported)
+                return Text;
+
+            if (!string.IsNullOrEmpty(FaceName))
+                return $"[{FaceName}]";
+
+            if (Type == AvaQQMessageSegmentType.Image)
+                return string.IsNullOrEmpty(ImageDisplayText) ? "[图片]" : ImageDisplayText;
+
+            if (Type == AvaQQMessageSegmentType.ForwardedMessage)
+                return ForwardedMessage?.CopyText ?? "[聊天记录]";
+
+            if (Type == AvaQQMessageSegmentType.SharedContact)
+                return SharedContact?.CopyText ?? "[名片]";
+
+            return FaceId is null ? "[QQ表情]" : $"[QQ表情:{FaceId}]";
+        }
+    }
+
+    public static AvaQQMessageSegment CreateText(
+        string text,
+        AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal,
+        string? linkUrl = null)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Text,
+            Tone = tone,
+            Text = text,
+            LinkUrl = linkUrl,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateUnsupportedText(string text)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Unsupported,
+            Tone = AvaQQMessageSegmentTone.Warning,
+            Text = text,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateQQFace(int faceId)
+    {
+        var face = QQFaceCatalog.Get(faceId);
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.QQFace,
+            FaceId = faceId,
+            FaceName = face?.Name,
+            FaceAssetPath = face?.AssetPath,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateImage(
+        string? localPath,
+        int? width,
+        int? height,
+        string displayText = "[图片]",
+        int? maxWidth = null,
+        int? maxHeight = null)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Image,
+            ImageLocalPath = localPath,
+            ImageWidth = width,
+            ImageHeight = height,
+            ImageMaxWidth = maxWidth,
+            ImageMaxHeight = maxHeight,
+            ImageDisplayText = displayText,
+            IsImageAvailable = true,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateBrokenImage(
+        int? width,
+        int? height,
+        string displayText = "[图片已损坏]",
+        int? maxWidth = null,
+        int? maxHeight = null)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Image,
+            Tone = AvaQQMessageSegmentTone.Warning,
+            ImageWidth = width,
+            ImageHeight = height,
+            ImageMaxWidth = maxWidth,
+            ImageMaxHeight = maxHeight,
+            ImageDisplayText = displayText,
+            IsImageAvailable = false,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateForwardedMessage(ForwardedMessageCard card)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.ForwardedMessage,
+            ForwardedMessage = card,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateSharedContact(SharedContactCard card)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.SharedContact,
+            SharedContact = card,
+        };
+    }
+}
+
+public enum AvaQQMessageSegmentType
+{
+    Text,
+    QQFace,
+    Image,
+    ForwardedMessage,
+    SharedContact,
+    Unsupported,
+}
+
+public enum AvaQQMessageSegmentTone
+{
+    Normal,
+    Warning,
+}

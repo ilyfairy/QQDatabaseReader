@@ -1,0 +1,49 @@
+<UserControl
+    x:Class="QQDatabaseExplorer.Views.SettingsTab"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:vm="clr-namespace:QQDatabaseExplorer.ViewModels"
+    x:DataType="vm:SettingsTabViewModel"
+    d:DesignHeight="500"
+    d:DesignWidth="800"
+    mc:Ignorable="d">
+    <Grid Background="#FFF7F8FA">
+        <StackPanel
+            Width="520"
+            Margin="28"
+            HorizontalAlignment="Left"
+            Spacing="16">
+            <TextBlock
+                FontSize="20"
+                FontWeight="SemiBold"
+                Text="设置" />
+
+            <Border
+                Padding="16"
+                Background="White"
+                BorderBrush="#12000000"
+                BorderThickness="1"
+                CornerRadius="8">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                    <TextBlock
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Text="始终显示消息时间" />
+                    <ToggleSwitch
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        IsChecked="{Binding AlwaysShowMessageTime, Mode=TwoWay}" />
+                    <TextBlock
+                        Grid.Row="1"
+                        Grid.ColumnSpan="2"
+                        Margin="0,6,72,0"
+                        Foreground="#666"
+                        Text="在聊天消息的昵称右侧一直显示日期时间。关闭后仍按当前逻辑悬停一秒显示。"
+                        TextWrapping="Wrap" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </Grid>
+</UserControl>

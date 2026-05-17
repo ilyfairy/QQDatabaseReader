@@ -4,40 +4,157 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:QQDatabaseExplorer.ViewModels"
         mc:Ignorable="d"
-        Width="400"
-        Height="300"
+        Width="720"
+        Height="560"
         x:Class="QQDatabaseExplorer.OpenDatabaseDialog"
         Title="打开数据库"
         x:DataType="vm:OpenDatabaseDialogViewModel"
         WindowStartupLocation="CenterOwner">
 
-    <Border Padding="8">
+    <Border Padding="12">
         <Grid RowDefinitions="* Auto">
-            <StackPanel Orientation="Vertical" Spacing="8">
-                <DockPanel>
-                    <TextBlock Text="数据库路径: " VerticalAlignment="Center" />
-                    <TextBox Text="{Binding DatabaseFilePath}" />
-                </DockPanel>
-                <DockPanel>
-                    <TextBlock Text="数据库类型: " VerticalAlignment="Center" />
-                    <ComboBox ItemsSource="{Binding DatabaseTypes}"
-                              DisplayMemberBinding="{Binding Value}" SelectedValueBinding="{Binding Key}" SelectedValue="{Binding DatabaseType}" />
-                </DockPanel>
-                <DockPanel ToolTip.Tip="数据库密码, 如果数据库没有加密可以不用填, 对于AndroidQQNT 可以通过NtUid和Rand来自动计算出Key">
-                    <TextBlock Text="数据库密码: " VerticalAlignment="Center" />
-                    <TextBox Text="{Binding Key}" />
-                </DockPanel>
-                <DockPanel ToolTip.Tip="[AndroidQQNT]">
-                    <TextBlock Text="NtUid: " VerticalAlignment="Center" />
-                    <TextBox Text="{Binding NtUid}" />
-                </DockPanel>
-                <DockPanel ToolTip.Tip="[AndroidQQNT] 可以自动从数据库头部获取">
-                    <TextBlock Text="Rand: " VerticalAlignment="Center" />
-                    <TextBox Text="{Binding Rand}" />
-                </DockPanel>
-            </StackPanel>
-            <DockPanel Grid.Row="1">
-                <Button DockPanel.Dock="Left" Content="登录QQ自动获取Key" Command="{Binding FindDatabaseKeyCommand}" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Orientation="Vertical" Spacing="10">
+                    <DockPanel>
+                        <TextBlock Width="152" Text="类型:" VerticalAlignment="Center" />
+                        <ComboBox
+                            Width="180"
+                            ItemsSource="{Binding PlatformTypes}"
+                            DisplayMemberBinding="{Binding Value}"
+                            SelectedValueBinding="{Binding Key}"
+                            SelectedValue="{Binding PlatformType}" />
+                    </DockPanel>
+
+                    <StackPanel
+                        Orientation="Vertical"
+                        Spacing="8"
+                        IsVisible="{Binding IsNtPlatform}">
+                        <DockPanel ToolTip.Tip="[QQNT] nt_msg.db">
+                            <TextBlock Width="152" Text="nt_msg.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Tag="nt_msg.db"
+                                Click="PickNtMessageDbButton_Click" />
+                            <TextBox Text="{Binding NtMessageDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] nt_msg.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding Key}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] group_info.db">
+                            <TextBlock Width="152" Text="group_info.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Tag="group_info.db"
+                                Click="PickNtGroupInfoDbButton_Click" />
+                            <TextBox Text="{Binding NtGroupInfoDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] group_info.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding GroupInfoDbKey}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] profile_info.db">
+                            <TextBlock Width="152" Text="profile_info.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Tag="profile_info.db"
+                                Click="PickNtProfileInfoDbButton_Click" />
+                            <TextBox Text="{Binding NtProfileInfoDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] profile_info.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding ProfileInfoDbKey}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] group_msg_fts.db">
+                            <TextBlock Width="152" Text="group_msg_fts.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Tag="group_msg_fts.db"
+                                Click="PickNtGroupMessageFtsDbButton_Click" />
+                            <TextBox Text="{Binding NtGroupMessageFtsDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[QQNT] group_msg_fts.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding GroupMessageFtsDbKey}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="{Binding NtDataPathToolTip}">
+                            <TextBlock Width="152" Text="{Binding NtDataPathLabel}" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickNtDataPathButton_Click" />
+                            <TextBox Text="{Binding NtDataPath}" IsVisible="{Binding IsQQNT}" />
+                            <TextBox Text="{Binding MobileQQPath}" IsVisible="{Binding IsAndroidQQNT}" />
+                        </DockPanel>
+                    </StackPanel>
+
+                    <StackPanel
+                        Orientation="Vertical"
+                        Spacing="8"
+                        IsVisible="{Binding IsAndroidQQNT}">
+                        <DockPanel ToolTip.Tip="[AndroidQQNT] NtUid">
+                            <TextBlock Width="152" Text="NtUid:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding NtUid}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[AndroidQQNT] 可以自动从数据库头部获取">
+                            <TextBlock Width="152" Text="Rand:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding Rand}" />
+                        </DockPanel>
+                    </StackPanel>
+
+                    <StackPanel
+                        Orientation="Vertical"
+                        Spacing="8"
+                        IsVisible="{Binding IsPCQQ}">
+                        <DockPanel ToolTip.Tip="[PCQQ] Msg3.0.db">
+                            <TextBlock Width="152" Text="Msg3.0.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickPCQQMessageDbButton_Click" />
+                            <TextBox Text="{Binding PCQQMessageDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[PCQQ] Msg3.0.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding Key}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[PCQQ] Info.db，用于读取真实群号和群名">
+                            <TextBlock Width="152" Text="Info.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickPCQQInfoDbButton_Click" />
+                            <TextBox Text="{Binding PCQQInfoDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[PCQQ] Info.db 密钥，和 Msg3.0.db 密钥不同">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding PCQQInfoDbKey}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[PCQQ] 当前 QQ 号数据目录，用于读取 Image 等本地媒体文件">
+                            <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickPCQQDataPathButton_Click" />
+                            <TextBox Text="{Binding PCQQDataPath}" />
+                        </DockPanel>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+            <DockPanel Grid.Row="1" Margin="0,12,0,0">
+                <Button DockPanel.Dock="Left" Content="{Binding FindDatabaseKeyButtonText}" Command="{Binding FindDatabaseKeyCommand}" />
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
                     <Button Content="确定" Command="{Binding Ok}" />
                     <Button Content="取消" Command="{Binding Cancel}" />

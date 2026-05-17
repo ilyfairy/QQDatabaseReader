@@ -16,6 +16,9 @@ public class QQDatabaseTypeToStringConverter : IValueConverter
         return (value as QQDatabaseType?) switch 
         {
             QQDatabaseType.GroupInfo => "group_info.db",
+            QQDatabaseType.GroupMessageFts => "group_msg_fts.db",
+            QQDatabaseType.ProfileInfo => "profile_info.db",
+            QQDatabaseType.PCQQMessage => "PCQQ Msg3.0.db",
             QQDatabaseType.Message => "nt_msg.db",
             _ => string.Empty,
         };

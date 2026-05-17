@@ -22,14 +22,19 @@
     <UserControl.Styles>
         <Styles>
             <Style Selector="TabItem">
-                <Setter Property="Padding" Value="4" />
+                <Setter Property="Padding" Value="10,12" />
+                <Setter Property="MinWidth" Value="56" />
+                <Setter Property="MinHeight" Value="56" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
         </Styles>
     </UserControl.Styles>
 
     <TabControl
+        x:Name="MainTabControl"
         Padding="0"
-        TabIndex="{Binding TabIndex, Mode=TwoWay}"
+        SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}"
         TabStripPlacement="Left">
 
         <TabItem Name="messageTab">
@@ -47,6 +52,26 @@
                 <Image Width="32">
                     <Image.Source>
                         <SvgImage Css="* { fill: #777; }" Source="/Assets/database.svg" />
+                    </Image.Source>
+                </Image>
+            </TabItem.Header>
+        </TabItem>
+
+        <TabItem Name="groupMessageSearchTab">
+            <TabItem.Header>
+                <Image Width="32">
+                    <Image.Source>
+                        <SvgImage Css="* { fill: #777; }" Source="/Assets/search.svg" />
+                    </Image.Source>
+                </Image>
+            </TabItem.Header>
+        </TabItem>
+
+        <TabItem Name="settingsTab">
+            <TabItem.Header>
+                <Image Width="32">
+                    <Image.Source>
+                        <SvgImage Css="* { fill: #777; }" Source="/Assets/settings.svg" />
                     </Image.Source>
                 </Image>
             </TabItem.Header>

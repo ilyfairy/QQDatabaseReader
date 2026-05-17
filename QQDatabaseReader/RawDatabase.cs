@@ -10,6 +10,8 @@ public class RawDatabase : IDisposable
 {
     public string DatabaseFilePath { get; }
     public bool UseVFS { get; }
+    public bool UsePCQQVFS { get; }
+    public byte[]? PCQQKey { get; }
     public string? CipherPassword { get; }
     public int? CipherPageSize { get; }
     public int? CipherKdfIter { get; }
@@ -19,6 +21,8 @@ public class RawDatabase : IDisposable
     private sqlite3? _db;
 
     public sqlite3 Database => _db!;
+
+    public IntPtr NativeHandle => _db?.DangerousGetHandle() ?? IntPtr.Zero;
 
     static RawDatabase()
     {
@@ -36,6 +40,26 @@ public class RawDatabase : IDisposable
         DatabaseFilePath = dbFilePath;
         UseVFS = useVFS;
     }
+
+    private RawDatabase(string databaseFilePath, byte[] pcqqKey)
+    {
+        if (!File.Exists(databaseFilePath))
+        {
+            throw new Exception($"Error: Database file not found: {databaseFilePath}");
+        }
+
+        if (pcqqKey.Length != 16)
+        {
+            throw new ArgumentException("PCQQ database key must be exactly 16 bytes.", nameof(pcqqKey));
+        }
+
+        DatabaseFilePath = databaseFilePath;
+        UsePCQQVFS = true;
+        PCQQKey = pcqqKey.ToArray();
+    }
+
+    public static RawDatabase OpenPCQQ(string databaseFilePath, string key) =>
+        new(databaseFilePath, PcqqDatabaseDecryptor.ParseKey(key));
 
     public RawDatabase(string databaseFilePath, string cipherPassword, HashAlgorithmName? cipherKdfAlgorithm = null, HashAlgorithmName? cipherHmacAlgorithm = null, int cipherPageSize = 4096, int cipherKdfIter = 4000, bool useVFS = true)
     {
@@ -55,7 +79,18 @@ public class RawDatabase : IDisposable
 
     public void Initialize()
     {
-        int rc = raw.sqlite3_open_v2(DatabaseFilePath, out _db, raw.SQLITE_OPEN_READONLY, UseVFS ? QQNTFileOffsetVfs.VfsName : null);
+        string? vfsName = null;
+        if (UsePCQQVFS)
+        {
+            PCQQPageDecryptVfs.Register(PCQQKey!);
+            vfsName = PCQQPageDecryptVfs.VfsName;
+        }
+        else if (UseVFS)
+        {
+            vfsName = QQNTFileOffsetVfs.VfsName;
+        }
+
+        int rc = raw.sqlite3_open_v2(DatabaseFilePath, out _db, raw.SQLITE_OPEN_READONLY, vfsName);
         if (rc != raw.SQLITE_OK)
         {
             var errorMsg = raw.sqlite3_errmsg(Database).utf8_to_string();
@@ -112,24 +147,153 @@ public class RawDatabase : IDisposable
         var qqntIndex = buffer.IndexOf(qqntdbHeader);
         if (qqntIndex < 0)
             return null;
-        bool isRand = false;
-        StringBuilder s = new(8);
-        foreach (var item in buffer[(qqntIndex + qqntdbHeader.Length)..])
-        {
-            var isChar = char.IsLetter((char)item);
-            if (isRand && !isChar)
-            {
-                break;
-            }
-            if (isChar)
-            {
-                isRand = isChar;
-                s.Append((char)item);
-            }
+        var headerPayload = buffer[(qqntIndex + qqntdbHeader.Length)..];
+        return TryReadQQNTHeaderRand(headerPayload) ?? ScanRandToken(headerPayload);
+    }
 
+    private static string? TryReadQQNTHeaderRand(ReadOnlySpan<byte> headerPayload)
+    {
+        if (headerPayload.Length >= 4)
+        {
+            var messageLength =
+                headerPayload[0] |
+                headerPayload[1] << 8 |
+                headerPayload[2] << 16 |
+                headerPayload[3] << 24;
+
+            if (messageLength > 0 && messageLength <= headerPayload.Length - 4)
+            {
+                var value = TryReadLengthDelimitedField(headerPayload.Slice(4, messageLength), 2);
+                if (value is not null)
+                    return value;
+            }
         }
 
-        return s.ToString();
+        var scanLength = Math.Min(headerPayload.Length, 128);
+        for (var offset = 0; offset < scanLength; offset++)
+        {
+            var index = offset;
+            if (!TryReadVarint(headerPayload[..scanLength], ref index, out var tag) ||
+                tag != ((2ul << 3) | 2))
+            {
+                continue;
+            }
+
+            if (!TryReadVarint(headerPayload[..scanLength], ref index, out var length) ||
+                length > (ulong)(scanLength - index))
+            {
+                continue;
+            }
+
+            var value = DecodeRand(headerPayload.Slice(index, (int)length));
+            if (value is not null)
+                return value;
+        }
+
+        return null;
+    }
+
+    private static string? TryReadLengthDelimitedField(ReadOnlySpan<byte> payload, int fieldNumber)
+    {
+        var index = 0;
+        while (index < payload.Length)
+        {
+            if (!TryReadVarint(payload, ref index, out var tag))
+                return null;
+
+            var currentFieldNumber = (int)(tag >> 3);
+            var wireType = (int)(tag & 7);
+            switch (wireType)
+            {
+                case 0:
+                    if (!TryReadVarint(payload, ref index, out _))
+                        return null;
+                    break;
+                case 1:
+                    index += 8;
+                    break;
+                case 2:
+                    if (!TryReadVarint(payload, ref index, out var length) ||
+                        length > (ulong)(payload.Length - index))
+                    {
+                        return null;
+                    }
+
+                    var value = payload.Slice(index, (int)length);
+                    if (currentFieldNumber == fieldNumber)
+                        return DecodeRand(value);
+
+                    index += (int)length;
+                    break;
+                case 5:
+                    index += 4;
+                    break;
+                default:
+                    return null;
+            }
+
+            if (index > payload.Length)
+                return null;
+        }
+
+        return null;
+    }
+
+    private static bool TryReadVarint(ReadOnlySpan<byte> data, ref int index, out ulong value)
+    {
+        value = 0;
+        var shift = 0;
+
+        while (index < data.Length && shift < 64)
+        {
+            var item = data[index++];
+            value |= (ulong)(item & 0x7F) << shift;
+            if ((item & 0x80) == 0)
+                return true;
+
+            shift += 7;
+        }
+
+        return false;
+    }
+
+    private static string? ScanRandToken(ReadOnlySpan<byte> headerPayload)
+    {
+        StringBuilder builder = new(8);
+        foreach (var item in headerPayload)
+        {
+            var isChar = IsRandByte(item);
+            if (builder.Length > 0 && !isChar)
+                break;
+
+            if (isChar)
+                builder.Append((char)item);
+        }
+
+        return builder.Length > 0 ? builder.ToString() : null;
+    }
+
+    private static string? DecodeRand(ReadOnlySpan<byte> value)
+    {
+        if (value.Length < 4 || value.Length > 64)
+            return null;
+
+        foreach (var item in value)
+        {
+            if (!IsRandByte(item))
+                return null;
+        }
+
+        return Encoding.UTF8.GetString(value);
+    }
+
+    private static bool IsRandByte(byte value)
+    {
+        return value >= (byte)'0' && value <= (byte)'9' ||
+               value >= (byte)'A' && value <= (byte)'Z' ||
+               value >= (byte)'a' && value <= (byte)'z' ||
+               value == (byte)'_' ||
+               value == (byte)'-';
     }
 
 

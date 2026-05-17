@@ -1,69 +1,123 @@
 using System;
+using System.IO;
+using System.Linq;
+using Avalonia.Platform.Storage;
 using Avalonia.Controls;
-using CommunityToolkit.Mvvm.Messaging;
-using Microsoft.Extensions.DependencyInjection;
-using QQDatabaseExplorer.Models.Messenger;
+using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
 using QQDatabaseExplorer.ViewModels;
 using Ursa.Controls;
 
 namespace QQDatabaseExplorer.Views;
 
-public partial class MainWindow : Window, IRecipient<ShowMessageBoxMessage>, IRecipient<ShowOpenDatabaseDialogMessage>, IRecipient<ShowQQDebuggerWindowMessage>
+public partial class MainWindow : UrsaWindow
 {
-    private readonly IServiceProvider _serviceProvider;
-    private readonly IMessenger _messenger;
-    private readonly ViewModelTokenService _viewModelTokenService;
+    private readonly IDialogService _dialogService;
+    private readonly ConfigService _configService;
+    private readonly QQDatabaseService _qqDatabaseService;
 
-    public MainWindow(MainViewModel mainViewModel, MainView mainView, IServiceProvider serviceProvider, IMessenger messenger, ViewModelTokenService viewModelTokenService)
+    public MainWindow(
+        MainViewModel mainViewModel,
+        MainView mainView,
+        IDialogService dialogService,
+        ConfigService configService,
+        QQDatabaseService qqDatabaseService)
     {
         DataContext = mainViewModel;
         Content = mainView;
-        _serviceProvider = serviceProvider;
-        _messenger = messenger;
-        _viewModelTokenService = viewModelTokenService;
-        _messenger.Register<ShowMessageBoxMessage>(this);
-        _messenger.Register<ShowOpenDatabaseDialogMessage>(this);
-        _messenger.Register<ShowQQDebuggerWindowMessage>(this);
+        _dialogService = dialogService;
+        _configService = configService;
+        _qqDatabaseService = qqDatabaseService;
 
         InitializeComponent();
     }
 
-
-    public async void Receive(ShowMessageBoxMessage message)
+    private async void OpenMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (!_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
-        {
-            owner = this;
-        }
-        await MessageBox.ShowAsync(GetTopLevel(owner) as Window ?? this, message.Message, message.Title ?? string.Empty);
-        message.Completion.SetResult();
+        await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.QQNT);
     }
 
-    public async void Receive(ShowQQDebuggerWindowMessage message)
+    private async void OpenPCQQMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (message.Token is null || !_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
-        {
-            owner = this;
-        }
-
-        using var scope = _serviceProvider.CreateScope();
-        var window = scope.ServiceProvider.GetRequiredService<QQDebuggerWindow>();
-        await window.ShowDialog(GetTopLevel(owner) as Window ?? this);
-        message.Completion.SetResult(scope.ServiceProvider.GetRequiredService<QQDebuggerWindowViewModel>());
+        await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.PCQQ);
     }
 
-    public async void Receive(ShowOpenDatabaseDialogMessage message)
+    private async void OpenAndroidQQNTMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (message.Token is null || !_viewModelTokenService.Tokens.TryGetValue(message.Token, out var owner))
-        {
-            owner = this;
-        }
+        await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.AndroidQQNT);
+    }
 
-        using var scope = _serviceProvider.CreateScope();
-        var window = scope.ServiceProvider.GetRequiredService<OpenDatabaseDialog>();
-        scope.ServiceProvider.GetRequiredService<OpenDatabaseDialogViewModel>().DatabaseFilePath = message.DatabaseFilePath;
-        await window.ShowDialog(GetTopLevel(owner) as Window ?? this);
-        message.Completion.SetResult(scope.ServiceProvider.GetRequiredService<OpenDatabaseDialogViewModel>());
+    private async void SaveConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+            return;
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "保存数据库配置",
+            DefaultExtension = "json",
+            FileTypeChoices =
+            [
+                new FilePickerFileType("JSON 配置文件")
+                {
+                    Patterns = ["*.json"],
+                },
+            ],
+        });
+
+        var filePath = file?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(filePath))
+            return;
+
+        try
+        {
+            await _configService.SaveToFileAsync(filePath);
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowMessageBox($"保存数据库配置失败:\n{ex.Message}", "错误");
+        }
+    }
+
+    private async void LoadConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanOpen)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "打开数据库配置",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("JSON 配置文件")
+                {
+                    Patterns = ["*.json"],
+                },
+            ],
+        });
+
+        var filePath = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return;
+
+        try
+        {
+            await _configService.LoadFromFileAsync(filePath);
+        }
+        catch (Exception ex)
+        {
+            await _dialogService.ShowMessageBox($"打开数据库配置失败:\n{ex.Message}", "错误");
+        }
+    }
+
+    private void CloseConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _qqDatabaseService.ClearDatabases();
+    }
+
+    private void ExitMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        Close();
     }
 }

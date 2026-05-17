@@ -1,0 +1,159 @@
+<u:UrsaWindow xmlns="https://github.com/avaloniaui"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:models="using:QQDatabaseExplorer.Models"
+              xmlns:controls="using:QQDatabaseExplorer.Controls"
+              xmlns:u="https://irihi.tech/ursa"
+              x:Class="QQDatabaseExplorer.Views.ForwardedMessageDialog"
+              Title="群聊的转发记录"
+              Width="640"
+              Height="680"
+              MinWidth="420"
+              MinHeight="460"
+              Padding="0,32,0,0"
+              WindowStartupLocation="CenterOwner"
+              Background="#FFF4F4F4"
+              FontFamily="{DynamicResource DefaultFontFamily}">
+
+    <u:UrsaWindow.LeftContent>
+        <Border
+            Width="96"
+            Height="32"
+            IsHitTestVisible="False"
+            Opacity="0" />
+    </u:UrsaWindow.LeftContent>
+
+    <u:UrsaWindow.TitleBarContent>
+        <Grid Height="32" IsHitTestVisible="False">
+            <TextBlock
+                Name="DialogTitleTextBlock"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="#222"
+                Text="群聊的转发记录"
+                TextAlignment="Center"
+                TextTrimming="CharacterEllipsis" />
+        </Grid>
+    </u:UrsaWindow.TitleBarContent>
+
+    <Grid>
+        <ScrollViewer
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalScrollBarVisibility="Auto">
+            <ItemsControl
+                Name="MessageItemsControl"
+                Margin="18,10,18,18"
+                Background="Transparent">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Vertical" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+
+                <ItemsControl.DataTemplates>
+                    <DataTemplate DataType="models:AvaQQMessage">
+                        <Grid
+                            Margin="0,6,0,8"
+                            MinHeight="42"
+                            ColumnDefinitions="40 *"
+                            Background="Transparent"
+                            ContextRequested="MessageBubble_ContextRequested"
+                            HorizontalAlignment="Stretch">
+                            <Grid
+                                Width="36"
+                                Height="36"
+                                VerticalAlignment="Top">
+                                <Border
+                                    Background="#FFE8EAF0"
+                                    CornerRadius="18" />
+
+                                <controls:AvatarImage
+                                    SourceUrl="{Binding AvatarUrl}"
+                                    Stretch="UniformToFill" />
+                            </Grid>
+
+                            <StackPanel
+                                Grid.Column="1"
+                                Margin="8,0,0,0"
+                                MaxWidth="540"
+                                HorizontalAlignment="Left"
+                                Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="#666"
+                                        Text="{Binding Name}" />
+
+                                    <TextBlock
+                                        FontSize="12"
+                                        Foreground="#888"
+                                        Text="{Binding HoverTimeText}" />
+                                </StackPanel>
+
+                                <Border
+                                    HorizontalAlignment="Left"
+                                    BorderBrush="#1A000000"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Background="#FFFFFFFF"
+                                    ContextRequested="MessageBubble_ContextRequested">
+                                    <StackPanel>
+                                        <Border
+                                            MaxWidth="496"
+                                            Margin="10,8,10,0"
+                                            Padding="8,6"
+                                            HorizontalAlignment="Stretch"
+                                            Background="#08000000"
+                                            CornerRadius="4"
+                                            IsVisible="{Binding HasReply}">
+                                            <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Spacing="2">
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="#80505050"
+                                                    HorizontalAlignment="Stretch"
+                                                    Text="{Binding Reply.SenderName}"
+                                                    TextAlignment="Left"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="#80505050"
+                                                    HorizontalAlignment="Stretch"
+                                                    IsVisible="{Binding Reply.HasSourceDescription}"
+                                                    Text="{Binding Reply.SourceDescription}"
+                                                    TextAlignment="Left"
+                                                    TextTrimming="CharacterEllipsis" />
+                                                <TextBlock
+                                                    MaxHeight="70"
+                                                    Foreground="#222"
+                                                    HorizontalAlignment="Stretch"
+                                                    IsHitTestVisible="False"
+                                                    IsTabStop="False"
+                                                    Text="{Binding Reply.PreviewText}"
+                                                    TextAlignment="Left"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <controls:MessageSelectableTextBlock
+                                            Padding="{Binding MessageContentPadding}"
+                                            HorizontalAlignment="Left"
+                                            ContextFlyout="{x:Null}"
+                                            CopyingToClipboard="MessageText_CopyingToClipboard"
+                                            ContextRequested="MessageText_ContextRequested"
+                                            IsTabStop="False"
+                                            TextAlignment="Left"
+                                            Tapped="MessageText_Tapped"
+                                            controls:MessageInlineRenderer.Segments="{Binding Segments}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.DataTemplates>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</u:UrsaWindow>

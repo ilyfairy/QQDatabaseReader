@@ -4,60 +4,539 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="QQDatabaseExplorer.Views.MessageTab"
+             xmlns:controls="using:QQDatabaseExplorer.Controls"
              xmlns:vm="using:QQDatabaseExplorer.ViewModels"
              xmlns:models="using:QQDatabaseExplorer.Models"
-             xmlns:conv="using:QQDatabaseExplorer.Converters"
              x:DataType="vm:MessageTabViewModel">
 
-    <Grid ColumnDefinitions="200 5 *">
-                <ListBox
-                    Grid.Column="0"
-                    ItemsSource="{Binding Groups}"
-                    SelectedItem="{Binding SelectedGroup}">
-                    <ListBox.DataTemplates>
+    <UserControl.Styles>
+        <Style Selector="Border.GroupItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="Border.GroupItem:pointerover">
+            <Setter Property="Background" Value="#0D000000" />
+        </Style>
+        <Style Selector="Border.GroupItem.Selected">
+            <Setter Property="Background" Value="#FFE8F1FF" />
+        </Style>
+        <Style Selector="Border.GroupItem.Active">
+            <Setter Property="Background" Value="#FFDCEBFF" />
+        </Style>
+        <Style Selector="Border.MessageJumpHighlight">
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.20" />
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Border.MessageJumpHighlight.Active">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.MessageToolButton">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="Background" Value="#FFF5F6F8" />
+            <Setter Property="BorderBrush" Value="#12000000" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="Button.MessageFloatButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.MessageFloatButton:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.MessageFloatButton:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="Button.MessageFloatButton:pointerover Border.MessageFloatButtonChrome">
+            <Setter Property="Background" Value="#FFE8F2FF" />
+            <Setter Property="BorderBrush" Value="#331677FF" />
+        </Style>
+        <Style Selector="Button.MessageFloatButton:pressed Border.MessageFloatButtonChrome">
+            <Setter Property="Background" Value="#FFD6E8FF" />
+            <Setter Property="BorderBrush" Value="#551677FF" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid ColumnDefinitions="240 5 *">
+        <Grid Grid.Column="0" RowDefinitions="Auto *">
+            <Border Padding="8">
+                <TextBox
+                    MinHeight="34"
+                    VerticalContentAlignment="Center"
+                    Text="{Binding GroupSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    PlaceholderText="搜索群号、QQ号或名称" />
+            </Border>
+
+            <ScrollViewer
+                Name="GroupScrollViewer"
+                Grid.Row="1"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Auto">
+                <ItemsControl
+                    Name="GroupItemsControl"
+                    ItemsSource="{Binding Groups}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Vertical" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+
+                    <ItemsControl.DataTemplates>
                         <DataTemplate DataType="models:AvaQQGroup">
-                            <TextBlock Text="{Binding Converter={x:Static conv:QQGroupDisplayConverter.Instance}}" />
+                            <Border
+                                Classes="GroupItem"
+                                Classes.Active="{Binding IsActive}"
+                                Classes.Selected="{Binding IsSelected}"
+                                MinHeight="70"
+                                Margin="4,1"
+                                Padding="10,10"
+                                ContextRequested="GroupItem_ContextRequested"
+                                PointerPressed="GroupItem_PointerPressed">
+                                <Grid
+                                    ColumnDefinitions="40 *"
+                                    VerticalAlignment="Center">
+                                    <Border
+                                        Width="40"
+                                        Height="40"
+                                        VerticalAlignment="Center"
+                                        Background="#FFE8EAF0"
+                                        CornerRadius="20" />
+
+                                    <controls:AvatarImage
+                                        Width="40"
+                                        Height="40"
+                                        VerticalAlignment="Center"
+                                        SourceUrl="{Binding AvatarUrl}"
+                                        Stretch="UniformToFill" />
+
+                                    <Grid
+                                        Grid.Column="1"
+                                        Margin="10,0,0,0"
+                                        VerticalAlignment="Center"
+                                        RowDefinitions="Auto Auto"
+                                        ColumnDefinitions="* Auto"
+                                        RowSpacing="5">
+                                        <TextBlock
+                                            Grid.Row="0"
+                                            Grid.Column="0"
+                                            VerticalAlignment="Center"
+                                            FontSize="14"
+                                            MaxLines="1"
+                                            Text="{Binding ListDisplayName}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
+
+                                        <TextBlock
+                                            Grid.Row="0"
+                                            Grid.Column="1"
+                                            Margin="8,1,0,0"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            Foreground="#777"
+                                            Text="{Binding LatestMessageTimeText}" />
+
+                                        <TextBlock
+                                            Grid.Row="1"
+                                            Grid.Column="0"
+                                            Grid.ColumnSpan="2"
+                                            FontSize="12"
+                                            Foreground="#777"
+                                            MaxLines="1"
+                                            Text="{Binding ListLatestMessageText}"
+                                            TextTrimming="CharacterEllipsis"
+                                            TextWrapping="NoWrap" />
+                                    </Grid>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
-                    </ListBox.DataTemplates>
-                </ListBox>
+                    </ItemsControl.DataTemplates>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
 
-                <GridSplitter Grid.Column="1" />
+        <GridSplitter Grid.Column="1" />
 
-                <Border Grid.Column="2" Padding="8">
-                    <ScrollViewer Name="MessageScrollViewer">
-                        <StackPanel>
-                            <ItemsControl ItemsSource="{Binding Messages}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Vertical" Spacing="4" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.DataTemplates>
-                                    <DataTemplate DataType="models:AvaQQMessage">
-                                        <StackPanel Orientation="Vertical" Spacing="4">
+        <Grid
+            Name="MessageSelectionHost"
+            Grid.Column="2"
+            Background="Transparent"
+            ClipToBounds="True"
+            PointerPressed="MessageSelectionHost_PointerPressed"
+            PointerMoved="MessageSelectionHost_PointerMoved"
+            PointerReleased="MessageSelectionHost_PointerReleased"
+            PointerCaptureLost="MessageSelectionHost_PointerCaptureLost">
+            <Grid RowDefinitions="* Auto" Margin="8,8,8,0">
+                <ScrollViewer
+                    Name="MessageScrollViewer"
+                    Grid.Row="0"
+                    BringIntoViewOnFocusChange="False"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <ItemsControl
+                        Name="MessageItemsControl"
+                        ItemsSource="{Binding Messages}"
+                        Background="Transparent">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+
+                        <ItemsControl.DataTemplates>
+                            <DataTemplate DataType="models:AvaQQMessage">
+                                <Grid
+                                    Margin="0,6,0,8"
+                                    MinHeight="{Binding MessageMinHeight}"
+                                    ColumnDefinitions="40 *"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Stretch"
+                                    PointerEntered="MessageItem_PointerEntered"
+                                    PointerExited="MessageItem_PointerExited"
+                                    Tapped="MessageItem_Tapped">
+                                    <Border
+                                        Classes="MessageJumpHighlight"
+                                        Classes.Active="{Binding IsJumpHighlightVisible}"
+                                        Grid.ColumnSpan="2"
+                                        Margin="-4,-3,-4,-3"
+                                        Background="#33000000"
+                                        CornerRadius="8"
+                                        IsHitTestVisible="False" />
+
+                                    <Border
+                                        Grid.ColumnSpan="2"
+                                        Margin="-4,-3,-4,-3"
+                                        Background="#1A1677FF"
+                                        CornerRadius="8"
+                                        IsHitTestVisible="False"
+                                        IsVisible="{Binding IsSelected}" />
+
+                                    <Border
+                                        Grid.ColumnSpan="2"
+                                        Padding="5,2"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Background="#EEFFFFFF"
+                                        BorderBrush="#16000000"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        ContextRequested="MessageBubble_ContextRequested"
+                                        IsVisible="{Binding IsSystemHint}">
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Foreground="#1677FF"
+                                                ContextRequested="SystemHintSourceName_ContextRequested"
+                                                Text="{Binding SystemHintSourceName}" />
+
+                                            <controls:RemoteImage
+                                                Width="16"
+                                                Height="16"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding HasSystemHintActionImage}"
+                                                SourceUrl="{Binding SystemHintActionImageUrl}"
+                                                Stretch="Uniform" />
+
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                Foreground="#666"
+                                                Text="{Binding SystemHintAction}" />
+
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Foreground="#1677FF"
+                                                ContextRequested="SystemHintTargetName_ContextRequested"
+                                                IsVisible="{Binding HasSystemHintTargetName}"
+                                                Text="{Binding SystemHintTargetName}" />
+
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                Foreground="#666"
+                                                IsVisible="{Binding HasSystemHintSuffix}"
+                                                Text="{Binding SystemHintSuffix}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Grid
+                                        Width="36"
+                                        Height="36"
+                                        VerticalAlignment="Top"
+                                        ContextRequested="MessageAvatar_ContextRequested"
+                                        IsVisible="{Binding IsNormalMessage}">
+                                        <Border
+                                            Background="#FFE8EAF0"
+                                            CornerRadius="18" />
+
+                                        <controls:AvatarImage
+                                            SourceUrl="{Binding AvatarUrl}"
+                                            Stretch="UniformToFill" />
+                                    </Grid>
+
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        Margin="8,0,0,0"
+                                        HorizontalAlignment="Left"
+                                        IsVisible="{Binding IsNormalMessage}"
+                                        Spacing="4">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
                                             <TextBlock
                                                 FontSize="12"
-                                                FontWeight="SemiBold"
                                                 Foreground="#666"
                                                 Text="{Binding Name}" />
-                                            <Border
-                                                Margin="12,0,0,0"
-                                                Padding="8"
-                                                HorizontalAlignment="Left"
-                                                BorderBrush="#AAAAAAAA"
-                                                BorderThickness="1"
-                                                CornerRadius="8">
-                                                <SelectableTextBlock
-                                                    HorizontalAlignment="Left"
-                                                    Text="{Binding DisplayText}"
-                                                    TextWrapping="Wrap" />
-                                            </Border>
+
+                                            <TextBlock
+                                                FontSize="12"
+                                                Foreground="#888"
+                                                IsVisible="{Binding IsHoverTimeVisible}"
+                                                Text="{Binding HoverTimeText}" />
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.DataTemplates>
-                            </ItemsControl>
+
+                                        <Border
+                                            HorizontalAlignment="Left"
+                                            BorderBrush="#1A000000"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Background="#FFFFFFFF"
+                                            ContextRequested="MessageBubble_ContextRequested"
+                                            Tapped="MessageBubble_Tapped"
+                                            DoubleTapped="MessageBubble_DoubleTapped">
+                                            <Grid
+                                                HorizontalAlignment="Stretch"
+                                                RowDefinitions="Auto Auto">
+                                                <Border
+                                                    Name="ReplyPreviewBorder"
+                                                    Grid.Row="0"
+                                                    Margin="10,8,10,0"
+                                                    Padding="8,6"
+                                                    HorizontalAlignment="Stretch"
+                                                    Background="#08000000"
+                                                    CornerRadius="4"
+                                                    Cursor="Hand"
+                                                    IsVisible="{Binding HasReply}"
+                                                    Tapped="ReplyPreview_Tapped">
+                                                    <StackPanel HorizontalAlignment="Stretch" Spacing="2">
+                                                        <TextBlock
+                                                            FontSize="12"
+                                                            Foreground="#80505050"
+                                                            HorizontalAlignment="Stretch"
+                                                            Text="{Binding Reply.SenderName}"
+                                                            TextAlignment="Left"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock
+                                                            FontSize="12"
+                                                            Foreground="#80505050"
+                                                            HorizontalAlignment="Stretch"
+                                                            IsVisible="{Binding Reply.HasSourceDescription}"
+                                                            Text="{Binding Reply.SourceDescription}"
+                                                            TextAlignment="Left"
+                                                            TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock
+                                                            MaxHeight="70"
+                                                            Foreground="#222"
+                                                            HorizontalAlignment="Stretch"
+                                                            IsHitTestVisible="False"
+                                                            Text="{Binding Reply.PreviewText}"
+                                                            TextAlignment="Left"
+                                                            TextTrimming="CharacterEllipsis"
+                                                            TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </Border>
+
+                                                <controls:MessageSelectableTextBlock
+                                                    Grid.Row="1"
+                                                    Padding="{Binding MessageContentPadding}"
+                                                    HorizontalAlignment="Stretch"
+                                                    ContextFlyout="{x:Null}"
+                                                    CopyingToClipboard="MessageText_CopyingToClipboard"
+                                                    ContextRequested="MessageText_ContextRequested"
+                                                    TextAlignment="Left"
+                                                    Tapped="MessageText_Tapped"
+                                                    DoubleTapped="MessageText_DoubleTapped"
+                                                    controls:MessageInlineRenderer.Segments="{Binding Segments}"
+                                                    TextWrapping="Wrap" />
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.DataTemplates>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <Border
+                    Grid.Row="1"
+                    Padding="8,6"
+                    Background="#FAFFFFFF"
+                    BorderBrush="#14000000"
+                    BorderThickness="0,1,0,0">
+                    <Border.IsVisible>
+                        <Binding Path="SelectedGroup" Converter="{x:Static ObjectConverters.IsNotNull}" />
+                    </Border.IsVisible>
+                    <Grid ColumnDefinitions="* Auto" ColumnSpacing="12">
+                        <TextBlock
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            Foreground="#666"
+                            IsVisible="{Binding HasMessageFilter}"
+                            Text="{Binding MessageFilterSummary}" />
+                        <StackPanel
+                            Grid.Column="1"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            Spacing="8">
+                            <Button
+                                Classes="MessageToolButton"
+                                MinWidth="72"
+                                Click="OpenMessageFilterButton_Click"
+                                Content="筛选"
+                                ToolTip.Tip="筛选时间日期和发送者" />
+                            <Button
+                                Classes="MessageToolButton"
+                                MinWidth="72"
+                                Click="ClearMessageFilterButton_Click"
+                                Content="清除筛选"
+                                IsVisible="{Binding HasMessageFilter}" />
                         </StackPanel>
-                    </ScrollViewer>
+                    </Grid>
                 </Border>
             </Grid>
+
+            <Canvas
+                Name="MessageSelectionOverlay"
+                ClipToBounds="True"
+                IsHitTestVisible="False">
+                <Border
+                    Name="MessageSelectionRectangle"
+                    Background="#331677FF"
+                    BorderBrush="#991677FF"
+                    BorderThickness="1"
+                    IsVisible="False" />
+            </Canvas>
+
+            <Border
+                Margin="0,0,0,16"
+                Padding="14,10"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Background="#F7FFFFFF"
+                BorderBrush="#22000000"
+                BorderThickness="1"
+                BoxShadow="0 8 24 0 #22000000"
+                CornerRadius="8"
+                IsVisible="{Binding IsMessageMultiSelectMode}">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        Foreground="#555"
+                        Text="{Binding SelectedMessageCount, StringFormat=已选择 {0} 条}" />
+                    <Button
+                        MinWidth="72"
+                        Padding="14,5"
+                        Click="CopySelectedMessages_Click"
+                        Content="复制" />
+                    <Button
+                        MinWidth="72"
+                        Padding="14,5"
+                        Click="CancelMessageSelection_Click"
+                        Content="取消" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel
+                Margin="0,0,18,66"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Spacing="10">
+                <Button
+                    Name="JumpToEarliestButton"
+                    Classes="MessageFloatButton"
+                    Width="44"
+                    Height="44"
+                    Click="JumpToEarliestButton_Click"
+                    IsVisible="False"
+                    ToolTip.Tip="回到最早的消息">
+                    <Border
+                        Classes="MessageFloatButtonChrome"
+                        Width="40"
+                        Height="40"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#FFFFFFFF"
+                        BorderBrush="#1A1677FF"
+                        BorderThickness="1"
+                        CornerRadius="20">
+                        <Image
+                            Width="24"
+                            Height="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                            <Image.Source>
+                                <SvgImage Source="/Assets/arrow-up.svg" />
+                            </Image.Source>
+                        </Image>
+                    </Border>
+                </Button>
+
+                <Button
+                    Name="ReturnToLatestButton"
+                    Classes="MessageFloatButton"
+                    Width="44"
+                    Height="44"
+                    Click="ReturnToLatestButton_Click"
+                    IsVisible="False"
+                    ToolTip.Tip="回到最新消息">
+                    <Border
+                        Classes="MessageFloatButtonChrome"
+                        Width="40"
+                        Height="40"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#FFFFFFFF"
+                        BorderBrush="#1A1677FF"
+                        BorderThickness="1"
+                        CornerRadius="20">
+                        <Image
+                            Width="24"
+                            Height="24"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                            <Image.Source>
+                                <SvgImage Source="/Assets/arrow-down.svg" />
+                            </Image.Source>
+                        </Image>
+                    </Border>
+                </Button>
+            </StackPanel>
+
+            <Border
+                Name="MessageToastBorder"
+                Padding="16,8"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="#DD202124"
+                CornerRadius="18"
+                IsHitTestVisible="False"
+                IsVisible="False">
+                <TextBlock
+                    Name="MessageToastText"
+                    Foreground="White"
+                    FontSize="13" />
+            </Border>
+        </Grid>
+    </Grid>
 </UserControl>

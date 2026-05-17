@@ -1,0 +1,147 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:QQDatabaseExplorer.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="700"
+        x:Class="QQDatabaseExplorer.Views.ProtobufAnalyzerDialog"
+        x:DataType="vm:ProtobufAnalyzerDialogViewModel"
+        Title="Protobuf 分析器" Width="960" Height="700"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource SystemRegionBrush}"
+        FontFamily="{DynamicResource DefaultFontFamily}">
+
+    <Grid RowDefinitions="Auto,Auto,*" Margin="10,8,10,6">
+        <Grid.Styles>
+            <Style Selector="TreeViewItem" x:DataType="vm:ProtobufFieldNode">
+                <Setter Property="MinHeight" Value="28" />
+                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="FocusAdorner" Value="{x:Null}" />
+                <Setter Property="Transitions" Value="{x:Null}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:pointerover">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:focus">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:focus-within">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor /template/ Border#PART_ContentPresenterBorder">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:pointerover /template/ Border#PART_ContentPresenterBorder">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:pressed /template/ Border#PART_ContentPresenterBorder">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:focus /template/ Border#PART_ContentPresenterBorder">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+            <Style Selector="TextBox.analyzer-editor:focus-within /template/ Border#PART_ContentPresenterBorder">
+                <Setter Property="Background" Value="{DynamicResource TextBoxDefaultBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource SemiColorBorder}" />
+            </Style>
+        </Grid.Styles>
+        <!-- Row 0: 输入区域 -->
+        <StackPanel Grid.Row="0" Spacing="6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="Protobuf (Base64 / Hex):" VerticalAlignment="Center" FontWeight="Bold" />
+                <Button Content="解析" Command="{Binding ParseCommand}" MinWidth="52" Height="26" />
+                <Button Content="清空" Command="{Binding ClearCommand}" MinWidth="52" Height="26" />
+            </StackPanel>
+            <TextBox Classes="analyzer-editor"
+                     Text="{Binding SourceBase64}"
+                     AcceptsReturn="True" MinHeight="44" MaxHeight="64"
+                     PlaceholderText="粘贴 Base64 或 Hex 编码的 Protobuf 数据…"
+                     TextWrapping="Wrap" FontSize="12" Padding="6,4" />
+        </StackPanel>
+
+        <!-- Row 1: 视图切换按钮 -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="4" Margin="0,6,0,4">
+            <Button Content="树形" Command="{Binding SwitchToTreeCommand}"
+                    MinWidth="52" Height="26" FontSize="12"
+                    IsDefault="{Binding ViewMode, Converter={x:Static vm:ViewModeEqualityConverter.Instance}, ConverterParameter=0}" />
+            <Button Content="JSON" Command="{Binding SwitchToJsonCommand}"
+                    MinWidth="52" Height="26" FontSize="12" />
+            <TextBlock Text="{Binding StatusText}" Foreground="#E06050"
+                       VerticalAlignment="Center" Margin="12,0,0,0" FontSize="11"
+                       IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+
+        <!-- Row 2: 主视图区 (单视图切换) -->
+        <Grid Grid.Row="2" Margin="0,4,0,0">
+            <!-- 树形视图 (TreeView 内置 ScrollViewer) -->
+            <TreeView Name="FieldTree"
+                      AutoScrollToSelectedItem="False"
+                      ItemsSource="{Binding RootNodes}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                      ScrollViewer.BringIntoViewOnFocusChange="False"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      IsVisible="{Binding ViewMode, Converter={x:Static vm:ViewModeEqualityConverter.Instance}, ConverterParameter=0}">
+                <TreeView.ItemTemplate>
+                    <TreeDataTemplate ItemsSource="{Binding Children}">
+                        <Border
+                            MinHeight="28"
+                            Padding="4,0"
+                            VerticalAlignment="Stretch"
+                            ContextRequested="FieldTreeNode_ContextRequested">
+                            <Grid
+                                ColumnDefinitions="85,55,140,*"
+                                VerticalAlignment="Center">
+                                <!-- Field# -->
+                                <TextBlock Grid.Column="0" Text="{Binding FieldDisplay}"
+                                           FontSize="12" FontFamily="Cascadia Code,Consolas,monospace"
+                                           Foreground="{DynamicResource SystemAccentColor}"
+                                           VerticalAlignment="Center" Margin="2,0,4,0" />
+                                <!-- WireType -->
+                                <TextBlock Grid.Column="1" Text="{Binding WireType}"
+                                           FontSize="10" FontFamily="Cascadia Code,Consolas,monospace"
+                                           Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,4,0" />
+                                <!-- Description -->
+                                <TextBlock Grid.Column="2" Text="{Binding Description}"
+                                           FontSize="11" Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,6,0"
+                                           TextWrapping="Wrap" />
+                                <!-- Value -->
+                                <TextBlock Grid.Column="3" Text="{Binding DecodedValue}"
+                                           FontSize="12" FontFamily="Cascadia Code,Consolas,monospace"
+                                           Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                        </Border>
+                    </TreeDataTemplate>
+                </TreeView.ItemTemplate>
+            </TreeView>
+
+            <!-- JSON 视图 -->
+            <TextBox Classes="analyzer-editor"
+                     Text="{Binding JsonView}" IsReadOnly="True"
+                     IsVisible="{Binding ViewMode, Converter={x:Static vm:ViewModeEqualityConverter.Instance}, ConverterParameter=1}"
+                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                     HorizontalContentAlignment="Left" VerticalContentAlignment="Top"
+                     FontFamily="Cascadia Code,Consolas,monospace"
+                     FontSize="12" TextWrapping="NoWrap" Padding="8"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     AcceptsReturn="True" />
+        </Grid>
+
+    </Grid>
+</Window>

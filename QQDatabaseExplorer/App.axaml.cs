@@ -1,12 +1,12 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using QQDatabaseExplorer.ViewModels;
 using QQDatabaseExplorer.Views;
-using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Services;
 using QQDatabaseExplorer.Models;
 
@@ -18,6 +18,7 @@ public partial class App : Application
 
     public override void Initialize()
     {
+        SmoothScrollViewer.Initialize();
         AvaloniaXamlLoader.Load(this);
     }
 
@@ -25,10 +26,12 @@ public partial class App : Application
     {
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
 
-        builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
         builder.Services.AddSingleton<QQDatabaseService>();
-        builder.Services.AddTransient<MessageBoxService>();
         builder.Services.AddSingleton<ViewModelTokenService>();
+        builder.Services.AddSingleton<ConfigService>();
+        builder.Services.AddSingleton<AppSettingsService>();
+        builder.Services.AddSingleton<IDialogService, DialogService>();
+        builder.Services.AddSingleton<IClipboardService, ClipboardService>();
         builder.Services.AddTransient<ViewModelToken>();
 
         builder.Services.AddSingleton<MainWindow>();
@@ -41,6 +44,12 @@ public partial class App : Application
         builder.Services.AddSingleton<DatabaseTab>();
         builder.Services.AddSingleton<DatabaseTabViewModel>();
 
+        builder.Services.AddSingleton<GroupMessageSearchView>();
+        builder.Services.AddSingleton<GroupMessageSearchViewModel>();
+
+        builder.Services.AddSingleton<SettingsTab>();
+        builder.Services.AddSingleton<SettingsTabViewModel>();
+
         builder.Services.AddScoped<OpenDatabaseDialog>();
         builder.Services.AddScoped<OpenDatabaseDialogViewModel>();
 
@@ -50,16 +59,24 @@ public partial class App : Application
         builder.Services.AddScoped<QQDebuggerWindow>();
         builder.Services.AddScoped<QQDebuggerWindowViewModel>();
 
+        builder.Services.AddScoped<PCQQKeyDumpWindow>();
+        builder.Services.AddScoped<PCQQKeyDumpWindowViewModel>();
+
+        builder.Services.AddScoped<ProtobufAnalyzerDialog>();
+        builder.Services.AddScoped<ProtobufAnalyzerDialogViewModel>();
+
+        builder.Services.AddScoped<MessageFilterDialog>();
+        builder.Services.AddScoped<MessageFilterDialogViewModel>();
+
         Host = builder.Build();
+        Host.Services.GetRequiredService<AppSettingsService>().Load();
 
         Host.Start();
 
-        // Line below is needed to remove Avalonia data validation.
-        // Without this line you will get duplicate validations from both Avalonia and CT
-        BindingPlugins.DataValidators.RemoveAt(0);
-
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
+            desktop.Exit += (_, _) => Host.Dispose();
             desktop.MainWindow = Host.Services.GetRequiredService<MainWindow>();
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)

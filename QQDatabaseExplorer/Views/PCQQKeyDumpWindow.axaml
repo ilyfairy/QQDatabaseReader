@@ -1,0 +1,89 @@
+<u:UrsaWindow xmlns="https://github.com/avaloniaui"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+              xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+              xmlns:u="https://irihi.tech/ursa"
+              mc:Ignorable="d"
+              x:Class="QQDatabaseExplorer.Views.PCQQKeyDumpWindow"
+              x:DataType="vm:PCQQKeyDumpWindowViewModel"
+              Title="登录PCQQ自动获取Key"
+              Width="860"
+              Height="560"
+              MinWidth="620"
+              MinHeight="420"
+              Padding="0,32,0,0"
+              WindowStartupLocation="CenterOwner"
+              Background="#FFF7F7F7"
+              FontFamily="{DynamicResource DefaultFontFamily}">
+
+    <u:UrsaWindow.LeftContent>
+        <Border Width="96" Height="32" IsHitTestVisible="False" Opacity="0" />
+    </u:UrsaWindow.LeftContent>
+
+    <u:UrsaWindow.TitleBarContent>
+        <Grid Height="32" IsHitTestVisible="False">
+            <TextBlock
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="#222"
+                Text="登录PCQQ自动获取Key"
+                TextAlignment="Center" />
+        </Grid>
+    </u:UrsaWindow.TitleBarContent>
+
+    <Grid RowDefinitions="Auto * Auto" Margin="14,12,14,14" RowSpacing="10">
+        <Grid ColumnDefinitions="Auto * Auto Auto" ColumnSpacing="8">
+            <TextBlock
+                VerticalAlignment="Center"
+                Text="PCQQ路径:" />
+            <TextBox
+                Grid.Column="1"
+                Text="{Binding QQFilePath}"
+                PlaceholderText="可选, 不填时使用默认搜索路径" />
+            <Button
+                Grid.Column="2"
+                Content="开始"
+                Command="{Binding StartCommand}" />
+            <Button
+                Grid.Column="3"
+                Content="停止"
+                Command="{Binding StopCommand}" />
+        </Grid>
+
+        <TextBox
+            Grid.Row="1"
+            Name="LogTextBox"
+            Text="{Binding LogText}"
+            IsReadOnly="True"
+            AcceptsReturn="True"
+            TextWrapping="NoWrap"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            HorizontalContentAlignment="Left"
+            VerticalContentAlignment="Top"
+            ScrollViewer.HorizontalScrollBarVisibility="Auto"
+            ScrollViewer.VerticalScrollBarVisibility="Auto"
+            FontFamily="Consolas, Cascadia Mono, Microsoft YaHei UI"
+            FontSize="12"
+            Foreground="#222"
+            Padding="8" />
+
+        <DockPanel Grid.Row="2">
+            <TextBlock
+                DockPanel.Dock="Left"
+                VerticalAlignment="Center"
+                Foreground="#666"
+                Text="{Binding StatusText}" />
+            <StackPanel
+                DockPanel.Dock="Right"
+                Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8">
+                <Button Content="关闭" Command="{Binding CloseCommand}" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</u:UrsaWindow>

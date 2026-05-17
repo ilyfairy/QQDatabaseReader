@@ -1,23 +1,19 @@
-
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Win32;
 using QQDatabaseExplorer.Models;
-using QQDatabaseExplorer.Models.Messenger;
 using QQDatabaseExplorer.Services;
-using QQDatabaseKeyFinder;
+using QQDatabaseKeyDump;
 
 namespace QQDatabaseExplorer.ViewModels;
 
 public partial class QQDebuggerWindowViewModel : ViewModelBase
 {
-    private readonly IMessenger _messenger;
-    private readonly MessageBoxService _messageBoxService;
+    private readonly IDialogService _dialogService;
 
     public ViewModelToken ViewModelToken { get; } = new();
 
@@ -27,8 +23,10 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
     [ObservableProperty]
     public partial string Key { get; set; } = string.Empty;
 
-    public QQDebuggerWindowViewModel(IMessenger messenger, MessageBoxService messageBoxService)
+    public QQDebuggerWindowViewModel(IDialogService dialogService)
     {
+        _dialogService = dialogService;
+
         HashSet<string> qqFilePaths = new();
 
         if (OperatingSystem.IsWindows())
@@ -58,22 +56,18 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
                 break;
             }
         }
-
-        _messenger = messenger;
-        _messageBoxService = messageBoxService;
     }
-
 
     [RelayCommand]
     public async Task StartDebug()
     {
         if (!File.Exists(QQFilePath))
         {
-            await _messageBoxService.ShowAsync("QQ不存在", "错误", ViewModelToken);
+            await _dialogService.ShowMessageBox("QQ不存在", "错误", ViewModelToken);
             return;
         }
 
-        await _messageBoxService.ShowAsync("接下来请登录QQ, 登录后会自动获取key", null, ViewModelToken);
+        await _dialogService.ShowMessageBox("接下来打开QQ, 登录后会自动获取key", ownerToken: ViewModelToken);
 
         await Task.Run(() =>
         {
@@ -82,13 +76,13 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
 
         if (string.IsNullOrWhiteSpace(Key))
         {
-            await _messageBoxService.ShowAsync("Key获取失败", "错误", ViewModelToken);
+            await _dialogService.ShowMessageBox("Key获取失败", "错误", ViewModelToken);
         }
     }
 
     [RelayCommand]
     public void Close()
     {
-        _messenger.Send<CloseQQDebuggerWindowMessage>();
+        _dialogService.Close(ViewModelToken);
     }
 }

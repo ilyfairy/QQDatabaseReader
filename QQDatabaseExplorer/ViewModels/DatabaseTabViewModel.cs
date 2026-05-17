@@ -1,50 +1,57 @@
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.Input;
-using CommunityToolkit.Mvvm.Messaging;
 using QQDatabaseExplorer.Models;
-using QQDatabaseExplorer.Models.Messenger;
 using QQDatabaseExplorer.Services;
 using QQDatabaseReader.Database;
 
 namespace QQDatabaseExplorer.ViewModels;
 
-public partial class DatabaseTabViewModel : ViewModelBase, IRecipient<AddDatabaseMessage>, IRecipient<RemoveDatabaseMessage>
+public partial class DatabaseTabViewModel : ViewModelBase
 {
-    private readonly IMessenger _messenger;
     private readonly QQDatabaseService _qqDatabaseService;
+    private readonly IDialogService _dialogService;
 
     public ViewModelToken ViewModelToken { get; } = new();
 
-    public ObservableCollection<IQQDatabase> DatabaseList { get; } = new();
+    public ObservableCollection<LoadedDatabaseGroup> DatabaseGroups => _qqDatabaseService.DatabaseGroups;
 
-    public DatabaseTabViewModel(IMessenger messenger, QQDatabaseService qqDatabaseService)
+    public DatabaseTabViewModel(QQDatabaseService qqDatabaseService, IDialogService dialogService)
     {
-        _messenger = messenger;
         _qqDatabaseService = qqDatabaseService;
-        _messenger.Register<AddDatabaseMessage>(this);
-        _messenger.Register<RemoveDatabaseMessage>(this);
-    }
-
-    public void Receive(AddDatabaseMessage message)
-    {
-        DatabaseList.Add(message.Database);
-    }
-
-    public void Receive(RemoveDatabaseMessage message)
-    {
-        DatabaseList.Remove(message.Database);
+        _dialogService = dialogService;
     }
 
     [RelayCommand]
-    public void RemoveDatabase(IQQDatabase qqDatabase)
+    public async Task EditDatabaseGroup(LoadedDatabaseGroup group)
     {
-        _qqDatabaseService.RemoveDatabase(qqDatabase);
+        var config = _qqDatabaseService.CreateConfigForGroup(group);
+        if (config is null)
+            return;
+
+        var updatedConfig = await _dialogService.ShowEditDatabaseDialog(config, ViewModelToken);
+        if (updatedConfig is null)
+            return;
+
+        _qqDatabaseService.ReplaceDatabaseGroup(group, updatedConfig);
     }
 
     [RelayCommand]
-    public async Task ExportDatabase(IQQDatabase qqDatabase)
+    public void RemoveDatabaseGroup(LoadedDatabaseGroup group)
     {
-        await _qqDatabaseService.ExportDatabase(qqDatabase);
+        _qqDatabaseService.RemoveDatabaseGroup(group);
+    }
+
+    [RelayCommand]
+    public void RemoveDatabase(LoadedDatabaseItem item)
+    {
+        _qqDatabaseService.RemoveDatabaseItem(item);
+    }
+
+    [RelayCommand]
+    public async Task ExportDatabase(LoadedDatabaseItem item)
+    {
+        if (item.Database is { } database)
+            await _dialogService.ShowExportDatabaseDialog(database, ViewModelToken);
     }
 }

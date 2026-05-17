@@ -1,31 +1,134 @@
-using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
-using QQDatabaseExplorer.Models.Messenger;
-using QQDatabaseExplorer.ViewModels;
-using CommunityToolkit.Mvvm.Messaging;
-using Ursa.Controls;
+using Avalonia.Platform.Storage;
+using System.Threading.Tasks;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.ViewModels;
 
 namespace QQDatabaseExplorer;
 
-public partial class OpenDatabaseDialog : Window, IRecipient<CloseDatabaseDialogMessage>
+public partial class OpenDatabaseDialog : Window
 {
     public OpenDatabaseDialogViewModel ViewModel { get; }
 
-    public OpenDatabaseDialog(IMessenger messenger, OpenDatabaseDialogViewModel viewModel, ViewModelTokenService viewModelTokenService)
+    public OpenDatabaseDialog(OpenDatabaseDialogViewModel viewModel, ViewModelTokenService viewModelTokenService)
     {
         viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
 
         ViewModel = viewModel;
         DataContext = viewModel;
-        messenger.Register<CloseDatabaseDialogMessage>(this);
+
         InitializeComponent();
     }
 
-    public void Receive(CloseDatabaseDialogMessage message)
+    private async void PickNtDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        Close();
+        if (!StorageProvider.CanPickFolder)
+            return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = ViewModel.IsAndroidQQNT ? "选择 MobileQQ 目录" : "选择 nt_data 目录",
+            AllowMultiple = false,
+        });
+
+        var folderPath = folders.Count > 0
+            ? folders[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            if (ViewModel.IsAndroidQQNT)
+                ViewModel.MobileQQPath = folderPath;
+            else
+                ViewModel.NtDataPath = folderPath;
+        }
     }
 
+    private async void PickPCQQDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder)
+            return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择 PCQQ 数据目录",
+            AllowMultiple = false,
+        });
+
+        var folderPath = folders.Count > 0
+            ? folders[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            ViewModel.PCQQDataPath = folderPath;
+        }
+    }
+
+    private async void PickNtMessageDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ViewModel.NtMessageDbPath = await PickDatabaseFileAsync("选择 nt_msg.db") ?? ViewModel.NtMessageDbPath;
+    }
+
+    private async void PickNtGroupInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ViewModel.NtGroupInfoDbPath = await PickDatabaseFileAsync("选择 group_info.db") ?? ViewModel.NtGroupInfoDbPath;
+    }
+
+    private async void PickNtGroupMessageFtsDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ViewModel.NtGroupMessageFtsDbPath = await PickDatabaseFileAsync("选择 group_msg_fts.db") ?? ViewModel.NtGroupMessageFtsDbPath;
+    }
+
+    private async void PickNtProfileInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ViewModel.NtProfileInfoDbPath = await PickDatabaseFileAsync("选择 profile_info.db") ?? ViewModel.NtProfileInfoDbPath;
+    }
+
+    private async void PickPCQQMessageDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ViewModel.PCQQMessageDbPath = await PickDatabaseFileAsync("选择 PCQQ Msg3.0.db") ?? ViewModel.PCQQMessageDbPath;
+    }
+
+    private async void PickPCQQInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanOpen)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择 PCQQ Info.db",
+            AllowMultiple = false,
+        });
+
+        var filePath = files.Count > 0
+            ? files[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            ViewModel.PCQQInfoDbPath = filePath;
+        }
+    }
+
+    private async Task<string?> PickDatabaseFileAsync(string title)
+    {
+        if (!StorageProvider.CanOpen)
+            return null;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("数据库文件")
+                {
+                    Patterns = ["*.db", "*.sqlite", "*.sqlite3"],
+                },
+                FilePickerFileTypes.All,
+            ],
+        });
+
+        return files.Count > 0
+            ? files[0].TryGetLocalPath()
+            : null;
+    }
 }

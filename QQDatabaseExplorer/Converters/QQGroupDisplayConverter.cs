@@ -13,7 +13,7 @@ public class QQGroupDisplayConverter : IValueConverter
     {
         return value switch
         {
-            AvaQQGroup group => group.GroupName | group.GroupId,
+            AvaQQGroup group => group.DisplayName,
             _ => string.Empty,
         };
     }

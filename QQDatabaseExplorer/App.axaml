@@ -2,15 +2,41 @@
     x:Class="QQDatabaseExplorer.App"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:QQDatabaseExplorer.Controls"
     xmlns:semi="https://irihi.tech/semi"
-    xmlns:usemi="https://irihi.tech/ursa/themes/semi"
-    RequestedThemeVariant="Default">
+    xmlns:usemi="clr-namespace:Ursa.Themes.Semi;assembly=Ursa.Themes.Semi"
+RequestedThemeVariant="Default">
     <!--  "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options.  -->
 
     <Application.Styles>
         <semi:SemiTheme Locale="zh-CN" />
-        <usemi:SemiTheme Locale="zh-CN"/>
-        <FluentTheme />
-        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
+        <semi:DataGridSemiTheme />
+        <semi:SemiPopupAnimations />
+        <usemi:UrsaSemiTheme Locale="zh-CN"/>
+
+        <Style Selector="ScrollViewer">
+            <Setter Property="controls:SmoothScrollViewer.IsEnabled" Value="True" />
+        </Style>
+
+        <!-- 去除ListBoxItem选中样式 -->
+        <Style Selector="ListBox.NoSelect ListBoxItem">
+            <Style Selector="^:pointerover /template/ ContentPresenter">
+                <Setter Property="Background" Value="Transparent"/>
+            </Style>
+
+            <Style Selector="^:selected /template/ ContentPresenter">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
+            </Style>
+
+            <Style Selector="^:selected:pointerover /template/ ContentPresenter">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
+            </Style>
+
+            <Style Selector="^:pressed /template/ ContentPresenter">
+                <Setter Property="Background" Value="Transparent"/>
+            </Style>
+        </Style>
     </Application.Styles>
 </Application>

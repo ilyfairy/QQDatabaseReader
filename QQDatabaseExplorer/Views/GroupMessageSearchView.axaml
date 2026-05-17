@@ -1,0 +1,287 @@
+<UserControl
+    x:Class="QQDatabaseExplorer.Views.GroupMessageSearchView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:QQDatabaseExplorer.Controls"
+    xmlns:models="using:QQDatabaseExplorer.Models"
+    xmlns:vm="using:QQDatabaseExplorer.ViewModels"
+    d:DesignHeight="450"
+    d:DesignWidth="800"
+    x:DataType="vm:GroupMessageSearchViewModel"
+    mc:Ignorable="d">
+
+    <UserControl.Styles>
+        <Style Selector="ListBox.SearchGroupList">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="ListBox.SearchGroupList ListBoxItem">
+            <Setter Property="Margin" Value="4,1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="70" />
+        </Style>
+        <Style Selector="ListBox.SearchGroupList ListBoxItem /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="ListBox.SearchGroupList ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#0D000000" />
+        </Style>
+        <Style Selector="ListBox.SearchGroupList ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#FFEAE6E8" />
+        </Style>
+        <Style Selector="ListBox.SearchResultList">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="ListBox.SearchResultList ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+        </Style>
+        <Style Selector="ListBox.SearchResultList ListBoxItem /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.SearchResultList ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#08000000" />
+        </Style>
+        <Style Selector="TextBlock.SearchHighlight">
+            <Setter Property="Foreground" Value="#FF1F80FF" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto *" Background="#FFFBF7F8">
+        <Border Padding="20,16,20,12" BorderBrush="#12000000" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="* 160 Auto" ColumnSpacing="10">
+                <TextBox
+                    MinHeight="36"
+                    VerticalContentAlignment="Center"
+                    Text="{Binding QueryText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    PlaceholderText="搜索群消息 / 拼音 / 首字母 / URL"
+                    KeyDown="QueryTextBox_KeyDown" />
+
+                <TextBox
+                    Grid.Column="1"
+                    MinHeight="36"
+                    VerticalContentAlignment="Center"
+                    Text="{Binding GroupFilterText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    PlaceholderText="群号过滤"
+                    KeyDown="QueryTextBox_KeyDown" />
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                    <Button
+                        MinWidth="72"
+                        Command="{Binding SearchCommand}"
+                        Content="搜索"
+                        IsEnabled="{Binding CanSearch}" />
+                    <Button
+                        MinWidth="72"
+                        Command="{Binding ClearCommand}"
+                        Content="清空" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="300 1 *">
+            <Grid Grid.Column="0" RowDefinitions="Auto *">
+                <Border Padding="20,14,12,8">
+                    <Grid ColumnDefinitions="*">
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="13"
+                            Foreground="#666"
+                            Text="{Binding StatusText}"
+                            TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </Border>
+
+                <ListBox
+                    x:Name="SearchGroupListBox"
+                    Grid.Row="1"
+                    Classes="SearchGroupList"
+                    ItemsSource="{Binding Groups}"
+                    SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
+                    SelectionMode="Single">
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="models:AvaGroupMessageSearchGroup">
+                            <Grid ColumnDefinitions="44 *" Margin="10,8">
+                                <Grid Width="44" Height="44" VerticalAlignment="Center">
+                                    <Border Background="#FFE8EAF0" CornerRadius="22" />
+                                    <controls:AvatarImage
+                                        SourceUrl="{Binding GroupAvatarUrl}"
+                                        Stretch="UniformToFill" />
+                                </Grid>
+
+                                <Grid
+                                    Grid.Column="1"
+                                    Margin="12,0,0,0"
+                                    VerticalAlignment="Center"
+                                    RowDefinitions="Auto Auto"
+                                    RowSpacing="5">
+                                    <TextBlock
+                                        FontSize="14"
+                                        MaxLines="1"
+                                        Text="{Binding ListDisplayName}"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap" />
+                                    <TextBlock
+                                        Grid.Row="1"
+                                        FontSize="12"
+                                        Foreground="#777"
+                                        MaxLines="1"
+                                        Text="{Binding ListSummaryText}"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="NoWrap" />
+                                </Grid>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+            </Grid>
+
+            <Border Grid.Column="1" Background="#12000000" />
+
+            <Grid Grid.Column="2" RowDefinitions="Auto *">
+                <Border Padding="24,18,24,10">
+                    <Grid ColumnDefinitions="* Auto">
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="13"
+                            Foreground="#777"
+                            Text="{Binding SelectedGroup.SummaryText}"
+                            TextTrimming="CharacterEllipsis" />
+                        <TextBlock
+                            Grid.Column="1"
+                            Margin="12,0,0,0"
+                            VerticalAlignment="Center"
+                            FontSize="13"
+                            Foreground="#777"
+                            Text="{Binding SelectedGroup.DisplayName}"
+                            TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1">
+                    <ListBox
+                        x:Name="SearchResultListBox"
+                        Classes="SearchResultList"
+                        ItemsSource="{Binding Results}"
+                        SelectionMode="Single">
+                        <ListBox.DataTemplates>
+                            <DataTemplate DataType="models:AvaGroupMessageSearchResult">
+                                <Grid
+                                    ColumnDefinitions="40 *"
+                                    Margin="24,6,24,0"
+                                    Background="Transparent"
+                                    ContextRequested="SearchResultItem_ContextRequested"
+                                    DoubleTapped="SearchResultItem_DoubleTapped">
+                                    <Grid Width="38" Height="38" VerticalAlignment="Top" Margin="0,6,0,0">
+                                        <Border Background="#FFE8EAF0" CornerRadius="19" />
+                                        <controls:AvatarImage
+                                            SourceUrl="{Binding SenderAvatarUrl}"
+                                            Stretch="UniformToFill" />
+                                    </Grid>
+
+                                    <Border
+                                        Grid.Column="1"
+                                        Margin="12,0,0,0"
+                                        Padding="0,0,0,16"
+                                        BorderBrush="#0F000000"
+                                        BorderThickness="0,0,0,1">
+                                        <Grid RowDefinitions="Auto Auto Auto" RowSpacing="7">
+                                            <Grid ColumnDefinitions="* Auto">
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="#777"
+                                                    MaxLines="1"
+                                                    Text="{Binding SenderDisplayText}"
+                                                    TextTrimming="CharacterEllipsis"
+                                                    TextWrapping="NoWrap" />
+                                                <TextBlock
+                                                    Grid.Column="1"
+                                                    Margin="12,0,0,0"
+                                                    FontSize="12"
+                                                    Foreground="#888"
+                                                    Text="{Binding MessageTimeText}" />
+                                            </Grid>
+
+                                            <TextBlock
+                                                Grid.Row="1"
+                                                FontSize="15"
+                                                Text="{Binding PreviewText}"
+                                                TextWrapping="WrapWithOverflow" />
+
+                                            <TextBlock
+                                                Grid.Row="2"
+                                                FontSize="11"
+                                                Foreground="#999"
+                                                MaxLines="1"
+                                                Text="{Binding GroupMetaDisplayText}"
+                                                TextTrimming="CharacterEllipsis"
+                                                TextWrapping="NoWrap" />
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.DataTemplates>
+                    </ListBox>
+
+                    <Border
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Padding="18,14"
+                        Background="#EFFFFFFF"
+                        BorderBrush="#18000000"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        IsHitTestVisible="False"
+                        IsVisible="{Binding IsSearching}">
+                        <StackPanel HorizontalAlignment="Center" Spacing="10">
+                            <ProgressBar
+                                Width="34"
+                                Height="34"
+                                HorizontalAlignment="Center"
+                                BorderThickness="4"
+                                IsIndeterminate="True"
+                                ShowProgressText="False"
+                                Theme="{DynamicResource ProgressRing}" />
+                            <TextBlock
+                                HorizontalAlignment="Center"
+                                FontSize="13"
+                                Foreground="#666"
+                                Text="搜索中..." />
+                        </StackPanel>
+                    </Border>
+
+                    <Border
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,0,18"
+                        Padding="14,8"
+                        Background="#EFFFFFFF"
+                        BorderBrush="#18000000"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        IsHitTestVisible="False"
+                        IsVisible="{Binding IsLoadingMore}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ProgressBar
+                                Width="18"
+                                Height="18"
+                                BorderThickness="3"
+                                IsIndeterminate="True"
+                                ShowProgressText="False"
+                                Theme="{DynamicResource ProgressRing}" />
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="12"
+                                Foreground="#666"
+                                Text="加载中..." />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>
