@@ -74,6 +74,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     public bool IsPCQQ => PlatformType is DatabasePlatformType.PCQQ;
 
+    public bool CanFindDatabaseKey => PlatformType is DatabasePlatformType.QQNT or DatabasePlatformType.PCQQ;
+
     public string NtDataPathLabel => IsAndroidQQNT ? "MobileQQ:" : "nt_data:";
 
     public string NtDataPathToolTip => IsAndroidQQNT
@@ -174,6 +176,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsAndroidQQNT));
         OnPropertyChanged(nameof(IsNtPlatform));
         OnPropertyChanged(nameof(IsPCQQ));
+        OnPropertyChanged(nameof(CanFindDatabaseKey));
         OnPropertyChanged(nameof(NtDataPathLabel));
         OnPropertyChanged(nameof(NtDataPathToolTip));
         OnPropertyChanged(nameof(FindDatabaseKeyButtonText));
@@ -254,6 +257,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             _dialogService.ShowPCQQKeyDumpWindow(ViewModelToken);
             return;
         }
+
+        if (!IsQQNT)
+            return;
 
         Key = await _dialogService.ShowQQDebuggerWindow(ViewModelToken);
     }
