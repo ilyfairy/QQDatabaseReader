@@ -559,7 +559,7 @@ public partial class QQMessageReader
                     continue;
                 }
 
-                if (string.Equals(type, "nor", StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(type, "img", StringComparison.OrdinalIgnoreCase))
                 {
                     var text = GetJsonString(item, "txt");
                     if (!string.IsNullOrWhiteSpace(text))
@@ -571,10 +571,7 @@ public partial class QQMessageReader
                     continue;
                 }
 
-                if (string.Equals(type, "img", StringComparison.OrdinalIgnoreCase))
-                {
-                    actionImageUrl ??= GetJsonString(item, "src")?.Trim();
-                }
+                actionImageUrl ??= GetJsonString(item, "src")?.Trim();
             }
 
             for (var i = 0; i < participants.Count; i++)
