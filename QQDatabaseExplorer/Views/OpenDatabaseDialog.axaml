@@ -92,8 +92,10 @@
                                 Margin="8,0,0,0"
                                 Content="选择"
                                 Click="PickNtDataPathButton_Click" />
-                            <TextBox Text="{Binding NtDataPath}" IsVisible="{Binding IsQQNT}" />
-                            <TextBox Text="{Binding MobileQQPath}" IsVisible="{Binding IsAndroidQQNT}" />
+                            <Grid>
+                                <TextBox Text="{Binding NtDataPath}" IsVisible="{Binding IsQQNT}" />
+                                <TextBox Text="{Binding MobileQQPath}" IsVisible="{Binding IsAndroidQQNT}" />
+                            </Grid>
                         </DockPanel>
                     </StackPanel>
 
