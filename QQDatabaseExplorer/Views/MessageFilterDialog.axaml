@@ -5,54 +5,92 @@
         xmlns:vm="using:QQDatabaseExplorer.ViewModels"
         xmlns:models="using:QQDatabaseExplorer.Models"
         xmlns:controls="using:QQDatabaseExplorer.Controls"
+        xmlns:primitives="using:Avalonia.Controls.Primitives"
         mc:Ignorable="d"
-        Width="720"
-        Height="640"
-        MinWidth="640"
-        MinHeight="520"
+        Width="382"
+        SizeToContent="Height"
+        MinWidth="332"
+        MinHeight="0"
+        Classes.GroupMode="{Binding IsGroupConversation}"
         x:Class="QQDatabaseExplorer.Views.MessageFilterDialog"
         Title="筛选条件"
         x:DataType="vm:MessageFilterDialogViewModel"
         WindowStartupLocation="CenterOwner">
     <Window.Styles>
+        <Style Selector="Window.GroupMode">
+            <Setter Property="Width" Value="720" />
+            <Setter Property="MinWidth" Value="640" />
+        </Style>
         <Style Selector="Button.CalendarDayButton">
-            <Setter Property="Width" Value="46" />
-            <Setter Property="Height" Value="42" />
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Margin" Value="2" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
-        <Style Selector="Button.CalendarDayButton:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="#0D1677FF" />
+        <Style Selector="Button.CalendarDayButton.Available /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
         </Style>
+        <Style Selector="Button.CalendarDayButton:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#E8F1FF" />
+            <Setter Property="BorderBrush" Value="#9EC5FF" />
+        </Style>
         <Style Selector="Button.CalendarDayButton.Selected /template/ ContentPresenter">
-            <Setter Property="Background" Value="#1677FF" />
-            <Setter Property="BorderBrush" Value="#1677FF" />
+            <Setter Property="Background" Value="#F2F7FF" />
+            <Setter Property="BorderBrush" Value="#9EC5FF" />
         </Style>
         <Style Selector="Button.CalendarDayButton.Selected TextBlock.DayNumber">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="#111827" />
         </Style>
         <Style Selector="Button.CalendarDayButton.Selected TextBlock.DayCount">
-            <Setter Property="Foreground" Value="#DDEBFF" />
+            <Setter Property="Foreground" Value="#1677FF" />
         </Style>
         <Style Selector="Button.CalendarDayButton.Empty">
             <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Opacity" Value="0" />
         </Style>
         <Style Selector="Button.CalendarDayButton.DisabledDay">
-            <Setter Property="Opacity" Value="0.35" />
+            <Setter Property="Opacity" Value="0.45" />
             <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+        <Style Selector="Button.MonthNavButton">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="#F4F6FA" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Grid.FilterContentGrid">
+            <Setter Property="Width" Value="300" />
+            <Setter Property="ColumnSpacing" Value="0" />
+        </Style>
+        <Style Selector="Grid.FilterContentGrid.GroupMode">
+            <Setter Property="Width" Value="652" />
+            <Setter Property="ColumnSpacing" Value="22" />
+        </Style>
+        <Style Selector="Border.DateCard">
+            <Setter Property="Width" Value="300" />
         </Style>
     </Window.Styles>
 
-    <Border Padding="20">
-        <Grid RowDefinitions="* Auto">
+    <Border Padding="20,20,20,10">
+        <Grid RowDefinitions="Auto Auto">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Orientation="Vertical" Spacing="20">
-                    <Grid ColumnDefinitions="320 *" ColumnSpacing="22">
+                    <Grid
+                        Classes="FilterContentGrid"
+                        Classes.GroupMode="{Binding IsGroupConversation}"
+                        HorizontalAlignment="Center"
+                        ColumnDefinitions="Auto *">
                         <StackPanel Orientation="Vertical" Spacing="10">
                             <TextBlock
                                 FontSize="14"
@@ -60,50 +98,60 @@
                                 Text="发送日期" />
 
                             <Border
-                                Padding="12"
+                                Classes="DateCard"
+                                HorizontalAlignment="Center"
+                                Padding="8"
                                 Background="#FFFDFDFE"
                                 BorderBrush="#16000000"
                                 BorderThickness="1"
                                 CornerRadius="8">
                                 <StackPanel Spacing="10">
-                                    <Grid ColumnDefinitions="40 * 40">
+                                    <Grid ColumnDefinitions="32 * 32">
                                         <Button
                                             Grid.Column="0"
+                                            Classes="MonthNavButton"
                                             Command="{Binding ShowPreviousMonthCommand}"
                                             Content="‹"
-                                            FontSize="24"
-                                            Padding="0"
+                                            FontSize="22"
+                                            IsEnabled="{Binding CanShowPreviousMonth}"
                                             ToolTip.Tip="上个月" />
                                         <TextBlock
                                             Grid.Column="1"
                                             HorizontalAlignment="Center"
                                             VerticalAlignment="Center"
-                                            FontSize="20"
+                                            FontSize="19"
                                             FontWeight="SemiBold"
                                             Text="{Binding VisibleMonthText}" />
                                         <Button
                                             Grid.Column="2"
+                                            Classes="MonthNavButton"
                                             Command="{Binding ShowNextMonthCommand}"
                                             Content="›"
-                                            FontSize="24"
-                                            Padding="0"
+                                            FontSize="22"
+                                            IsEnabled="{Binding CanShowNextMonth}"
                                             ToolTip.Tip="下个月" />
                                     </Grid>
 
-                                    <Grid ColumnDefinitions="46 46 46 46 46 46 46">
-                                        <TextBlock Grid.Column="0" HorizontalAlignment="Center" Foreground="#777" Text="日" />
-                                        <TextBlock Grid.Column="1" HorizontalAlignment="Center" Foreground="#777" Text="一" />
-                                        <TextBlock Grid.Column="2" HorizontalAlignment="Center" Foreground="#777" Text="二" />
-                                        <TextBlock Grid.Column="3" HorizontalAlignment="Center" Foreground="#777" Text="三" />
-                                        <TextBlock Grid.Column="4" HorizontalAlignment="Center" Foreground="#777" Text="四" />
-                                        <TextBlock Grid.Column="5" HorizontalAlignment="Center" Foreground="#777" Text="五" />
-                                        <TextBlock Grid.Column="6" HorizontalAlignment="Center" Foreground="#777" Text="六" />
+                                    <Grid
+                                        Width="252"
+                                        HorizontalAlignment="Center"
+                                        ColumnDefinitions="36 36 36 36 36 36 36">
+                                        <TextBlock Grid.Column="0" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="一" />
+                                        <TextBlock Grid.Column="1" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="二" />
+                                        <TextBlock Grid.Column="2" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="三" />
+                                        <TextBlock Grid.Column="3" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="四" />
+                                        <TextBlock Grid.Column="4" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="五" />
+                                        <TextBlock Grid.Column="5" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="六" />
+                                        <TextBlock Grid.Column="6" HorizontalAlignment="Center" FontSize="12" Foreground="#667085" Text="日" />
                                     </Grid>
 
-                                    <ItemsControl ItemsSource="{Binding DateCells}">
+                                    <ItemsControl
+                                        Width="252"
+                                        HorizontalAlignment="Center"
+                                        ItemsSource="{Binding DateCells}">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
-                                                <WrapPanel Width="322" Orientation="Horizontal" />
+                                                <primitives:UniformGrid Columns="7" />
                                             </ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.DataTemplates>
@@ -112,14 +160,16 @@
                                                     Classes="CalendarDayButton"
                                                     Classes.Empty="{Binding IsEmpty}"
                                                     Classes.DisabledDay="{Binding IsDisabled}"
+                                                    Classes.Available="{Binding HasMessages}"
                                                     Classes.Selected="{Binding IsSelected}"
                                                     Command="{Binding $parent[Window].DataContext.ToggleDateCommand}"
                                                     CommandParameter="{Binding}">
-                                                    <StackPanel Spacing="1">
+                                                    <StackPanel Spacing="0">
                                                         <TextBlock
                                                             Classes="DayNumber"
                                                             HorizontalAlignment="Center"
-                                                            FontSize="14"
+                                                            FontSize="13"
+                                                            FontWeight="SemiBold"
                                                             Foreground="#222"
                                                             Text="{Binding DayText}" />
                                                         <TextBlock
@@ -135,19 +185,6 @@
                                         </ItemsControl.DataTemplates>
                                     </ItemsControl>
 
-                                    <Grid ColumnDefinitions="* Auto">
-                                        <TextBlock
-                                            VerticalAlignment="Center"
-                                            FontSize="12"
-                                            Foreground="#777"
-                                            Text="只有有消息的日期可以选择" />
-                                        <Button
-                                            Grid.Column="1"
-                                            Padding="10,4"
-                                            Command="{Binding ClearDateCommand}"
-                                            Content="清除日期"
-                                            IsVisible="{Binding HasSelectedDates}" />
-                                    </Grid>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -266,7 +303,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <DockPanel Grid.Row="1" Margin="0,14,0,0">
+            <DockPanel Grid.Row="1" Margin="0,10,0,0">
                 <Button
                     DockPanel.Dock="Left"
                     Padding="12,5"

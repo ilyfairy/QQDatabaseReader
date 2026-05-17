@@ -16,6 +16,8 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     private readonly ObservableCollection<MessageSenderFilterOption> _allSenderCandidates = [];
     private readonly Dictionary<int, MessageDateFilterOption> _dateOptionsByDay = [];
     private readonly HashSet<int> _selectedDayStartTimes = [];
+    private DateTimeOffset? _firstAvailableMonth;
+    private DateTimeOffset? _lastAvailableMonth;
 
     public MessageFilterDialogViewModel(IDialogService dialogService)
     {
@@ -51,6 +53,10 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
 
     public bool HasSelectedDates => _selectedDayStartTimes.Count > 0;
 
+    public bool CanShowPreviousMonth => _firstAvailableMonth is not null && VisibleMonth > _firstAvailableMonth;
+
+    public bool CanShowNextMonth => _lastAvailableMonth is not null && VisibleMonth < _lastAvailableMonth;
+
     public void Initialize(MessageFilterDialogRequest request)
     {
         IsGroupConversation = request.IsGroupConversation;
@@ -62,6 +68,7 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
         {
             _dateOptionsByDay[dateOption.DayStartTime] = dateOption;
         }
+        RefreshAvailableMonthRange();
 
         _selectedDayStartTimes.Clear();
         foreach (var dayStartTime in request.CurrentFilter.SelectedDayStartTimes)
@@ -103,6 +110,8 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     {
         VisibleMonthText = value.ToString("yyyy-MM");
         RefreshDateCells();
+        OnPropertyChanged(nameof(CanShowPreviousMonth));
+        OnPropertyChanged(nameof(CanShowNextMonth));
     }
 
     [RelayCommand]
@@ -189,12 +198,18 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     [RelayCommand]
     public void ShowPreviousMonth()
     {
+        if (!CanShowPreviousMonth)
+            return;
+
         VisibleMonth = VisibleMonth.AddMonths(-1);
     }
 
     [RelayCommand]
     public void ShowNextMonth()
     {
+        if (!CanShowNextMonth)
+            return;
+
         VisibleMonth = VisibleMonth.AddMonths(1);
     }
 
@@ -274,11 +289,12 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
             return;
 
         var monthStart = new DateTime(VisibleMonth.Year, VisibleMonth.Month, 1);
-        var leadingDays = (int)monthStart.DayOfWeek;
+        var leadingDays = ((int)monthStart.DayOfWeek + 6) % 7;
         var daysInMonth = DateTime.DaysInMonth(monthStart.Year, monthStart.Month);
-        var cells = new List<MessageDateFilterCell>(42);
+        var cellCount = ((leadingDays + daysInMonth + 6) / 7) * 7;
+        var cells = new List<MessageDateFilterCell>(cellCount);
 
-        for (var index = 0; index < 42; index++)
+        for (var index = 0; index < cellCount; index++)
         {
             var day = index - leadingDays + 1;
             if (day < 1 || day > daysInMonth)
@@ -304,5 +320,24 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
         {
             DateCells.Add(cell);
         }
+    }
+
+    private void RefreshAvailableMonthRange()
+    {
+        if (_dateOptionsByDay.Count == 0)
+        {
+            _firstAvailableMonth = null;
+            _lastAvailableMonth = null;
+            return;
+        }
+
+        _firstAvailableMonth = ToMonthStart(_dateOptionsByDay.Keys.Min());
+        _lastAvailableMonth = ToMonthStart(_dateOptionsByDay.Keys.Max());
+    }
+
+    private static DateTimeOffset ToMonthStart(int dayStartTime)
+    {
+        var localDate = DateTimeOffset.FromUnixTimeSeconds(dayStartTime).LocalDateTime;
+        return new DateTimeOffset(new DateTime(localDate.Year, localDate.Month, 1, 0, 0, 0, DateTimeKind.Local));
     }
 }
