@@ -7,9 +7,7 @@
         xmlns:controls="using:QQDatabaseExplorer.Controls"
         xmlns:primitives="using:Avalonia.Controls.Primitives"
         mc:Ignorable="d"
-        Width="382"
         SizeToContent="Height"
-        MinWidth="332"
         MinHeight="0"
         Classes.GroupMode="{Binding IsGroupConversation}"
         x:Class="QQDatabaseExplorer.Views.MessageFilterDialog"
@@ -17,6 +15,10 @@
         x:DataType="vm:MessageFilterDialogViewModel"
         WindowStartupLocation="CenterOwner">
     <Window.Styles>
+        <Style Selector="Window">
+            <Setter Property="Width" Value="382" />
+            <Setter Property="MinWidth" Value="332" />
+        </Style>
         <Style Selector="Window.GroupMode">
             <Setter Property="Width" Value="720" />
             <Setter Property="MinWidth" Value="640" />
