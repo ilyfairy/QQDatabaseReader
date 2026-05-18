@@ -350,7 +350,7 @@ public partial class MessageTab : UserControl
         }
     }
 
-    private void LoadPreviousMessagesFromScroll()
+    private async void LoadPreviousMessagesFromScroll()
     {
         if (_messageScrollViewer is null)
             return;
@@ -363,10 +363,9 @@ public partial class MessageTab : UserControl
 
         try
         {
-            var addedCount = _viewModel.LoadPreviousMessages();
+            var addedCount = await _viewModel.LoadPreviousMessagesAsync();
             if (addedCount == 0)
             {
-                _isLoadingFromScroll = false;
                 SetVerticalOffset(0);
                 return;
             }
@@ -375,14 +374,17 @@ public partial class MessageTab : UserControl
             SmoothScrollViewer.CancelAnimation(_messageScrollViewer);
             UpdateReturnToLatestButtonVisibility();
         }
-        catch
+        catch (Exception ex)
+        {
+            ShowMessageToast($"加载历史消息失败: {ex.Message}");
+        }
+        finally
         {
             _isLoadingFromScroll = false;
-            throw;
         }
     }
 
-    private void LoadNextMessagesFromScroll()
+    private async void LoadNextMessagesFromScroll()
     {
         if (_messageScrollViewer is null)
             return;
@@ -395,10 +397,9 @@ public partial class MessageTab : UserControl
 
         try
         {
-            var addedCount = _viewModel.LoadNextMessages();
+            var addedCount = await _viewModel.LoadNextMessagesAsync();
             if (addedCount == 0)
             {
-                _isLoadingFromScroll = false;
                 SetVerticalOffset(GetMaxVerticalOffset());
                 return;
             }
@@ -407,10 +408,13 @@ public partial class MessageTab : UserControl
             SmoothScrollViewer.CancelAnimation(_messageScrollViewer);
             UpdateReturnToLatestButtonVisibility();
         }
-        catch
+        catch (Exception ex)
+        {
+            ShowMessageToast($"加载消息失败: {ex.Message}");
+        }
+        finally
         {
             _isLoadingFromScroll = false;
-            throw;
         }
     }
 
@@ -496,7 +500,6 @@ public partial class MessageTab : UserControl
         finally
         {
             _scrollOffsetSuppressCount--;
-            _isLoadingFromScroll = false;
         }
     }
 

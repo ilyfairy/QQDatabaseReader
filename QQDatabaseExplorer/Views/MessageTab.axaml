@@ -45,8 +45,14 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Grid.MessageFloatButtonSlot">
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="44" />
         </Style>
         <Style Selector="Button.MessageFloatButton:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="Transparent" />
@@ -63,6 +69,24 @@
         <Style Selector="Button.MessageFloatButton:pressed Border.MessageFloatButtonChrome">
             <Setter Property="Background" Value="#FFD6E8FF" />
             <Setter Property="BorderBrush" Value="#551677FF" />
+        </Style>
+        <Style Selector="Border.MessagePagingIndicator">
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Background" Value="#F7FFFFFF" />
+            <Setter Property="BorderBrush" Value="#18000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BoxShadow" Value="0 6 18 0 #16000000" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
+        <Style Selector="ProgressBar.MessagePagingProgress">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="BorderThickness" Value="3" />
+            <Setter Property="IsIndeterminate" Value="True" />
+            <Setter Property="ShowProgressText" Value="False" />
+            <Setter Property="Theme" Value="{DynamicResource ProgressRing}" />
         </Style>
     </UserControl.Styles>
 
@@ -378,6 +402,38 @@
                 </ScrollViewer>
 
                 <Border
+                    Grid.Row="0"
+                    Classes="MessagePagingIndicator"
+                    Margin="0,12,0,0"
+                    VerticalAlignment="Top"
+                    IsVisible="{Binding IsLoadingPrevious}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ProgressBar Classes="MessagePagingProgress" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            Foreground="#666"
+                            Text="加载中..." />
+                    </StackPanel>
+                </Border>
+
+                <Border
+                    Grid.Row="0"
+                    Classes="MessagePagingIndicator"
+                    Margin="0,0,0,12"
+                    VerticalAlignment="Bottom"
+                    IsVisible="{Binding IsLoadingNext}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ProgressBar Classes="MessagePagingProgress" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            Foreground="#666"
+                            Text="加载中..." />
+                    </StackPanel>
+                </Border>
+
+                <Border
                     Grid.Row="1"
                     Padding="8,6"
                     Background="#FAFFFFFF"
@@ -462,65 +518,65 @@
                 HorizontalAlignment="Right"
                 VerticalAlignment="Bottom"
                 Spacing="10">
-                <Button
-                    Name="JumpToEarliestButton"
-                    Classes="MessageFloatButton"
-                    Width="44"
-                    Height="44"
-                    Click="JumpToEarliestButton_Click"
-                    IsVisible="False"
-                    ToolTip.Tip="回到最早的消息">
-                    <Border
-                        Classes="MessageFloatButtonChrome"
-                        Width="40"
-                        Height="40"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Background="#FFFFFFFF"
-                        BorderBrush="#1A1677FF"
-                        BorderThickness="1"
-                        CornerRadius="20">
-                        <Image
-                            Width="24"
-                            Height="24"
+                <Grid Classes="MessageFloatButtonSlot">
+                    <Button
+                        Name="JumpToEarliestButton"
+                        Classes="MessageFloatButton"
+                        Click="JumpToEarliestButton_Click"
+                        IsVisible="False"
+                        ToolTip.Tip="回到最早的消息">
+                        <Border
+                            Classes="MessageFloatButtonChrome"
+                            Width="40"
+                            Height="40"
                             HorizontalAlignment="Center"
-                            VerticalAlignment="Center">
-                            <Image.Source>
-                                <SvgImage Source="/Assets/arrow-up.svg" />
-                            </Image.Source>
-                        </Image>
-                    </Border>
-                </Button>
+                            VerticalAlignment="Center"
+                            Background="#FFFFFFFF"
+                            BorderBrush="#1A1677FF"
+                            BorderThickness="1"
+                            CornerRadius="20">
+                            <Image
+                                Width="24"
+                                Height="24"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                                <Image.Source>
+                                    <SvgImage Source="/Assets/arrow-up.svg" />
+                                </Image.Source>
+                            </Image>
+                        </Border>
+                    </Button>
+                </Grid>
 
-                <Button
-                    Name="ReturnToLatestButton"
-                    Classes="MessageFloatButton"
-                    Width="44"
-                    Height="44"
-                    Click="ReturnToLatestButton_Click"
-                    IsVisible="False"
-                    ToolTip.Tip="回到最新消息">
-                    <Border
-                        Classes="MessageFloatButtonChrome"
-                        Width="40"
-                        Height="40"
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        Background="#FFFFFFFF"
-                        BorderBrush="#1A1677FF"
-                        BorderThickness="1"
-                        CornerRadius="20">
-                        <Image
-                            Width="24"
-                            Height="24"
+                <Grid Classes="MessageFloatButtonSlot">
+                    <Button
+                        Name="ReturnToLatestButton"
+                        Classes="MessageFloatButton"
+                        Click="ReturnToLatestButton_Click"
+                        IsVisible="False"
+                        ToolTip.Tip="回到最新消息">
+                        <Border
+                            Classes="MessageFloatButtonChrome"
+                            Width="40"
+                            Height="40"
                             HorizontalAlignment="Center"
-                            VerticalAlignment="Center">
-                            <Image.Source>
-                                <SvgImage Source="/Assets/arrow-down.svg" />
-                            </Image.Source>
-                        </Image>
-                    </Border>
-                </Button>
+                            VerticalAlignment="Center"
+                            Background="#FFFFFFFF"
+                            BorderBrush="#1A1677FF"
+                            BorderThickness="1"
+                            CornerRadius="20">
+                            <Image
+                                Width="24"
+                                Height="24"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                                <Image.Source>
+                                    <SvgImage Source="/Assets/arrow-down.svg" />
+                                </Image.Source>
+                            </Image>
+                        </Border>
+                    </Button>
+                </Grid>
             </StackPanel>
 
             <Border

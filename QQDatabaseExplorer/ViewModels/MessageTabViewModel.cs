@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.EntityFrameworkCore;
@@ -36,6 +37,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly Dictionary<string, Dictionary<uint, string>> _conversationSenderNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<long, MessageSenderInfo>> _conversationMessageSenderInfos = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MessageFilterCriteria> _conversationMessageFilters = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _messageDatabaseQueryLock = new(1, 1);
     private ProfileInfoNameCache? _profileInfoNames;
 
     public ViewModelToken ViewModelToken { get; } = new();
@@ -817,16 +819,24 @@ public partial class MessageTabViewModel : ViewModelBase
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            var messages = LoadInitialMessages(conversation);
+            var page = await RunMessageDatabaseQueryAsync(() => LoadMessagePage(conversation, () => LoadInitialMessages(conversation)));
 
             if (loadVersion != _initialMessageLoadVersion ||
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            CacheSenderInfos(conversation, messages);
-            _messages.AddLastRange(messages.Select(v => CreateAvaQQMessage(v, conversation)));
-            UpdateMessageWindowState(messages, olderAvailable: messages.Count == PageSize, newerAvailable: false);
-            UpdateCurrentConversationLatestPreview(conversation, messages);
+            CacheSenderInfos(conversation, page);
+            var avaMessages = await Task.Run(() => page.Messages
+                .Select(message => CreateAvaQQMessage(message, conversation))
+                .ToArray());
+
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+                return;
+
+            _messages.AddLastRange(avaMessages);
+            UpdateMessageWindowState(page.Messages, olderAvailable: page.Messages.Count == PageSize, newerAvailable: false);
+            UpdateCurrentConversationLatestPreview(conversation, page.Messages);
             ScrollToBottom();
         }
         catch
@@ -858,15 +868,23 @@ public partial class MessageTabViewModel : ViewModelBase
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            var messages = LoadEarliestMessages(conversation, PageSize);
+            var page = await RunMessageDatabaseQueryAsync(() => LoadMessagePage(conversation, () => LoadEarliestMessages(conversation, PageSize)));
 
             if (loadVersion != _initialMessageLoadVersion ||
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            CacheSenderInfos(conversation, messages);
-            _messages.AddLastRange(messages.Select(v => CreateAvaQQMessage(v, conversation)));
-            UpdateMessageWindowState(messages, olderAvailable: false, newerAvailable: messages.Count == PageSize);
+            CacheSenderInfos(conversation, page);
+            var avaMessages = await Task.Run(() => page.Messages
+                .Select(message => CreateAvaQQMessage(message, conversation))
+                .ToArray());
+
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+                return;
+
+            _messages.AddLastRange(avaMessages);
+            UpdateMessageWindowState(page.Messages, olderAvailable: false, newerAvailable: page.Messages.Count == PageSize);
             View?.ScrollToTop();
             View?.ShowMessagesImmediately();
         }
@@ -902,8 +920,15 @@ public partial class MessageTabViewModel : ViewModelBase
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            var olderMessages = LoadOlderMessages(conversation, messageSeq, messageId, JumpContextPageSize);
-            var targetAndNewerMessages = LoadTargetAndNewerMessages(conversation, messageSeq, messageId);
+            var (olderMessages, targetAndNewerMessages, referencedMessages) = await RunMessageDatabaseQueryAsync(() =>
+            {
+                var older = LoadOlderMessages(conversation, messageSeq, messageId, JumpContextPageSize);
+                var targetAndNewer = LoadTargetAndNewerMessages(conversation, messageSeq, messageId);
+                var referenced = LoadReferencedPrivateReplySenderInfos(
+                    conversation,
+                    older.Concat(targetAndNewer).DistinctBy(message => message.MessageId).ToArray());
+                return (older, targetAndNewer, referenced);
+            });
 
             if (loadVersion != _initialMessageLoadVersion ||
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
@@ -917,8 +942,16 @@ public partial class MessageTabViewModel : ViewModelBase
                 .ThenBy(message => message.MessageId)
                 .ToList();
 
-            CacheSenderInfos(conversation, messages);
-            _messages.AddLastRange(messages.Select(message => CreateAvaQQMessage(message, conversation)));
+            CacheSenderInfos(conversation, messages, referencedMessages);
+            var avaMessages = await Task.Run(() => messages
+                .Select(message => CreateAvaQQMessage(message, conversation))
+                .ToArray());
+
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+                return;
+
+            _messages.AddLastRange(avaMessages);
             UpdateMessageWindowState(
                 messages,
                 olderAvailable: olderMessages.Count == JumpContextPageSize,
@@ -933,7 +966,7 @@ public partial class MessageTabViewModel : ViewModelBase
         }
     }
 
-    public int LoadPreviousMessages()
+    public async Task<int> LoadPreviousMessagesAsync()
     {
         if (IsLoadingPrevious ||
             !_hasOlderMessages ||
@@ -947,18 +980,40 @@ public partial class MessageTabViewModel : ViewModelBase
         try
         {
             IsLoadingPrevious = true;
+            var conversation = SelectedGroup;
+            var loadVersion = _initialMessageLoadVersion;
             var oldestMessage = _messages.First();
-            var messages = LoadOlderMessages(SelectedGroup, oldestMessage.MessageSeq, oldestMessage.MessageId, PageSize);
+            var messageSeq = oldestMessage.MessageSeq;
+            var messageId = oldestMessage.MessageId;
+            var page = await RunMessageDatabaseQueryAsync(() => LoadMessagePage(
+                conversation,
+                () => LoadOlderMessages(conversation, messageSeq, messageId, PageSize)));
 
-            CacheSenderInfos(SelectedGroup, messages);
-            foreach (var message in messages)
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
             {
-                _messages.AddFirst(CreateAvaQQMessage(message, SelectedGroup));
+                return 0;
             }
 
-            _hasOlderMessages = messages.Count == PageSize;
+            CacheSenderInfos(conversation, page);
+            var avaMessages = await Task.Run(() => page.Messages
+                .Select(message => CreateAvaQQMessage(message, conversation))
+                .ToArray());
+
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+            {
+                return 0;
+            }
+
+            foreach (var message in avaMessages)
+            {
+                _messages.AddFirst(message);
+            }
+
+            _hasOlderMessages = page.Messages.Count == PageSize;
             OnPropertyChanged(nameof(HasOlderMessages));
-            return messages.Count;
+            return page.Messages.Count;
         }
         finally
         {
@@ -966,7 +1021,7 @@ public partial class MessageTabViewModel : ViewModelBase
         }
     }
 
-    public int LoadNextMessages()
+    public async Task<int> LoadNextMessagesAsync()
     {
         if (IsLoadingNext ||
             !_hasNewerMessages ||
@@ -980,19 +1035,41 @@ public partial class MessageTabViewModel : ViewModelBase
         try
         {
             IsLoadingNext = true;
+            var conversation = SelectedGroup;
+            var loadVersion = _initialMessageLoadVersion;
             var newestMessage = _messages.Last();
-            var messages = LoadNewerMessages(SelectedGroup, newestMessage.MessageSeq, newestMessage.MessageId, PageSize);
+            var messageSeq = newestMessage.MessageSeq;
+            var messageId = newestMessage.MessageId;
+            var page = await RunMessageDatabaseQueryAsync(() => LoadMessagePage(
+                conversation,
+                () => LoadNewerMessages(conversation, messageSeq, messageId, PageSize)));
 
-            CacheSenderInfos(SelectedGroup, messages);
-            _messages.AddLastRange(messages.Select(message => CreateAvaQQMessage(message, SelectedGroup)));
-            _hasNewerMessages = messages.Count == PageSize;
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+            {
+                return 0;
+            }
+
+            CacheSenderInfos(conversation, page);
+            var avaMessages = await Task.Run(() => page.Messages
+                .Select(message => CreateAvaQQMessage(message, conversation))
+                .ToArray());
+
+            if (loadVersion != _initialMessageLoadVersion ||
+                SelectedGroup?.ConversationKey != conversation.ConversationKey)
+            {
+                return 0;
+            }
+
+            _messages.AddLastRange(avaMessages);
+            _hasNewerMessages = page.Messages.Count == PageSize;
             OnPropertyChanged(nameof(HasNewerMessages));
             if (!_hasNewerMessages)
             {
-                UpdateCurrentConversationLatestPreview(SelectedGroup, messages);
+                UpdateCurrentConversationLatestPreview(conversation, page.Messages);
             }
 
-            return messages.Count;
+            return page.Messages.Count;
         }
         finally
         {
@@ -1625,7 +1702,23 @@ public partial class MessageTabViewModel : ViewModelBase
         };
     }
 
-    private void CacheSenderInfos(AvaQQGroup conversation, IEnumerable<MessageRecord> messages)
+    private MessagePage LoadMessagePage(
+        AvaQQGroup conversation,
+        Func<List<MessageRecord>> loadMessages)
+    {
+        var messages = loadMessages();
+        return new MessagePage(messages, LoadReferencedPrivateReplySenderInfos(conversation, messages));
+    }
+
+    private void CacheSenderInfos(AvaQQGroup conversation, MessagePage page)
+    {
+        CacheSenderInfos(conversation, page.Messages, page.ReferencedMessages);
+    }
+
+    private void CacheSenderInfos(
+        AvaQQGroup conversation,
+        IEnumerable<MessageRecord> messages,
+        IReadOnlyList<MessageRecord>? referencedMessages = null)
     {
         var messageList = messages as IReadOnlyList<MessageRecord> ?? messages.ToArray();
         var senderNames = GetSenderNameCache(conversation.ConversationKey);
@@ -1640,7 +1733,11 @@ public partial class MessageTabViewModel : ViewModelBase
             CacheMessageSenderInfo(messageSenderInfos, message, conversation, senderNames);
         }
 
-        CacheReferencedPrivateReplySenderInfos(conversation, messageList, messageSenderInfos, senderNames);
+        foreach (var message in referencedMessages ?? [])
+        {
+            CacheSenderName(senderNames, message.SenderId, message.SendMemberName, message.SendNickName);
+            CacheMessageSenderInfo(messageSenderInfos, message, conversation, senderNames);
+        }
     }
 
     private Dictionary<uint, string> GetSenderNameCache(string conversationKey)
@@ -1723,17 +1820,17 @@ public partial class MessageTabViewModel : ViewModelBase
             : string.Empty;
     }
 
-    private void CacheReferencedPrivateReplySenderInfos(
+    private IReadOnlyList<MessageRecord> LoadReferencedPrivateReplySenderInfos(
         AvaQQGroup conversation,
-        IReadOnlyList<MessageRecord> messages,
-        IDictionary<long, MessageSenderInfo> senderInfos,
-        IDictionary<uint, string> senderNames)
+        IReadOnlyList<MessageRecord> messages)
     {
         if (conversation.ConversationType != AvaConversationType.Private ||
             !HasNtMessageDatabase)
         {
-            return;
+            return [];
         }
+
+        var senderInfos = GetMessageSenderInfoCache(conversation.ConversationKey);
 
         var missingSeqs = messages
             .Select(message => TryParseMessageContent(message.Content))
@@ -1748,9 +1845,9 @@ public partial class MessageTabViewModel : ViewModelBase
             .ToArray();
 
         if (missingSeqs.Length == 0)
-            return;
+            return [];
 
-        var referencedMessages = _qqDatabaseService.MessageDatabase is { } messageDatabase
+        return _qqDatabaseService.MessageDatabase is { } messageDatabase
             ? messageDatabase.DbContext.PrivateMessages
                 .Where(message => message.ConversationId == conversation.PrivateConversationId)
                 .Where(message => missingSeqs.Contains(message.MessageSeq))
@@ -1765,11 +1862,18 @@ public partial class MessageTabViewModel : ViewModelBase
                     .Select(message => MessageRecord.FromPrivate(message))
                     .ToList()
                 : [];
+    }
 
-        foreach (var message in referencedMessages)
+    private async Task<T> RunMessageDatabaseQueryAsync<T>(Func<T> query)
+    {
+        await _messageDatabaseQueryLock.WaitAsync();
+        try
         {
-            CacheSenderName(senderNames, message.SenderId, message.SendMemberName, message.SendNickName);
-            CacheMessageSenderInfo(senderInfos, message, conversation, senderNames);
+            return await Task.Run(query);
+        }
+        finally
+        {
+            _messageDatabaseQueryLock.Release();
         }
     }
 
@@ -1804,6 +1908,7 @@ public partial class MessageTabViewModel : ViewModelBase
         var segments = content is null
             ? []
             : CreateMessageSegments(item, content, mediaContext);
+        ResolveMessageSegmentMediaPaths(segments, item, content, mediaContext);
         var forwardedMessages = CreateForwardedMessages(item, content, mediaContext);
         var senderNames = GetSenderNameCache(conversation.ConversationKey);
         var messageSenderInfos = GetMessageSenderInfoCache(conversation.ConversationKey);
@@ -2484,6 +2589,7 @@ public partial class MessageTabViewModel : ViewModelBase
             .Select(message =>
             {
                 var segments = CreateMessageSegments(message, mediaContext);
+                ResolveMessageSegmentMediaPaths(segments, message, mediaContext);
                 if (!HasDisplayContent(segments))
                 {
                     segments.Clear();
@@ -2792,49 +2898,26 @@ public partial class MessageTabViewModel : ViewModelBase
 
         if (segment.IsMarketFace)
         {
-            var localPath = ResolveMarketFacePath(mediaContext.NtDataPath, segment);
-            var width = LimitMarketFaceSize(segment.MarketFaceWidth);
-            var height = LimitMarketFaceSize(segment.MarketFaceHeight);
             var displayText = string.IsNullOrWhiteSpace(segment.MarketFaceName)
                 ? "[商城表情]"
                 : segment.MarketFaceName;
-
-            segments.Add(string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath)
-                ? AvaQQMessageSegment.CreateBrokenImage(
-                    width,
-                    height,
-                    "[商城表情文件未找到]",
-                    MarketFaceMaxDisplaySize,
-                    MarketFaceMaxDisplaySize)
-                : AvaQQMessageSegment.CreateImage(
-                    localPath,
-                    width,
-                    height,
-                    displayText,
-                    MarketFaceMaxDisplaySize,
-                    MarketFaceMaxDisplaySize));
+            segments.Add(AvaQQMessageSegment.CreateImage(
+                null,
+                LimitMarketFaceSize(segment.MarketFaceWidth),
+                LimitMarketFaceSize(segment.MarketFaceHeight),
+                displayText,
+                MarketFaceMaxDisplaySize,
+                MarketFaceMaxDisplaySize));
             return;
         }
 
         if (segment.IsImage || IsStickerMediaSegment(segment))
         {
-            var localPath = ResolveLocalMediaPath(mediaContext, messageTime, segment, subMessageType);
-            if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
-            {
-                segments.Add(AvaQQMessageSegment.CreateBrokenImage(
-                    segment.ImageWidth,
-                    segment.ImageHeight,
-                    CreateUnavailableMediaText(subMessageType)));
-            }
-            else
-            {
-                segments.Add(AvaQQMessageSegment.CreateImage(
-                    localPath,
-                    segment.ImageWidth,
-                    segment.ImageHeight,
-                    IsStickerMessage(subMessageType) ? "[动画表情]" : "[图片]"));
-            }
-
+            segments.Add(AvaQQMessageSegment.CreateImage(
+                null,
+                segment.ImageWidth,
+                segment.ImageHeight,
+                IsStickerMessage(subMessageType) ? "[动画表情]" : "[图片]"));
             return;
         }
 
@@ -2854,6 +2937,139 @@ public partial class MessageTabViewModel : ViewModelBase
         }
 
         segments.Add(AvaQQMessageSegment.CreateUnsupportedText(unsupportedText));
+    }
+
+    private static void ResolveMessageSegmentMediaPaths(
+        IReadOnlyList<AvaQQMessageSegment> segments,
+        MessageRecord item,
+        QQMessageContent? content,
+        LocalMediaContext mediaContext)
+    {
+        if (content is null || segments.Count == 0)
+            return;
+
+        var segmentIndex = 0;
+        foreach (var parsedSegment in content.Segments)
+        {
+            if (parsedSegment.Type == MessageSegmentType.Reply ||
+                !TryResolveMediaPathForMessageSegment(parsedSegment, item, mediaContext, out var localPath, out var isMissing))
+            {
+                continue;
+            }
+
+            while (segmentIndex < segments.Count &&
+                   segments[segmentIndex].Type != AvaQQMessageSegmentType.Image)
+            {
+                segmentIndex++;
+            }
+
+            if (segmentIndex >= segments.Count)
+                return;
+
+            segments[segmentIndex].ImageLocalPath = localPath;
+            segments[segmentIndex].IsImageAvailable = !isMissing;
+            if (isMissing)
+            {
+                segments[segmentIndex].ImageDisplayText = parsedSegment.IsMarketFace
+                    ? "[商城表情文件未找到]"
+                    : CreateUnavailableMediaText(item);
+            }
+
+            segmentIndex++;
+        }
+    }
+
+    private static bool TryResolveMediaPathForMessageSegment(
+        QQMessageSegment segment,
+        MessageRecord item,
+        LocalMediaContext mediaContext,
+        out string? localPath,
+        out bool isMissing)
+    {
+        localPath = null;
+        isMissing = false;
+
+        if (segment.IsMarketFace)
+        {
+            localPath = ResolveMarketFacePath(mediaContext.NtDataPath, segment);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        if (segment.IsImage || IsStickerMediaSegment(segment))
+        {
+            localPath = ResolveLocalMediaPath(mediaContext, item.MessageTime, segment, item.SubMessageType);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void ResolveMessageSegmentMediaPaths(
+        IReadOnlyList<AvaQQMessageSegment> segments,
+        QQForwardedMessage item,
+        LocalMediaContext mediaContext)
+    {
+        if (segments.Count == 0 || item.Segments.Count == 0)
+            return;
+
+        var segmentIndex = 0;
+        foreach (var parsedSegment in item.Segments)
+        {
+            if (parsedSegment.Type == MessageSegmentType.Reply ||
+                !TryResolveMediaPathForForwardedMessageSegment(parsedSegment, item, mediaContext, out var localPath, out var isMissing))
+            {
+                continue;
+            }
+
+            while (segmentIndex < segments.Count &&
+                   segments[segmentIndex].Type != AvaQQMessageSegmentType.Image)
+            {
+                segmentIndex++;
+            }
+
+            if (segmentIndex >= segments.Count)
+                return;
+
+            segments[segmentIndex].ImageLocalPath = localPath;
+            segments[segmentIndex].IsImageAvailable = !isMissing;
+            if (isMissing)
+            {
+                segments[segmentIndex].ImageDisplayText = parsedSegment.IsMarketFace
+                    ? "[商城表情文件未找到]"
+                    : CreateUnavailableMediaText(item.SubMessageType);
+            }
+
+            segmentIndex++;
+        }
+    }
+
+    private static bool TryResolveMediaPathForForwardedMessageSegment(
+        QQMessageSegment segment,
+        QQForwardedMessage item,
+        LocalMediaContext mediaContext,
+        out string? localPath,
+        out bool isMissing)
+    {
+        localPath = null;
+        isMissing = false;
+
+        if (segment.IsMarketFace)
+        {
+            localPath = ResolveMarketFacePath(mediaContext.NtDataPath, segment);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        if (segment.IsImage || IsStickerMediaSegment(segment))
+        {
+            localPath = ResolveLocalMediaPath(mediaContext, item.MessageTime, segment, item.SubMessageType);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        return false;
     }
 
     private static IReadOnlyList<AvaQQMessageSegment> CreateTextSegments(
@@ -4793,6 +5009,10 @@ public partial class MessageTabViewModel : ViewModelBase
         uint SenderId,
         string SenderUid,
         string Name);
+
+    private sealed record MessagePage(
+        IReadOnlyList<MessageRecord> Messages,
+        IReadOnlyList<MessageRecord> ReferencedMessages);
 
     private readonly record struct SystemHintDisplay(
         string SourceName,

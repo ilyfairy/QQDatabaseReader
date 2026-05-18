@@ -9,13 +9,13 @@ public sealed class AvaQQMessageSegment
     public int? FaceId { get; init; }
     public string? FaceName { get; init; }
     public string? FaceAssetPath { get; init; }
-    public string? ImageLocalPath { get; init; }
+    public string? ImageLocalPath { get; set; }
     public int? ImageWidth { get; init; }
     public int? ImageHeight { get; init; }
     public int? ImageMaxWidth { get; init; }
     public int? ImageMaxHeight { get; init; }
-    public string? ImageDisplayText { get; init; }
-    public bool IsImageAvailable { get; init; }
+    public string? ImageDisplayText { get; set; }
+    public bool IsImageAvailable { get; set; }
     public ForwardedMessageCard? ForwardedMessage { get; init; }
     public SharedContactCard? SharedContact { get; init; }
 
