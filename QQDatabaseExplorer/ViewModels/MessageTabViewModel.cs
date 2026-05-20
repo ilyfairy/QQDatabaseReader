@@ -2124,7 +2124,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 senderName);
         }
 
-        var systemHint = CreateSystemHintMessage(content);
+        var systemHint = CreateSystemHintMessage(content, conversation.GroupId);
         var reactions = CreateMessageReactions(item.MessageReactions);
         var reply = CreateReplyMessage(
             item,
@@ -2277,7 +2277,7 @@ public partial class MessageTabViewModel : ViewModelBase
             .ToArray();
     }
 
-    private static SystemHintDisplay? CreateSystemHintMessage(QQMessageContent? content)
+    private SystemHintDisplay? CreateSystemHintMessage(QQMessageContent? content, uint groupId)
     {
         if (content is null)
             return null;
@@ -2293,23 +2293,27 @@ public partial class MessageTabViewModel : ViewModelBase
         var sourceName = FirstNonEmpty(
             hint.SourceName,
             hint.Participants.FirstOrDefault()?.Nickname).Trim();
+        var sourceNtUid = hint.Participants.FirstOrDefault()?.Uid.Trim() ?? string.Empty;
+        var sourceUin = string.Empty;
         var sourceIsUser = hint.SourceIsUser && hint.Participants.Count > 0;
+        if (hint.Participants.Count > 0)
+        {
+            sourceUin = (hint.GetProperty("uin_str1") ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(sourceUin))
+            {
+                sourceUin = ResolveSystemHintSourceUin(groupId, sourceNtUid);
+            }
+        }
+
         var targetName = hint.Participants.Count >= 2
             ? hint.Participants[1].Nickname.Trim()
             : (hint.TargetName ?? string.Empty).Trim();
         var targetIsUser = hint.Participants.Count >= 2;
-        var sourceUin = sourceIsUser
-            ? (hint.GetProperty("uin_str1") ?? string.Empty).Trim()
-            : string.Empty;
-        if (sourceIsUser && string.IsNullOrWhiteSpace(sourceUin))
-        {
-            sourceUin = hint.Participants[0].Uid.Trim();
-        }
 
         var targetUin = (hint.GetProperty("uin_str2") ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(targetUin) && hint.Participants.Count >= 2)
         {
-            targetUin = hint.Participants[1].Uid.Trim();
+            targetUin = ResolveSystemHintSourceUin(groupId, hint.Participants[1].Uid.Trim());
         }
 
         var action = (hint.Action ?? string.Empty).Trim();
@@ -2347,6 +2351,47 @@ public partial class MessageTabViewModel : ViewModelBase
             hint.FaceId,
             face?.AssetPath,
             displayText);
+    }
+
+    private string ResolveSystemHintSourceUin(uint groupId, string? ntUid)
+    {
+        if (string.IsNullOrWhiteSpace(ntUid))
+            return string.Empty;
+
+        if (_qqDatabaseService.GroupInfoDatabase is { } groupInfoDatabase)
+        {
+            try
+            {
+                var query = groupInfoDatabase.DbContext.GroupMembers
+                    .Where(member => member.NtUid == ntUid)
+                    .Where(member => member.Uin != 0);
+
+                if (groupId != 0)
+                {
+                    var uin = query
+                        .Where(member => member.GroupId == groupId)
+                        .Select(member => member.Uin)
+                        .FirstOrDefault();
+                    if (uin != 0)
+                        return uin.ToString();
+                }
+
+                var matches = query
+                    .Select(member => member.Uin)
+                    .Distinct()
+                    .Take(2)
+                    .ToArray();
+                if (matches.Length == 1)
+                    return matches[0].ToString();
+            }
+            catch
+            {
+            }
+        }
+
+        return GetProfileInfoNameCache().TryGetUin(ntUid, out var profileUin)
+            ? profileUin.ToString()
+            : string.Empty;
     }
 
     private AvaQQMessage CreatePCQQAvaMessage(MessageRecord item, AvaQQGroup conversation)
@@ -5633,20 +5678,25 @@ public partial class MessageTabViewModel : ViewModelBase
             new Dictionary<uint, string>();
         private static readonly IReadOnlyDictionary<string, string> EmptyNtUidNames =
             new Dictionary<string, string>(StringComparer.Ordinal);
-        private static readonly ProfileInfoNameCache Empty = new(null, EmptyUinNames, EmptyNtUidNames);
+        private static readonly IReadOnlyDictionary<string, uint> EmptyUinsByNtUid =
+            new Dictionary<string, uint>(StringComparer.Ordinal);
+        private static readonly ProfileInfoNameCache Empty = new(null, EmptyUinNames, EmptyNtUidNames, EmptyUinsByNtUid);
 
         private ProfileInfoNameCache(
             QQProfileInfoReader? database,
             IReadOnlyDictionary<uint, string> namesByUin,
-            IReadOnlyDictionary<string, string> namesByNtUid)
+            IReadOnlyDictionary<string, string> namesByNtUid,
+            IReadOnlyDictionary<string, uint> uinsByNtUid)
         {
             Database = database;
             _namesByUin = namesByUin;
             _namesByNtUid = namesByNtUid;
+            _uinsByNtUid = uinsByNtUid;
         }
 
         private readonly IReadOnlyDictionary<uint, string> _namesByUin;
         private readonly IReadOnlyDictionary<string, string> _namesByNtUid;
+        private readonly IReadOnlyDictionary<string, uint> _uinsByNtUid;
 
         public QQProfileInfoReader? Database { get; }
 
@@ -5657,6 +5707,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
             var namesByUin = new Dictionary<uint, string>();
             var namesByNtUid = new Dictionary<string, string>(StringComparer.Ordinal);
+            var uinsByNtUid = new Dictionary<string, uint>(StringComparer.Ordinal);
 
             try
             {
@@ -5670,6 +5721,7 @@ public partial class MessageTabViewModel : ViewModelBase
                              })
                              .ToList())
                 {
+                    CacheProfileUin(uinsByNtUid, profile.Uin, profile.NtUid);
                     CacheProfileName(namesByUin, namesByNtUid, profile.Uin, profile.NtUid, profile.RemarkName, profile.NickName);
                 }
 
@@ -5682,20 +5734,23 @@ public partial class MessageTabViewModel : ViewModelBase
                              .ToList())
                 {
                     if (buddy.Uin != 0 &&
-                        !string.IsNullOrWhiteSpace(buddy.NtUid) &&
-                        namesByUin.TryGetValue(buddy.Uin, out var name) &&
-                        !namesByNtUid.ContainsKey(buddy.NtUid))
+                        !string.IsNullOrWhiteSpace(buddy.NtUid))
                     {
-                        namesByNtUid[buddy.NtUid] = name;
+                        CacheProfileUin(uinsByNtUid, buddy.Uin, buddy.NtUid);
+                        if (namesByUin.TryGetValue(buddy.Uin, out var name) &&
+                            !namesByNtUid.ContainsKey(buddy.NtUid))
+                        {
+                            namesByNtUid[buddy.NtUid] = name;
+                        }
                     }
                 }
             }
             catch
             {
-                return new ProfileInfoNameCache(database, EmptyUinNames, EmptyNtUidNames);
+                return new ProfileInfoNameCache(database, EmptyUinNames, EmptyNtUidNames, EmptyUinsByNtUid);
             }
 
-            return new ProfileInfoNameCache(database, namesByUin, namesByNtUid);
+            return new ProfileInfoNameCache(database, namesByUin, namesByNtUid, uinsByNtUid);
         }
 
         public bool TryGetName(uint uin, string? ntUid, out string name)
@@ -5716,6 +5771,30 @@ public partial class MessageTabViewModel : ViewModelBase
 
             name = string.Empty;
             return false;
+        }
+
+        public bool TryGetUin(string? ntUid, out uint uin)
+        {
+            if (!string.IsNullOrWhiteSpace(ntUid) &&
+                _uinsByNtUid.TryGetValue(ntUid, out uin) &&
+                uin != 0)
+            {
+                return true;
+            }
+
+            uin = 0;
+            return false;
+        }
+
+        private static void CacheProfileUin(
+            IDictionary<string, uint> uinsByNtUid,
+            uint uin,
+            string? ntUid)
+        {
+            if (uin != 0 && !string.IsNullOrWhiteSpace(ntUid))
+            {
+                uinsByNtUid[ntUid] = uin;
+            }
         }
 
         private static void CacheProfileName(

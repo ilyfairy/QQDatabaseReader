@@ -85,7 +85,11 @@ public partial class AvaQQMessage : ObservableObject
 
     public bool HasSystemHintUserSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && SystemHintSourceIsUser;
 
-    public bool HasSystemHintPlainSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && !SystemHintSourceIsUser;
+    public bool HasSystemHintSourceQqId => !string.IsNullOrWhiteSpace(SystemHintSourceUin);
+
+    public bool HasSystemHintResolvedSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && HasSystemHintSourceQqId;
+
+    public bool HasSystemHintPlainSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && !SystemHintSourceIsUser && !HasSystemHintSourceQqId;
 
     public bool HasSystemHintTargetName => !string.IsNullOrWhiteSpace(SystemHintTargetName);
 

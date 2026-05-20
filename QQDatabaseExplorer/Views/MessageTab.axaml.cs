@@ -1099,8 +1099,11 @@ public partial class MessageTab : UserControl
         if (sender is not Control { DataContext: AvaQQMessage message } control)
             return;
 
-        if (!message.SystemHintSourceIsUser)
+        if (!message.SystemHintSourceIsUser &&
+            !message.HasSystemHintSourceQqId)
+        {
             return;
+        }
 
         OpenSystemHintNameContextMenu(
             control,

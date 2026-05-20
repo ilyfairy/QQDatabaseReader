@@ -279,7 +279,7 @@
                                                 FontWeight="SemiBold"
                                                 Foreground="#1677FF"
                                                 ContextRequested="SystemHintSourceName_ContextRequested"
-                                                IsVisible="{Binding HasSystemHintUserSourceName}"
+                                                IsVisible="{Binding HasSystemHintResolvedSourceName}"
                                                 Text="{Binding SystemHintSourceName}" />
 
                                             <TextBlock
@@ -287,6 +287,7 @@
                                                 FontSize="10"
                                                 Foreground="#666"
                                                 MaxWidth="520"
+                                                ContextRequested="SystemHintSourceName_ContextRequested"
                                                 IsVisible="{Binding HasSystemHintPlainSourceName}"
                                                 Text="{Binding SystemHintSourceName}" />
 
