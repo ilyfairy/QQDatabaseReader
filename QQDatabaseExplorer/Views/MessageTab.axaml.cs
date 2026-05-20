@@ -1099,6 +1099,9 @@ public partial class MessageTab : UserControl
         if (sender is not Control { DataContext: AvaQQMessage message } control)
             return;
 
+        if (!message.SystemHintSourceIsUser)
+            return;
+
         OpenSystemHintNameContextMenu(
             control,
             message,
@@ -1111,11 +1114,26 @@ public partial class MessageTab : UserControl
         if (sender is not Control { DataContext: AvaQQMessage message } control)
             return;
 
+        if (!message.SystemHintTargetIsUser)
+            return;
+
         OpenSystemHintNameContextMenu(
             control,
             message,
             message.SystemHintTargetUin);
         e.Handled = true;
+    }
+
+    private async void SystemHint_Tapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is not Control { DataContext: AvaQQMessage message } ||
+            !message.CanJumpToSystemHintTarget)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await _viewModel.JumpToSystemHintTargetMessageAsync(message);
     }
 
     private async void MessageBubble_DoubleTapped(object? sender, TappedEventArgs e)

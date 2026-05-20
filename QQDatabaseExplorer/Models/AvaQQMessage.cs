@@ -27,14 +27,21 @@ public partial class AvaQQMessage : ObservableObject
     public uint PrivateUin { get; set; }
     public string? PeerUid { get; set; }
     public string? CachedAvatarUrl { get; set; }
+    public bool IsRecalledMessage { get; set; }
     public bool IsSystemHint { get; set; }
     public string SystemHintSourceName { get; set; } = string.Empty;
     public string SystemHintSourceUin { get; set; } = string.Empty;
+    public bool SystemHintSourceIsUser { get; set; } = true;
     public string SystemHintTargetName { get; set; } = string.Empty;
     public string SystemHintTargetUin { get; set; } = string.Empty;
+    public bool SystemHintTargetIsUser { get; set; }
     public string SystemHintAction { get; set; } = string.Empty;
     public string SystemHintSuffix { get; set; } = string.Empty;
     public string? SystemHintActionImageUrl { get; set; }
+    public long SystemHintTargetMessageSeq { get; set; }
+    public int SystemHintFaceId { get; set; }
+    public string? SystemHintFaceAssetPath { get; set; }
+    public IReadOnlyList<AvaMessageReaction> Reactions { get; set; } = [];
 
     public byte[]? ProtobufContent
     {
@@ -74,9 +81,25 @@ public partial class AvaQQMessage : ObservableObject
 
     public bool HasSystemHintActionImage => !string.IsNullOrWhiteSpace(SystemHintActionImageUrl);
 
+    public bool HasSystemHintAction => !string.IsNullOrWhiteSpace(SystemHintAction);
+
+    public bool HasSystemHintUserSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && SystemHintSourceIsUser;
+
+    public bool HasSystemHintPlainSourceName => !string.IsNullOrWhiteSpace(SystemHintSourceName) && !SystemHintSourceIsUser;
+
     public bool HasSystemHintTargetName => !string.IsNullOrWhiteSpace(SystemHintTargetName);
 
+    public bool HasSystemHintUserTargetName => HasSystemHintTargetName && SystemHintTargetIsUser;
+
+    public bool HasSystemHintPlainTargetName => HasSystemHintTargetName && !SystemHintTargetIsUser;
+
     public bool HasSystemHintSuffix => !string.IsNullOrWhiteSpace(SystemHintSuffix);
+
+    public bool HasSystemHintFace => !string.IsNullOrWhiteSpace(SystemHintFaceAssetPath);
+
+    public bool CanJumpToSystemHintTarget => SystemHintTargetMessageSeq > 0;
+
+    public bool HasReactions => Reactions.Count > 0;
 
     public double MessageMinHeight => IsSystemHint ? 28 : 42;
 

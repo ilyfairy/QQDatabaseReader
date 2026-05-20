@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Google.Protobuf;
 using QQDatabaseReader.Sqlite;
@@ -311,11 +312,17 @@ public partial class QQMessageReader
             else if (key == 48214 && WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
             {
                 currentMessage.SystemHint ??= new QQSystemHintMessage();
-                currentMessage.SystemHint.Xml = input.ReadBytes().ToStringUtf8();
+                var xml = input.ReadBytes().ToStringUtf8();
+                currentMessage.SystemHint.Xml = xml;
+                ApplyXmlSystemHint(currentMessage, xml);
             }
             else if (key == 48217 && WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
             {
                 ReadSystemHintProperty(currentMessage, input.ReadBytes().ToByteArray());
+            }
+            else if (IsRecallSystemHintField(currentMessage, key))
+            {
+                ReadRecallSystemHintField(currentMessage, key, tag, input);
             }
             else if (key == 48271 && WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
             {
@@ -346,6 +353,142 @@ public partial class QQMessageReader
         }
 
         return currentMessage;
+    }
+
+    private static bool IsRecallSystemHintField(QQMessageSegment currentMessage, int key)
+    {
+        if (currentMessage.Type == MessageSegmentType.System &&
+            key is >= 47702 and <= 47715)
+        {
+            return true;
+        }
+
+        return key is 49154 or 49155 &&
+               string.Equals(currentMessage.SystemHint?.GetProperty("hint_type"), "recall", StringComparison.Ordinal);
+    }
+
+    private static void ReadRecallSystemHintField(
+        QQMessageSegment currentMessage,
+        int key,
+        uint tag,
+        CodedInputStream input)
+    {
+        var wireType = WireFormat.GetTagWireType(tag);
+        var hint = currentMessage.SystemHint ??= new QQSystemHintMessage();
+        hint.SetProperty("hint_type", "recall");
+
+        try
+        {
+            switch (key)
+            {
+                case 47702 when wireType == WireFormat.WireType.Varint:
+                    hint.SetProperty("recall_subtype", input.ReadUInt64().ToString());
+                    break;
+                case 47703 when wireType == WireFormat.WireType.LengthDelimited:
+                    hint.SetProperty("recall_source_uid", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47704 when wireType == WireFormat.WireType.LengthDelimited:
+                    hint.SetProperty("recall_target_uid", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47705 when wireType == WireFormat.WireType.LengthDelimited:
+                    hint.SetProperty("recall_actor_name", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47706 when wireType == WireFormat.WireType.LengthDelimited:
+                    SetSystemHintPropertyIfMissing(hint, "recalled_text", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47710 when wireType == WireFormat.WireType.LengthDelimited:
+                {
+                    var originalBytes = input.ReadBytes().ToByteArray();
+                    hint.RecalledOriginalMessageContent = originalBytes;
+                    SetSystemHintPropertyIfMissing(
+                        hint,
+                        "recalled_text",
+                        TryCreateRecallPreviewText(originalBytes));
+                    break;
+                }
+                case 47711 when wireType == WireFormat.WireType.Varint:
+                    hint.SetProperty("recall_has_original", input.ReadUInt64().ToString());
+                    break;
+                case 47713 when wireType == WireFormat.WireType.LengthDelimited:
+                    hint.SetProperty("recall_extra", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47714 when wireType == WireFormat.WireType.LengthDelimited:
+                    SetSystemHintPropertyIfMissing(hint, "recall_actor_name", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 47715 when wireType == WireFormat.WireType.LengthDelimited:
+                    SetSystemHintPropertyIfMissing(hint, "recalled_text", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 49154 when wireType == WireFormat.WireType.LengthDelimited:
+                    hint.SetProperty("recall_flag", input.ReadBytes().ToStringUtf8());
+                    break;
+                case 49155 when wireType == WireFormat.WireType.Varint:
+                    hint.SetProperty("recall_time", input.ReadUInt64().ToString());
+                    break;
+                default:
+                    input.SkipLastField();
+                    break;
+            }
+
+            ApplyRecallSystemHint(hint);
+        }
+        catch
+        {
+            // Keep fields decoded before an unknown/truncated recall payload.
+        }
+    }
+
+    private static string? TryCreateRecallPreviewText(byte[] data)
+    {
+        try
+        {
+            var segment = ParseMessageSegment(data);
+            var text = segment.GetDisplayText();
+            return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var text = ParseMessage(data).GetText();
+            return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void ApplyRecallSystemHint(QQSystemHintMessage hint)
+    {
+        var actorName = FirstNonEmpty(hint.GetProperty("recall_actor_name"));
+        var actorUid = FirstNonEmpty(
+            hint.GetProperty("recall_source_uid"),
+            hint.GetProperty("recall_target_uid"));
+        if (!string.IsNullOrWhiteSpace(actorName))
+        {
+            AddOrUpdateSystemHintParticipant(hint, new QQSystemHintParticipant(actorUid, actorName));
+        }
+
+        var recalledText = FirstNonEmpty(hint.RecalledMessageText);
+        hint.SetProperty("action_str", "撤回了一条消息");
+        if (!string.IsNullOrWhiteSpace(recalledText))
+        {
+            hint.SetProperty("source_name", recalledText);
+            hint.SetProperty("source_is_user", "0");
+            hint.SetProperty("single_actor", "1");
+            hint.SetProperty("display_text", $"{recalledText}撤回了一条消息");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(actorName))
+        {
+            hint.SetProperty("source_name", actorName);
+            hint.SetProperty("source_is_user", "1");
+            hint.SetProperty("single_actor", "1");
+            hint.SetProperty("display_text", $"{actorName}撤回了一条消息");
+        }
     }
 
     private static void ReadJoinGroupSystemHintField(
@@ -512,6 +655,122 @@ public partial class QQMessageReader
 
         currentMessage.SystemHint ??= new QQSystemHintMessage();
         currentMessage.SystemHint.SetProperty(name, value ?? string.Empty);
+    }
+
+    private static void ApplyXmlSystemHint(QQMessageSegment currentMessage, string xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml))
+            return;
+
+        try
+        {
+            var document = XDocument.Parse(xml);
+            if (document.Root?.Name.LocalName != "gtip")
+                return;
+
+            var hint = currentMessage.SystemHint ??= new QQSystemHintMessage();
+            var textParts = new List<string>();
+            var displayParts = new List<string>();
+            string? targetName = null;
+
+            foreach (var element in document.Root.Elements())
+            {
+                switch (element.Name.LocalName)
+                {
+                    case "qq":
+                    {
+                        var uid = FirstNonEmpty(
+                            GetXmlAttribute(element, "uin"),
+                            GetXmlAttribute(element, "uid"),
+                            GetXmlAttribute(element, "jp"));
+                        var uin = GetXmlAttribute(element, "jp")?.Trim() ?? string.Empty;
+                        var nickname = GetXmlAttribute(element, "nm")?.Trim() ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(nickname))
+                        {
+                            nickname = hint.Participants
+                                .FirstOrDefault(participant => string.Equals(participant.Uid, uid, StringComparison.Ordinal))
+                                ?.Nickname ?? string.Empty;
+                        }
+
+                        AddOrUpdateSystemHintParticipant(
+                            hint,
+                            new QQSystemHintParticipant(uid.Trim(), nickname));
+
+                        if (!string.IsNullOrWhiteSpace(uin))
+                        {
+                            var participantIndex = hint.Participants.FindIndex(participant =>
+                                string.Equals(participant.Uid, uid, StringComparison.Ordinal));
+                            if (participantIndex >= 0)
+                            {
+                                SetSystemHintPropertyIfMissing(hint, $"uin_str{participantIndex + 1}", uin);
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(nickname))
+                        {
+                            displayParts.Add(nickname);
+                        }
+
+                        break;
+                    }
+                    case "nor":
+                    {
+                        var text = GetXmlAttribute(element, "txt");
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            textParts.Add(text);
+                            displayParts.Add(text);
+                        }
+
+                        break;
+                    }
+                    case "url":
+                    {
+                        var text = GetXmlAttribute(element, "txt");
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            targetName = text.Trim();
+                            displayParts.Add(targetName);
+                        }
+
+                        SetSystemHintPropertyIfMissing(hint, "msg_seq", GetXmlAttribute(element, "msgseq"));
+                        break;
+                    }
+                    case "face":
+                    {
+                        var faceId = GetXmlAttribute(element, "id");
+                        SetSystemHintPropertyIfMissing(hint, "face_type", GetXmlAttribute(element, "type"));
+                        SetSystemHintPropertyIfMissing(hint, "face_id", faceId);
+                        if (!string.IsNullOrWhiteSpace(faceId))
+                        {
+                            displayParts.Add($"[QQ表情:{faceId.Trim()}]");
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            if (textParts.Count > 0)
+            {
+                SetSystemHintPropertyIfMissing(hint, "action_str", textParts[0].Trim());
+            }
+
+            SetSystemHintPropertyIfMissing(hint, "target_name", targetName);
+            if (displayParts.Count > 0)
+            {
+                SetSystemHintPropertyIfMissing(hint, "display_text", string.Concat(displayParts).Trim());
+            }
+        }
+        catch
+        {
+            // Keep the raw XML; some system hints are not strict XML.
+        }
+    }
+
+    private static string? GetXmlAttribute(XElement element, string name)
+    {
+        return element.Attribute(name)?.Value;
     }
 
     private static void ApplyJsonSystemHint(QQMessageSegment currentMessage, string json)
@@ -908,6 +1167,69 @@ public partial class QQMessageReader
         return ParseForwardedMessages(subContent, 0);
     }
 
+    public static QQForwardedMessage ParseEmbeddedMessageRecord(byte[] data)
+    {
+        QQForwardedMessage? message = null;
+        try
+        {
+            message = ParseForwardedMessage(data, 0);
+            if (message.Segments.Count > 0 || message.NestedForwardedMessages.Count > 0)
+                return message;
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var segment = ParseMessageSegment(data);
+            if (HasMessageSegmentOwnContent(segment))
+            {
+                message ??= new QQForwardedMessage();
+                message.Segments = [segment];
+                return message;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var content = ParseMessage(data);
+            message ??= new QQForwardedMessage();
+            message.Segments = content.Segments;
+            return message;
+        }
+        catch
+        {
+        }
+
+        if (message is not null)
+            return message;
+
+        throw new InvalidOperationException("Embedded message record parsing failed.");
+    }
+
+    private static bool HasMessageSegmentOwnContent(QQMessageSegment segment)
+    {
+        return segment.Type != default ||
+               !string.IsNullOrWhiteSpace(segment.Text) ||
+               !string.IsNullOrWhiteSpace(segment.AltText) ||
+               segment.FaceId is not null ||
+               segment.SystemHint is not null ||
+               !string.IsNullOrWhiteSpace(segment.ImageFileName) ||
+               segment.ImageMd5 is { Length: > 0 } ||
+               !string.IsNullOrWhiteSpace(segment.ImageLocalPath) ||
+               !string.IsNullOrWhiteSpace(segment.ImageThumbnailPath) ||
+               !string.IsNullOrWhiteSpace(segment.ImageLargePath) ||
+               !string.IsNullOrWhiteSpace(segment.ImageOriginalPath) ||
+               !string.IsNullOrWhiteSpace(segment.MarketFaceName) ||
+               segment.MarketFaceImageIdBytes is { Length: > 0 } ||
+               !string.IsNullOrWhiteSpace(segment.AppJson) ||
+               !string.IsNullOrWhiteSpace(segment.Xml);
+    }
+
     private static IReadOnlyList<QQForwardedMessage> ParseForwardedMessages(byte[] subContent, int depth)
     {
         var root = new CodedInputStream(subContent);
@@ -1186,6 +1508,11 @@ public class QQMessageContent
         return string.Concat(Segments.Select(v => v.GetDisplayText()));
     }
 
+    public string GetText(MessageType messageType, SubMessageType subMessageType)
+    {
+        return QQMessageDisplayText.CreateText(this, messageType, subMessageType);
+    }
+
     //public required JsonNode Content { get; init; }
 
     //public string GetText()
@@ -1312,6 +1639,13 @@ public sealed class QQSystemHintMessage
     public string? ActionImageUrl => GetProperty("action_img_url");
     public string? DisplayText => GetProperty("display_text");
     public bool IsSingleActor => string.Equals(GetProperty("single_actor"), "1", StringComparison.Ordinal);
+    public string? SourceName => GetProperty("source_name");
+    public bool SourceIsUser => !string.Equals(GetProperty("source_is_user"), "0", StringComparison.Ordinal);
+    public string? TargetName => GetProperty("target_name");
+    public long TargetMessageSeq => long.TryParse(GetProperty("msg_seq"), out var value) ? value : 0;
+    public int FaceId => int.TryParse(GetProperty("face_id"), out var value) ? value : 0;
+    public string? RecalledMessageText => GetProperty("recalled_text");
+    public byte[]? RecalledOriginalMessageContent { get; set; }
 
     public void SetProperty(string name, string value)
     {
@@ -1523,6 +1857,7 @@ public class QQMessageSegment
             MessageSegmentType.Image => "[图片]",
             MessageSegmentType.File => "[文件]",
             MessageSegmentType.Record => "[语音]",
+            MessageSegmentType.Video => "[视频]",
             MessageSegmentType.Reply => "[回复]",
             MessageSegmentType.System => "[系统消息]",
             MessageSegmentType.App => "[应用消息]",
@@ -1544,16 +1879,28 @@ public class QQMessageSegment
             return true;
         }
 
-        if (systemHint.Participants.Count < 2 || string.IsNullOrWhiteSpace(systemHint.Action))
+        if (string.IsNullOrWhiteSpace(systemHint.Action))
             return false;
 
-        var sourceName = systemHint.Participants[0].Nickname;
-        var targetName = systemHint.Participants[1].Nickname;
-        if (string.IsNullOrWhiteSpace(sourceName) || string.IsNullOrWhiteSpace(targetName))
+        var sourceName = FirstNonEmptyDisplayValue(
+            systemHint.SourceName,
+            systemHint.Participants.FirstOrDefault()?.Nickname);
+        var targetName = systemHint.Participants.Count >= 2
+            ? systemHint.Participants[1].Nickname
+            : string.Empty;
+        if (string.IsNullOrWhiteSpace(targetName))
+            targetName = systemHint.TargetName ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(sourceName))
             return false;
 
         text = $"{sourceName}{systemHint.Action}{targetName}{systemHint.Suffix}";
         return true;
+    }
+
+    private static string FirstNonEmptyDisplayValue(params string?[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
     }
 }
 
@@ -1563,6 +1910,7 @@ public enum MessageSegmentType : int
     Image = 2,
     File = 3,
     Record = 4,
+    Video = 5,
     Emoji = 6,
     Reply = 7,
     System = 8,

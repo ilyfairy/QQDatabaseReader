@@ -176,17 +176,22 @@ public class GroupMessage
 
     public string GetText()
     {
-        if(Content is null) return string.Empty;
+        if (Content is null)
+        {
+            return QQMessageDisplayText.TryGetFallbackText(MessageType, SubMessageType, out var fallbackText)
+                ? fallbackText
+                : string.Empty;
+        }
 
         try
         {
-            if (SubMessageType == SubMessageType.Image)
-                return "[图片消息]";
-            return QQMessageReader.ParseMessage(Content).GetText();
+            return QQMessageReader.ParseMessage(Content).GetText(MessageType, SubMessageType);
         }
         catch (Exception)
         {
-            return string.Empty;
+            return QQMessageDisplayText.TryGetFallbackText(MessageType, SubMessageType, out var fallbackText)
+                ? fallbackText
+                : string.Empty;
         }
     }
 }

@@ -274,6 +274,52 @@ public partial class MessageTabViewModel : ViewModelBase
         }
     }
 
+    public async Task JumpToSystemHintTargetMessageAsync(AvaQQMessage sourceMessage)
+    {
+        if (sourceMessage.SystemHintTargetMessageSeq <= 0 ||
+            sourceMessage.ConversationKey != _activeConversationKey ||
+            SelectedGroup?.ConversationKey != sourceMessage.ConversationKey ||
+            !HasNtMessageDatabase)
+        {
+            return;
+        }
+
+        var loadedMatches = _messages
+            .Where(message => message.MessageSeq == sourceMessage.SystemHintTargetMessageSeq)
+            .Take(2)
+            .ToArray();
+        if (loadedMatches.Length == 1)
+        {
+            View?.ScrollToMessageIfNeeded(loadedMatches[0].MessageId);
+            return;
+        }
+
+        MessageRecord? targetMessage = sourceMessage.ConversationType switch
+        {
+            AvaConversationType.Group when sourceMessage.GroupId != 0 => ResolveJumpTarget(
+                sourceMessage.GroupId,
+                [],
+                [],
+                [sourceMessage.SystemHintTargetMessageSeq]),
+            AvaConversationType.Private when sourceMessage.PrivateConversationId != 0 => ResolvePrivateJumpTarget(
+                sourceMessage.PrivateConversationId,
+                [],
+                [],
+                [sourceMessage.SystemHintTargetMessageSeq]),
+            _ => null,
+        };
+
+        if (targetMessage is null)
+            return;
+
+        var loadVersion = ++_initialMessageLoadVersion;
+        await LoadMessagesAroundAsync(
+            SelectedGroup,
+            targetMessage.MessageId,
+            targetMessage.MessageSeq,
+            loadVersion);
+    }
+
     private AvaQQGroup? ResolveReplyTargetConversation(AvaQQMessage sourceMessage, AvaReplyMessage reply)
     {
         if (reply.SourceGroupId == 0 ||
@@ -311,7 +357,8 @@ public partial class MessageTabViewModel : ViewModelBase
                     conversation.GroupId,
                     GetReplyMessageIdCandidates(reply),
                     GetReplyMessageRandomCandidates(reply),
-                    GetReplyMessageSeqCandidates(reply, conversation.ConversationType));
+                    GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
+                    reply);
                 if (targetMessage is null)
                     return;
 
@@ -325,7 +372,8 @@ public partial class MessageTabViewModel : ViewModelBase
                     conversation.PrivateConversationId,
                     GetReplyMessageIdCandidates(reply),
                     GetReplyMessageRandomCandidates(reply),
-                    GetReplyMessageSeqCandidates(reply, conversation.ConversationType));
+                    GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
+                    reply);
                 if (targetMessage is null)
                     return;
 
@@ -411,16 +459,122 @@ public partial class MessageTabViewModel : ViewModelBase
                 .Where(message => IsPCQQConversation(sourceConversationType)
                     ? message.PCQQMessageSeq == messageSeq
                     : message.MessageSeq == messageSeq)
-                .Take(2)
                 .ToArray();
-            if (loadedMessages.Length == 1)
+
+            loadedMessage = SelectReplyTargetCandidate(
+                loadedMessages,
+                reply,
+                message => message.SenderId,
+                message => message.MessageTime,
+                message => message.DisplayText)!;
+            if (loadedMessage is not null)
             {
-                loadedMessage = loadedMessages[0];
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static MessageRecord? SelectMessageRecordJumpTarget(
+        IReadOnlyList<MessageRecord> candidates,
+        AvaReplyMessage? reply)
+    {
+        return SelectReplyTargetCandidate(
+            candidates,
+            reply,
+            message => message.SenderId,
+            message => message.MessageTime,
+            CreateLatestMessagePreviewText);
+    }
+
+    private static T? SelectReplyTargetCandidate<T>(
+        IReadOnlyList<T> candidates,
+        AvaReplyMessage? reply,
+        Func<T, uint> getSenderId,
+        Func<T, int> getMessageTime,
+        Func<T, string> getDisplayText)
+        where T : class
+    {
+        if (candidates.Count == 0)
+            return null;
+
+        if (candidates.Count == 1)
+            return candidates[0];
+
+        if (reply is null)
+            return null;
+
+        IReadOnlyList<T> currentCandidates = candidates;
+
+        if (reply.SenderId != 0 &&
+            TryNarrowReplyTargetCandidates(
+                currentCandidates,
+                candidate => getSenderId(candidate) == reply.SenderId,
+                out var senderMatches))
+        {
+            if (senderMatches.Count == 1)
+                return senderMatches[0];
+
+            currentCandidates = senderMatches;
+        }
+
+        if (reply.MessageTime > 0 &&
+            TryNarrowReplyTargetCandidates(
+                currentCandidates,
+                candidate => getMessageTime(candidate) == reply.MessageTime,
+                out var timeMatches))
+        {
+            if (timeMatches.Count == 1)
+                return timeMatches[0];
+
+            currentCandidates = timeMatches;
+        }
+
+        var previewText = NormalizeReplyTargetText(reply.PreviewText);
+        if (!string.IsNullOrWhiteSpace(previewText) &&
+            TryNarrowReplyTargetCandidates(
+                currentCandidates,
+                candidate => IsReplyPreviewTextMatch(getDisplayText(candidate), previewText),
+                out var textMatches))
+        {
+            if (textMatches.Count == 1)
+                return textMatches[0];
+
+            currentCandidates = textMatches;
+        }
+
+        return currentCandidates.Count == 1 ? currentCandidates[0] : null;
+    }
+
+    private static bool TryNarrowReplyTargetCandidates<T>(
+        IReadOnlyList<T> candidates,
+        Func<T, bool> predicate,
+        out IReadOnlyList<T> matches)
+    {
+        matches = candidates.Where(predicate).ToArray();
+        return matches.Count > 0 && matches.Count < candidates.Count;
+    }
+
+    private static bool IsReplyPreviewTextMatch(string candidateText, string normalizedPreviewText)
+    {
+        var normalizedCandidateText = NormalizeReplyTargetText(candidateText);
+        if (string.IsNullOrWhiteSpace(normalizedCandidateText))
+            return false;
+
+        if (string.Equals(normalizedCandidateText, normalizedPreviewText, StringComparison.Ordinal))
+            return true;
+
+        return normalizedPreviewText.Length >= 4 &&
+               (normalizedCandidateText.Contains(normalizedPreviewText, StringComparison.Ordinal) ||
+                normalizedPreviewText.Contains(normalizedCandidateText, StringComparison.Ordinal));
+    }
+
+    private static string NormalizeReplyTargetText(string? text)
+    {
+        return string.IsNullOrWhiteSpace(text)
+            ? string.Empty
+            : Regex.Replace(text.Trim(), @"\s+", " ");
     }
 
     private async Task JumpToMessageInActiveConversationAsync(AvaQQMessage sourceMessage, AvaReplyMessage reply)
@@ -445,7 +599,8 @@ public partial class MessageTabViewModel : ViewModelBase
                     sourceMessage.GroupId,
                     GetReplyMessageIdCandidates(reply),
                     GetReplyMessageRandomCandidates(reply),
-                    GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType));
+                    GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
+                    reply);
                 if (targetMessage is null)
                     return;
 
@@ -462,7 +617,8 @@ public partial class MessageTabViewModel : ViewModelBase
                     sourceMessage.PrivateConversationId,
                     GetReplyMessageIdCandidates(reply),
                     GetReplyMessageRandomCandidates(reply),
-                    GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType));
+                    GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
+                    reply);
                 if (targetMessage is null)
                     return;
 
@@ -570,7 +726,8 @@ public partial class MessageTabViewModel : ViewModelBase
         uint groupId,
         IReadOnlyList<long> messageIds,
         IReadOnlyList<long> messageRandoms,
-        IReadOnlyList<long> messageSeqs)
+        IReadOnlyList<long> messageSeqs,
+        AvaReplyMessage? reply = null)
     {
         IQueryable<GroupMessage>? query = null;
         if (_qqDatabaseService.MessageDatabase is { } messageDatabase)
@@ -597,32 +754,45 @@ public partial class MessageTabViewModel : ViewModelBase
         {
             foreach (var messageSeq in messageSeqs.Where(value => value > 0).Distinct())
             {
-                var targetMessage = query
-                    .FirstOrDefault(message =>
+                var matches = query
+                    .Where(message =>
                         message.MessageRandom == messageRandom &&
-                        message.MessageSeq == messageSeq);
+                        message.MessageSeq == messageSeq)
+                    .Take(16)
+                    .AsEnumerable()
+                    .Select(MessageRecord.FromGroup)
+                    .ToArray();
 
+                var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
                 if (targetMessage is not null)
-                    return MessageRecord.FromGroup(targetMessage);
+                    return targetMessage;
             }
 
             foreach (var messageId in messageIds.Where(value => value > 0).Distinct())
             {
-                var targetMessage = query
-                    .FirstOrDefault(message =>
+                var matches = query
+                    .Where(message =>
                         message.MessageRandom == messageRandom &&
-                        message.MessageId == messageId);
+                        message.MessageId == messageId)
+                    .Take(16)
+                    .AsEnumerable()
+                    .Select(MessageRecord.FromGroup)
+                    .ToArray();
 
+                var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
                 if (targetMessage is not null)
-                    return MessageRecord.FromGroup(targetMessage);
+                    return targetMessage;
             }
 
             var randomMatches = query
                 .Where(message => message.MessageRandom == messageRandom)
-                .Take(2)
+                .Take(16)
+                .AsEnumerable()
+                .Select(MessageRecord.FromGroup)
                 .ToArray();
-            if (randomMatches.Length == 1)
-                return MessageRecord.FromGroup(randomMatches[0]);
+            var randomMatch = SelectMessageRecordJumpTarget(randomMatches, reply);
+            if (randomMatch is not null)
+                return randomMatch;
         }
 
         if (messageRandomCandidates.Length > 0)
@@ -630,22 +800,30 @@ public partial class MessageTabViewModel : ViewModelBase
 
         foreach (var messageId in messageIds.Where(value => value > 0).Distinct())
         {
-            var targetMessage = query
-                .FirstOrDefault(message => message.MessageId == messageId);
+            var matches = query
+                .Where(message => message.MessageId == messageId)
+                .Take(16)
+                .AsEnumerable()
+                .Select(MessageRecord.FromGroup)
+                .ToArray();
 
+            var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
             if (targetMessage is not null)
-                return MessageRecord.FromGroup(targetMessage);
+                return targetMessage;
         }
 
         foreach (var messageSeq in messageSeqs.Where(value => value > 0).Distinct())
         {
             var seqMatches = query
                 .Where(message => message.MessageSeq == messageSeq)
-                .Take(2)
+                .Take(32)
+                .AsEnumerable()
+                .Select(MessageRecord.FromGroup)
                 .ToArray();
 
-            if (seqMatches.Length == 1)
-                return MessageRecord.FromGroup(seqMatches[0]);
+            var seqMatch = SelectMessageRecordJumpTarget(seqMatches, reply);
+            if (seqMatch is not null)
+                return seqMatch;
         }
 
         return null;
@@ -655,7 +833,8 @@ public partial class MessageTabViewModel : ViewModelBase
         long conversationId,
         IReadOnlyList<long> messageIds,
         IReadOnlyList<long> messageRandoms,
-        IReadOnlyList<long> messageSeqs)
+        IReadOnlyList<long> messageSeqs,
+        AvaReplyMessage? reply = null)
     {
         IQueryable<PrivateMessage>? query = null;
         if (_qqDatabaseService.MessageDatabase is { } messageDatabase)
@@ -682,32 +861,45 @@ public partial class MessageTabViewModel : ViewModelBase
         {
             foreach (var messageSeq in messageSeqs.Where(value => value > 0).Distinct())
             {
-                var targetMessage = query
-                    .FirstOrDefault(message =>
+                var matches = query
+                    .Where(message =>
                         message.MessageRandom == messageRandom &&
-                        message.MessageSeq == messageSeq);
+                        message.MessageSeq == messageSeq)
+                    .Take(16)
+                    .AsEnumerable()
+                    .Select(MessageRecord.FromPrivate)
+                    .ToArray();
 
+                var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
                 if (targetMessage is not null)
-                    return MessageRecord.FromPrivate(targetMessage);
+                    return targetMessage;
             }
 
             foreach (var messageId in messageIds.Where(value => value > 0).Distinct())
             {
-                var targetMessage = query
-                    .FirstOrDefault(message =>
+                var matches = query
+                    .Where(message =>
                         message.MessageRandom == messageRandom &&
-                        message.MessageId == messageId);
+                        message.MessageId == messageId)
+                    .Take(16)
+                    .AsEnumerable()
+                    .Select(MessageRecord.FromPrivate)
+                    .ToArray();
 
+                var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
                 if (targetMessage is not null)
-                    return MessageRecord.FromPrivate(targetMessage);
+                    return targetMessage;
             }
 
             var randomMatches = query
                 .Where(message => message.MessageRandom == messageRandom)
-                .Take(2)
+                .Take(16)
+                .AsEnumerable()
+                .Select(MessageRecord.FromPrivate)
                 .ToArray();
-            if (randomMatches.Length == 1)
-                return MessageRecord.FromPrivate(randomMatches[0]);
+            var randomMatch = SelectMessageRecordJumpTarget(randomMatches, reply);
+            if (randomMatch is not null)
+                return randomMatch;
         }
 
         if (messageRandomCandidates.Length > 0 && messageSeqs.Count == 0)
@@ -715,22 +907,30 @@ public partial class MessageTabViewModel : ViewModelBase
 
         foreach (var messageId in messageIds.Where(value => value > 0).Distinct())
         {
-            var targetMessage = query
-                .FirstOrDefault(message => message.MessageId == messageId);
+            var matches = query
+                .Where(message => message.MessageId == messageId)
+                .Take(16)
+                .AsEnumerable()
+                .Select(MessageRecord.FromPrivate)
+                .ToArray();
 
+            var targetMessage = SelectMessageRecordJumpTarget(matches, reply);
             if (targetMessage is not null)
-                return MessageRecord.FromPrivate(targetMessage);
+                return targetMessage;
         }
 
         foreach (var messageSeq in messageSeqs.Where(value => value > 0).Distinct())
         {
             var seqMatches = query
                 .Where(message => message.MessageSeq == messageSeq)
-                .Take(2)
+                .Take(32)
+                .AsEnumerable()
+                .Select(MessageRecord.FromPrivate)
                 .ToArray();
 
-            if (seqMatches.Length == 1)
-                return MessageRecord.FromPrivate(seqMatches[0]);
+            var seqMatch = SelectMessageRecordJumpTarget(seqMatches, reply);
+            if (seqMatch is not null)
+                return seqMatch;
         }
 
         return null;
@@ -1913,7 +2113,19 @@ public partial class MessageTabViewModel : ViewModelBase
         var senderNames = GetSenderNameCache(conversation.ConversationKey);
         var messageSenderInfos = GetMessageSenderInfoCache(conversation.ConversationKey);
         var senderName = ResolveMessageSenderName(item, conversation, senderNames);
+        var recalledMessage = CreateRecalledOriginalMessage(item, content, mediaContext);
+        if (recalledMessage is { } recalled)
+        {
+            segments = recalled.Segments;
+            ResolveMessageSegmentMediaPaths(segments, recalled.ForwardedMessage, mediaContext);
+            senderName = FirstNonEmpty(
+                recalled.ForwardedMessage.SendMemberName,
+                recalled.ForwardedMessage.SendNickName,
+                senderName);
+        }
+
         var systemHint = CreateSystemHintMessage(content);
+        var reactions = CreateMessageReactions(item.MessageReactions);
         var reply = CreateReplyMessage(
             item,
             content,
@@ -1926,7 +2138,7 @@ public partial class MessageTabViewModel : ViewModelBase
         if (systemHint is null && !HasDisplayContent(segments))
         {
             segments.Clear();
-            segments.Add(AvaQQMessageSegment.CreateUnsupportedText(CreateUnsupportedMessageText(item)));
+            segments.Add(AvaQQMessageSegment.CreateUnsupportedText(CreateMissingMessageText(item)));
         }
 
         var displayText = CreateDisplayText(segments);
@@ -1945,6 +2157,8 @@ public partial class MessageTabViewModel : ViewModelBase
             Segments = segments,
             ForwardedMessages = forwardedMessages,
             Reply = reply,
+            Reactions = reactions,
+            IsRecalledMessage = recalledMessage is not null,
             Name = senderName,
             MessageTime = item.MessageTime,
             SenderId = item.SenderId,
@@ -1952,22 +2166,115 @@ public partial class MessageTabViewModel : ViewModelBase
             IsHoverTimeVisible = AlwaysShowMessageTime,
         };
 
-        if (systemHint is not null)
+        if (systemHint is not null && recalledMessage is null)
         {
             message.IsSystemHint = true;
             message.SystemHintSourceName = systemHint.Value.SourceName;
             message.SystemHintSourceUin = systemHint.Value.SourceUin;
+            message.SystemHintSourceIsUser = systemHint.Value.SourceIsUser;
             message.SystemHintTargetName = systemHint.Value.TargetName;
             message.SystemHintTargetUin = systemHint.Value.TargetUin;
+            message.SystemHintTargetIsUser = systemHint.Value.TargetIsUser;
             message.SystemHintAction = systemHint.Value.Action;
             message.SystemHintSuffix = systemHint.Value.Suffix;
             message.SystemHintActionImageUrl = systemHint.Value.ActionImageUrl;
+            message.SystemHintTargetMessageSeq = systemHint.Value.TargetMessageSeq;
+            message.SystemHintFaceId = systemHint.Value.FaceId;
+            message.SystemHintFaceAssetPath = systemHint.Value.FaceAssetPath;
             message.DisplayText = systemHint.Value.DisplayText;
             message.Segments = [AvaQQMessageSegment.CreateText(systemHint.Value.DisplayText)];
             message.Reply = null;
+            message.Reactions = [];
         }
 
         return message;
+    }
+
+    private static RecalledOriginalMessage? CreateRecalledOriginalMessage(
+        MessageRecord item,
+        QQMessageContent? content,
+        LocalMediaContext mediaContext)
+    {
+        if (content is null)
+            return null;
+
+        var originalContent = content.Segments
+            .Select(segment => segment.SystemHint?.RecalledOriginalMessageContent)
+            .FirstOrDefault(bytes => bytes is { Length: > 0 });
+        if (originalContent is not { Length: > 0 })
+            return null;
+
+        QQForwardedMessage originalMessage;
+        try
+        {
+            originalMessage = QQMessageReader.ParseEmbeddedMessageRecord(originalContent);
+        }
+        catch
+        {
+            try
+            {
+                var originalSegment = QQMessageReader.ParseMessageSegment(originalContent);
+                originalMessage = new QQForwardedMessage
+                {
+                    MessageType = MessageType.Text,
+                    SubMessageType = SubMessageType.Text,
+                    MessageTime = item.MessageTime,
+                    Segments = [originalSegment],
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        if (originalMessage.Segments.Count == 0)
+            return null;
+
+        var messageType = originalMessage.MessageType == default
+            ? MessageType.Text
+            : originalMessage.MessageType;
+        var subMessageType = originalMessage.SubMessageType == default
+            ? SubMessageType.Text
+            : originalMessage.SubMessageType;
+        originalMessage.MessageType = messageType;
+        originalMessage.SubMessageType = subMessageType;
+        if (originalMessage.MessageTime <= 0)
+            originalMessage.MessageTime = item.MessageTime;
+
+        var segments = CreateMessageSegments(originalMessage, mediaContext);
+        return HasDisplayContent(segments)
+            ? new RecalledOriginalMessage(originalMessage, segments)
+            : null;
+    }
+
+    private static IReadOnlyList<AvaMessageReaction> CreateMessageReactions(byte[]? data)
+    {
+        var reactions = QQMessageReactionParser.Parse(data);
+        if (reactions.Count == 0)
+            return [];
+
+        return reactions
+            .Select(reaction =>
+            {
+                QQFaceInfo? face = null;
+                if (int.TryParse(reaction.FaceId, out var faceId))
+                {
+                    face = QQFaceCatalog.Get(faceId);
+                }
+
+                var displayText = face is { Name.Length: > 0 }
+                    ? $"[{face.Name}]"
+                    : $"[QQ表情:{reaction.FaceId}]";
+                return new AvaMessageReaction
+                {
+                    FaceId = reaction.FaceId,
+                    Count = reaction.Count,
+                    DisplayText = displayText,
+                    FaceAssetPath = face?.AssetPath,
+                };
+            })
+            .ToArray();
     }
 
     private static SystemHintDisplay? CreateSystemHintMessage(QQMessageContent? content)
@@ -1977,16 +2284,24 @@ public partial class MessageTabViewModel : ViewModelBase
 
         var hint = content.Segments
             .Select(segment => segment.SystemHint)
-            .FirstOrDefault(systemHint => systemHint?.Participants.Count > 0);
-        if (hint is null || hint.Participants.Count == 0)
+            .FirstOrDefault(systemHint =>
+                systemHint is not null &&
+                (systemHint.Participants.Count > 0 || !string.IsNullOrWhiteSpace(systemHint.SourceName)));
+        if (hint is null)
             return null;
 
-        var sourceName = hint.Participants[0].Nickname.Trim();
+        var sourceName = FirstNonEmpty(
+            hint.SourceName,
+            hint.Participants.FirstOrDefault()?.Nickname).Trim();
+        var sourceIsUser = hint.SourceIsUser && hint.Participants.Count > 0;
         var targetName = hint.Participants.Count >= 2
             ? hint.Participants[1].Nickname.Trim()
+            : (hint.TargetName ?? string.Empty).Trim();
+        var targetIsUser = hint.Participants.Count >= 2;
+        var sourceUin = sourceIsUser
+            ? (hint.GetProperty("uin_str1") ?? string.Empty).Trim()
             : string.Empty;
-        var sourceUin = (hint.GetProperty("uin_str1") ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(sourceUin))
+        if (sourceIsUser && string.IsNullOrWhiteSpace(sourceUin))
         {
             sourceUin = hint.Participants[0].Uid.Trim();
         }
@@ -2004,22 +2319,33 @@ public partial class MessageTabViewModel : ViewModelBase
             return null;
         }
 
-        if (!hint.IsSingleActor && string.IsNullOrWhiteSpace(targetName))
+        if (!hint.IsSingleActor && string.IsNullOrWhiteSpace(targetName) && hint.FaceId <= 0)
         {
             return null;
         }
 
+        var face = hint.FaceId > 0 ? QQFaceCatalog.Get(hint.FaceId) : null;
+        var faceDisplayText = hint.FaceId > 0
+            ? face is { Name.Length: > 0 }
+                ? $"[{face.Name}]"
+                : $"[QQ表情:{hint.FaceId}]"
+            : string.Empty;
         var displayText = !string.IsNullOrWhiteSpace(hint.DisplayText)
             ? hint.DisplayText.Trim()
-            : $"{sourceName}{action}{targetName}{suffix}";
+            : $"{sourceName}{action}{targetName}{faceDisplayText}{suffix}";
         return new SystemHintDisplay(
             sourceName,
             sourceUin,
+            sourceIsUser,
             targetName,
             targetUin,
+            targetIsUser,
             action,
             suffix,
             hint.ActionImageUrl,
+            hint.TargetMessageSeq,
+            hint.FaceId,
+            face?.AssetPath,
             displayText);
     }
 
@@ -2593,7 +2919,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 if (!HasDisplayContent(segments))
                 {
                     segments.Clear();
-                    segments.Add(AvaQQMessageSegment.CreateUnsupportedText(CreateUnsupportedForwardedMessageText(message)));
+                    segments.Add(AvaQQMessageSegment.CreateUnsupportedText(CreateMissingMessageText(message)));
                 }
 
                 var senderName = message.SendNickName | message.SendMemberName ?? string.Empty;
@@ -2658,7 +2984,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 item.SubMessageType,
                 item.MessageTime,
                 mediaContext,
-                CreateUnsupportedForwardedMessageText(item, segment));
+                CreateUnsupportedMessageText(item, segment));
         }
 
         return segments;
@@ -2858,6 +3184,13 @@ public partial class MessageTabViewModel : ViewModelBase
         if (segment.Type == MessageSegmentType.Reply)
             return;
 
+        if (QQMessageDisplayText.TryGetPriorityText(messageType, subMessageType, out var priorityText) &&
+            !IsRenderableImageSegment(messageType, subMessageType, segment))
+        {
+            AddUnsupportedMessagePlaceholder(segments, priorityText);
+            return;
+        }
+
         if (SharedContactCardParser.TryParse(segment.AppJson, out var sharedContact) &&
             sharedContact is not null)
         {
@@ -2911,17 +3244,17 @@ public partial class MessageTabViewModel : ViewModelBase
             return;
         }
 
-        if (segment.IsImage || IsStickerMediaSegment(segment))
+        if (IsRenderableImageSegment(messageType, subMessageType, segment))
         {
             segments.Add(AvaQQMessageSegment.CreateImage(
                 null,
                 segment.ImageWidth,
                 segment.ImageHeight,
-                IsStickerMessage(subMessageType) ? "[动画表情]" : "[图片]"));
+                QQMessageDisplayText.CreateSegmentText(segment, messageType, subMessageType)));
             return;
         }
 
-        var text = segment.GetDisplayText();
+        var text = QQMessageDisplayText.CreateSegmentText(segment, messageType, subMessageType);
         if (!string.IsNullOrEmpty(text))
         {
             if (IsUnsupportedDisplaySegment(segment))
@@ -2933,6 +3266,20 @@ public partial class MessageTabViewModel : ViewModelBase
                 segments.AddRange(CreateTextSegments(text));
             }
 
+            return;
+        }
+
+        segments.Add(AvaQQMessageSegment.CreateUnsupportedText(unsupportedText));
+    }
+
+    private static void AddUnsupportedMessagePlaceholder(
+        List<AvaQQMessageSegment> segments,
+        string unsupportedText)
+    {
+        if (segments.Any(segment =>
+                segment.Type == AvaQQMessageSegmentType.Unsupported &&
+                string.Equals(segment.Text, unsupportedText, StringComparison.Ordinal)))
+        {
             return;
         }
 
@@ -2996,7 +3343,7 @@ public partial class MessageTabViewModel : ViewModelBase
             return true;
         }
 
-        if (segment.IsImage || IsStickerMediaSegment(segment))
+        if (IsRenderableImageSegment(item.MessageType, item.SubMessageType, segment))
         {
             localPath = ResolveLocalMediaPath(mediaContext, item.MessageTime, segment, item.SubMessageType);
             isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
@@ -3062,7 +3409,7 @@ public partial class MessageTabViewModel : ViewModelBase
             return true;
         }
 
-        if (segment.IsImage || IsStickerMediaSegment(segment))
+        if (IsRenderableImageSegment(item.MessageType, item.SubMessageType, segment))
         {
             localPath = ResolveLocalMediaPath(mediaContext, item.MessageTime, segment, item.SubMessageType);
             isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
@@ -3121,6 +3468,7 @@ public partial class MessageTabViewModel : ViewModelBase
     {
         return segment.Type is MessageSegmentType.File
             or MessageSegmentType.Record
+            or MessageSegmentType.Video
             or MessageSegmentType.System
             or MessageSegmentType.App
             or MessageSegmentType.RichMedia
@@ -3141,73 +3489,43 @@ public partial class MessageTabViewModel : ViewModelBase
             : "[图片文件未找到]";
     }
 
-    private static string CreateUnsupportedMessageText(MessageRecord item, QQMessageSegment? segment = null)
+    private static string CreateMissingMessageText(MessageRecord item)
     {
-        if (item.MessageType is MessageType.System)
-        {
-            return item.SubMessageType switch
-            {
-                SubMessageType.MessageRecalled => "[撤回消息]",
-                SubMessageType.Nudge => "[互动消息]",
-                SubMessageType.Pat => "[拍一拍]",
-                _ => "[系统消息]",
-            };
-        }
-
-        if (item.MessageType is MessageType.GroupFile)
-        {
-            return item.SubMessageType switch
-            {
-                SubMessageType.GroupFileImage => "[群文件图片]",
-                SubMessageType.GroupFileVideo => "[群文件视频]",
-                SubMessageType.GroupFileAudio => "[群文件音频]",
-                SubMessageType.GroupFileDocx => "[群文件 DOCX]",
-                SubMessageType.GroupFilePptx => "[群文件 PPTX]",
-                SubMessageType.GroupFileXlsx => "[群文件 XLSX]",
-                SubMessageType.GroupFileZip => "[群文件 ZIP]",
-                SubMessageType.GroupFileExe => "[群文件 EXE]",
-                _ => "[群文件]",
-            };
-        }
-
-        var knownText = item.MessageType switch
-        {
-            MessageType.None => "[空消息/损坏消息]",
-            MessageType.Voice => "[语音消息]",
-            MessageType.Video => "[视频消息]",
-            MessageType.Forwarded => "[合并转发消息]",
-            MessageType.Reply => "[回复消息]",
-            MessageType.RedPacket => "[红包消息]",
-            MessageType.App => "[应用消息]",
-            _ => item.SubMessageType switch
-            {
-                SubMessageType.GroupAnnouncement => "[群公告]",
-                SubMessageType.PlatformText => "[平台文本消息]",
-                SubMessageType.ContainsLink => "[链接消息]",
-                SubMessageType.Sticker => "[动画表情]",
-                _ => null,
-            },
-        };
-
-        if (knownText is not null)
+        if (QQMessageDisplayText.TryGetFallbackText(item.MessageType, item.SubMessageType, out var knownText))
             return knownText;
 
-        var messageType = $"{item.MessageType}({(int)item.MessageType})";
-        var subMessageType = $"{item.SubMessageType}({(int)item.SubMessageType})";
-        if (segment is null)
-            return $"[未支持消息: {messageType}, {subMessageType}]";
-
-        return $"[未支持消息: {messageType}, {subMessageType}, 段类型 {(int)segment.Type}]";
+        return CreateUnsupportedMessageText(item);
     }
 
-    private static string CreateUnsupportedForwardedMessageText(QQForwardedMessage item, QQMessageSegment? segment = null)
+    private static string CreateMissingMessageText(QQForwardedMessage item)
     {
-        var messageType = $"{item.MessageType}({(int)item.MessageType})";
-        var subMessageType = $"{item.SubMessageType}({(int)item.SubMessageType})";
-        if (segment is null)
-            return $"[未支持转发消息: {messageType}, {subMessageType}]";
+        if (QQMessageDisplayText.TryGetFallbackText(item.MessageType, item.SubMessageType, out var knownText))
+            return knownText;
 
-        return $"[未支持转发消息: {messageType}, {subMessageType}, 段类型 {(int)segment.Type}]";
+        return CreateUnsupportedMessageText(item);
+    }
+
+    private static string CreateUnsupportedMessageText(MessageRecord item, QQMessageSegment? segment = null)
+    {
+        return CreateUnsupportedMessageText(item.MessageType, item.SubMessageType, segment);
+    }
+
+    private static string CreateUnsupportedMessageText(QQForwardedMessage item, QQMessageSegment? segment = null)
+    {
+        return CreateUnsupportedMessageText(item.MessageType, item.SubMessageType, segment);
+    }
+
+    private static string CreateUnsupportedMessageText(
+        MessageType messageType,
+        SubMessageType subMessageType,
+        QQMessageSegment? segment = null)
+    {
+        var messageTypeText = $"{messageType}({(int)messageType})";
+        var subMessageTypeText = $"{subMessageType}({(int)subMessageType})";
+        if (segment is null)
+            return $"[未支持消息: {messageTypeText}, {subMessageTypeText}]";
+
+        return $"[未支持消息: {messageTypeText}, {subMessageTypeText}, 段类型 {(int)segment.Type}]";
     }
 
     private static string? ResolveLocalMediaPath(
@@ -3711,20 +4029,33 @@ public partial class MessageTabViewModel : ViewModelBase
         return IsStickerMessage(item.SubMessageType);
     }
 
+    private static bool IsRenderableImageSegment(
+        MessageType messageType,
+        SubMessageType subMessageType,
+        QQMessageSegment segment)
+    {
+        if (messageType is MessageType.GroupFile
+            or MessageType.Video
+            or MessageType.Voice
+            or MessageType.System)
+        {
+            return false;
+        }
+
+        return segment.IsImage ||
+               IsStickerMediaSegment(subMessageType, segment);
+    }
+
     private static bool IsStickerMessage(SubMessageType subMessageType)
     {
         return subMessageType is SubMessageType.Sticker;
     }
 
-    private static bool IsStickerMediaSegment(MessageRecord item, QQMessageSegment segment)
+    private static bool IsStickerMediaSegment(SubMessageType subMessageType, QQMessageSegment segment)
     {
-        return IsStickerMediaSegment(segment);
-    }
-
-    private static bool IsStickerMediaSegment(QQMessageSegment segment)
-    {
-        return !string.IsNullOrWhiteSpace(segment.ImageFileName) ||
-               !string.IsNullOrWhiteSpace(segment.ImageLocalPath);
+        return IsStickerMessage(subMessageType) &&
+               (!string.IsNullOrWhiteSpace(segment.ImageFileName) ||
+                !string.IsNullOrWhiteSpace(segment.ImageLocalPath));
     }
 
     private readonly record struct ThumbnailCandidate(string Path, int Spec, bool MatchesPreferredExtension);
@@ -4091,6 +4422,7 @@ public partial class MessageTabViewModel : ViewModelBase
                     v.ChatType,
                     v.PeerUin,
                     v.Uin,
+                    v.LastMessageType,
                     v.LastMessage,
                     v.LastTime,
                     v.MessageSeq,
@@ -4147,6 +4479,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             null,
                             contact.Source,
                             contact.LastMessage,
+                            contact.LastMessageType,
                             contact.LastTime,
                             contact.Uin2,
                             contact.NtUid,
@@ -4174,6 +4507,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.PeerUin,
                             FirstNonEmpty(contact.SendremarkName, contact.Source, contact.SendNickName, contact.SendMemberName),
                             contact.LastMessage,
+                            contact.LastMessageType,
                             contact.LastTime != 0 ? contact.LastTime : privateMessage.LastTime,
                             contact.Uin2,
                             contact.NtUid,
@@ -4213,6 +4547,7 @@ public partial class MessageTabViewModel : ViewModelBase
                     v.ChatType,
                     v.PeerUin,
                     v.Uin,
+                    v.LastMessageType,
                     v.LastMessage,
                     v.LastTime,
                     v.MessageSeq,
@@ -4268,6 +4603,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             null,
                             contact.Source,
                             contact.LastMessage,
+                            contact.LastMessageType,
                             contact.LastTime,
                             contact.Uin2,
                             contact.NtUid,
@@ -4295,6 +4631,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.PeerUin,
                             FirstNonEmpty(contact.SendremarkName, contact.Source, contact.SendNickName, contact.SendMemberName),
                             contact.LastMessage,
+                            contact.LastMessageType,
                             contact.LastTime != 0 ? contact.LastTime : privateMessage.LastTime,
                             contact.Uin2,
                             contact.NtUid,
@@ -4665,7 +5002,10 @@ public partial class MessageTabViewModel : ViewModelBase
             return CreateLatestMessageText(contact.ConversationType, latestMessage);
         }
 
-        var messageText = RecentMessagePreviewParser.Parse(contact.LastMessage);
+        var messageText = RecentMessagePreviewParser.Parse(
+            contact.LastMessage,
+            contact.LatestMessage?.MessageType ?? contact.LastMessageType,
+            contact.LatestMessage?.SubMessageType);
         if (string.IsNullOrWhiteSpace(messageText))
             return string.Empty;
 
@@ -4736,18 +5076,24 @@ public partial class MessageTabViewModel : ViewModelBase
             return PCQQMessageContentParser.GetDisplayText(pcqqContent);
         }
 
+        if (QQMessageDisplayText.TryGetPriorityText(message.MessageType, message.SubMessageType, out var priorityText))
+        {
+            return priorityText;
+        }
+
         if (message.Content is { Length: > 0 })
         {
-            var messageText = RecentMessagePreviewParser.Parse(message.Content);
+            var messageText = RecentMessagePreviewParser.Parse(
+                message.Content,
+                message.MessageType,
+                message.SubMessageType);
             if (!string.IsNullOrWhiteSpace(messageText))
             {
-                return IsStickerMessage(message) && string.Equals(messageText, "[图片]", StringComparison.Ordinal)
-                    ? "[动画表情]"
-                    : messageText;
+                return messageText;
             }
         }
 
-        return CreateUnsupportedMessageText(message);
+        return CreateMissingMessageText(message);
     }
 
     private static string FirstNonEmpty(params string?[] values)
@@ -4971,6 +5317,7 @@ public partial class MessageTabViewModel : ViewModelBase
         string? PrivateUid,
         string? DisplayName,
         byte[]? LastMessage,
+        MessageType LastMessageType,
         int LastTime,
         uint SenderUin,
         string? SenderUid,
@@ -5017,12 +5364,21 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly record struct SystemHintDisplay(
         string SourceName,
         string SourceUin,
+        bool SourceIsUser,
         string TargetName,
         string TargetUin,
+        bool TargetIsUser,
         string Action,
         string Suffix,
         string? ActionImageUrl,
+        long TargetMessageSeq,
+        int FaceId,
+        string? FaceAssetPath,
         string DisplayText);
+
+    private readonly record struct RecalledOriginalMessage(
+        QQForwardedMessage ForwardedMessage,
+        List<AvaQQMessageSegment> Segments);
 
     private void OnDatabaseRemoved(IQQDatabase database)
     {
@@ -5402,6 +5758,7 @@ public partial class MessageTabViewModel : ViewModelBase
         string? SendMemberName,
         string? SendNickName,
         byte[]? Content,
+        byte[]? MessageReactions,
         byte[]? SubContent,
         long ReplyToMessageSeq,
         uint SenderId)
@@ -5424,6 +5781,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 message.SendMemberName,
                 message.SendNickName,
                 message.Content,
+                message.MessageReactions,
                 message.SubContent,
                 message.ReplyToMessageSeq,
                 message.SenderId);
@@ -5447,6 +5805,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 message.SendMemberName,
                 message.SendNickName,
                 message.Content,
+                message.MessageReactions,
                 message.SubContent,
                 message.ReplyToMessageSeq,
                 message.SenderId);
@@ -5472,6 +5831,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 null,
                 message.SenderNickname,
                 message.Content,
+                null,
                 message.Info,
                 0,
                 message.SenderUin);

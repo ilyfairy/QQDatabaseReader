@@ -88,6 +88,23 @@
             <Setter Property="ShowProgressText" Value="False" />
             <Setter Property="Theme" Value="{DynamicResource ProgressRing}" />
         </Style>
+        <Style Selector="Border.MessageReactionBadge">
+            <Setter Property="Padding" Value="5,2" />
+            <Setter Property="Background" Value="#F6FFFFFF" />
+            <Setter Property="BorderBrush" Value="#16000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="Border.MessageBubble">
+            <Setter Property="Background" Value="#FFFFFFFF" />
+            <Setter Property="BorderBrush" Value="#1A000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="Border.MessageBubble.Recalled">
+            <Setter Property="Background" Value="#FFFFF1F1" />
+            <Setter Property="BorderBrush" Value="#55D93025" />
+        </Style>
     </UserControl.Styles>
 
     <Grid ColumnDefinitions="240 5 *">
@@ -253,7 +270,8 @@
                                         BorderThickness="1"
                                         CornerRadius="8"
                                         ContextRequested="MessageBubble_ContextRequested"
-                                        IsVisible="{Binding IsSystemHint}">
+                                        IsVisible="{Binding IsSystemHint}"
+                                        Tapped="SystemHint_Tapped">
                                         <StackPanel Orientation="Horizontal" Spacing="4">
                                             <TextBlock
                                                 VerticalAlignment="Center"
@@ -261,6 +279,15 @@
                                                 FontWeight="SemiBold"
                                                 Foreground="#1677FF"
                                                 ContextRequested="SystemHintSourceName_ContextRequested"
+                                                IsVisible="{Binding HasSystemHintUserSourceName}"
+                                                Text="{Binding SystemHintSourceName}" />
+
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                Foreground="#666"
+                                                MaxWidth="520"
+                                                IsVisible="{Binding HasSystemHintPlainSourceName}"
                                                 Text="{Binding SystemHintSourceName}" />
 
                                             <controls:RemoteImage
@@ -275,6 +302,7 @@
                                                 VerticalAlignment="Center"
                                                 FontSize="10"
                                                 Foreground="#666"
+                                                IsVisible="{Binding HasSystemHintAction}"
                                                 Text="{Binding SystemHintAction}" />
 
                                             <TextBlock
@@ -283,8 +311,23 @@
                                                 FontWeight="SemiBold"
                                                 Foreground="#1677FF"
                                                 ContextRequested="SystemHintTargetName_ContextRequested"
-                                                IsVisible="{Binding HasSystemHintTargetName}"
+                                                IsVisible="{Binding HasSystemHintUserTargetName}"
                                                 Text="{Binding SystemHintTargetName}" />
+
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                FontSize="10"
+                                                Foreground="#666"
+                                                IsVisible="{Binding HasSystemHintPlainTargetName}"
+                                                Text="{Binding SystemHintTargetName}" />
+
+                                            <controls:AnimatedAssetImage
+                                                Width="14"
+                                                Height="14"
+                                                VerticalAlignment="Center"
+                                                IsVisible="{Binding HasSystemHintFace}"
+                                                SourcePath="{Binding SystemHintFaceAssetPath}"
+                                                Stretch="Uniform" />
 
                                             <TextBlock
                                                 VerticalAlignment="Center"
@@ -323,6 +366,15 @@
                                                 Text="{Binding Name}" />
 
                                             <TextBlock
+                                                Padding="4,0"
+                                                VerticalAlignment="Center"
+                                                FontSize="11"
+                                                FontWeight="SemiBold"
+                                                Foreground="#D93025"
+                                                IsVisible="{Binding IsRecalledMessage}"
+                                                Text="[已撤回]" />
+
+                                            <TextBlock
                                                 FontSize="12"
                                                 Foreground="#888"
                                                 IsVisible="{Binding IsHoverTimeVisible}"
@@ -330,11 +382,9 @@
                                         </StackPanel>
 
                                         <Border
+                                            Classes="MessageBubble"
+                                            Classes.Recalled="{Binding IsRecalledMessage}"
                                             HorizontalAlignment="Left"
-                                            BorderBrush="#1A000000"
-                                            BorderThickness="1"
-                                            CornerRadius="8"
-                                            Background="#FFFFFFFF"
                                             ContextRequested="MessageBubble_ContextRequested"
                                             Tapped="MessageBubble_Tapped"
                                             DoubleTapped="MessageBubble_DoubleTapped">
@@ -394,6 +444,43 @@
                                                     TextWrapping="Wrap" />
                                             </Grid>
                                         </Border>
+
+                                        <ItemsControl
+                                            HorizontalAlignment="Left"
+                                            IsVisible="{Binding HasReactions}"
+                                            ItemsSource="{Binding Reactions}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" Spacing="4" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.DataTemplates>
+                                                <DataTemplate DataType="models:AvaMessageReaction">
+                                                    <Border Classes="MessageReactionBadge">
+                                                        <StackPanel Orientation="Horizontal" Spacing="3">
+                                                            <controls:AnimatedAssetImage
+                                                                Width="16"
+                                                                Height="16"
+                                                                VerticalAlignment="Center"
+                                                                IsVisible="{Binding HasFaceAsset}"
+                                                                SourcePath="{Binding FaceAssetPath}"
+                                                                Stretch="Uniform" />
+                                                            <TextBlock
+                                                                VerticalAlignment="Center"
+                                                                FontSize="10"
+                                                                Foreground="#444"
+                                                                Text="{Binding DisplayText}"
+                                                                IsVisible="{Binding !HasFaceAsset}" />
+                                                            <TextBlock
+                                                                VerticalAlignment="Center"
+                                                                FontSize="10"
+                                                                Foreground="#555"
+                                                                Text="{Binding Count}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.DataTemplates>
+                                        </ItemsControl>
                                     </StackPanel>
                                 </Grid>
                             </DataTemplate>

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Google.Protobuf;
 using QQDatabaseReader;
+using QQDatabaseReader.Database;
 
 namespace QQDatabaseExplorer.Models;
 
@@ -12,27 +13,44 @@ public static class RecentMessagePreviewParser
 {
     public static string Parse(byte[]? content)
     {
-        if (content is null || content.Length == 0)
-            return string.Empty;
+        return Parse(content, messageType: null, subMessageType: null);
+    }
 
-        if (TryParseRecentWrapperPreview(content, out var recentPreviewText))
+    public static string Parse(byte[]? content, MessageType messageType, SubMessageType subMessageType)
+    {
+        return Parse(content, messageType, (SubMessageType?)subMessageType);
+    }
+
+    public static string Parse(byte[]? content, MessageType? messageType, SubMessageType? subMessageType = null)
+    {
+        if (content is null || content.Length == 0)
+            return CreateContextFallbackText(messageType, subMessageType);
+
+        if (TryCreatePriorityText(messageType, subMessageType, out var rowTypeText))
+            return rowTypeText;
+
+        var context = new PreviewContext(messageType, subMessageType);
+        if (TryParseRecentWrapperPreview(content, context, out var recentPreviewText))
             return recentPreviewText;
 
         try
         {
             var message = QQMessageReader.ParseMessage(content);
-            return Normalize(CreateDisplayText(message.Segments));
+            return Normalize(CreateDisplayText(message.Segments, context));
         }
         catch
         {
-            if (TryParseSingleSegmentPreview(content, out var segmentText))
+            if (TryParseSingleSegmentPreview(content, context, out var segmentText))
                 return segmentText;
 
-            return ParseUnknownPreviewBlob(content);
+            var fallbackText = ParseUnknownPreviewBlob(content, context);
+            return string.IsNullOrWhiteSpace(fallbackText)
+                ? CreateContextFallbackText(messageType, subMessageType)
+                : fallbackText;
         }
     }
 
-    private static bool TryParseRecentWrapperPreview(byte[] content, out string text)
+    private static bool TryParseRecentWrapperPreview(byte[] content, PreviewContext context, out string text)
     {
         text = string.Empty;
         var input = new CodedInputStream(content);
@@ -54,8 +72,8 @@ public static class RecentMessagePreviewParser
                 }
 
                 var value = input.ReadBytes().ToByteArray();
-                if (TryParseMessageBytes(value, out text) ||
-                    TryParseSegmentBytes(value, out text))
+                if (TryParseMessageBytes(value, context, out text) ||
+                    TryParseSegmentBytes(value, context, out text))
                 {
                     return true;
                 }
@@ -69,14 +87,14 @@ public static class RecentMessagePreviewParser
         return false;
     }
 
-    private static bool TryParseMessageBytes(byte[] content, out string text)
+    private static bool TryParseMessageBytes(byte[] content, PreviewContext context, out string text)
     {
         text = string.Empty;
 
         try
         {
             var message = QQMessageReader.ParseMessage(content);
-            text = Normalize(CreateDisplayText(message.Segments));
+            text = Normalize(CreateDisplayText(message.Segments, context));
             return IsUsefulParsedPreviewText(text);
         }
         catch
@@ -85,7 +103,7 @@ public static class RecentMessagePreviewParser
         }
     }
 
-    private static bool TryParseSegmentBytes(byte[] content, out string text)
+    private static bool TryParseSegmentBytes(byte[] content, PreviewContext context, out string text)
     {
         text = string.Empty;
 
@@ -95,7 +113,7 @@ public static class RecentMessagePreviewParser
             if (!HasDisplayContent(segment))
                 return false;
 
-            text = Normalize(CreateDisplayText([segment]));
+            text = Normalize(CreateDisplayText([segment], context));
             return IsUsefulParsedPreviewText(text);
         }
         catch
@@ -104,7 +122,7 @@ public static class RecentMessagePreviewParser
         }
     }
 
-    private static string CreateDisplayText(IEnumerable<QQMessageSegment> segments)
+    private static string CreateDisplayText(IEnumerable<QQMessageSegment> segments, PreviewContext context)
     {
         var builder = new StringBuilder();
         foreach (var segment in segments)
@@ -122,11 +140,13 @@ public static class RecentMessagePreviewParser
             if (segment.IsQQFace && segment.FaceId is { } faceId)
             {
                 var face = QQFaceCatalog.Get(faceId);
-                builder.Append(face is null ? $"[QQ表情:{faceId}]" : $"[{face.Name}]");
+                builder.Append(CreateQQFacePreviewText(faceId, face));
                 continue;
             }
 
-            builder.Append(segment.GetDisplayText());
+            builder.Append(context.HasMessageContext
+                ? QQMessageDisplayText.CreateSegmentText(segment, context.MessageType!.Value, context.SubMessageType!.Value)
+                : segment.GetDisplayText());
         }
 
         return builder.ToString();
@@ -153,7 +173,7 @@ public static class RecentMessagePreviewParser
         return true;
     }
 
-    private static bool TryParseSingleSegmentPreview(byte[] content, out string text)
+    private static bool TryParseSingleSegmentPreview(byte[] content, PreviewContext context, out string text)
     {
         text = string.Empty;
 
@@ -163,7 +183,7 @@ public static class RecentMessagePreviewParser
             if (!HasDisplayContent(segment))
                 return false;
 
-            text = Normalize(segment.GetDisplayText());
+            text = Normalize(CreateDisplayText([segment], context));
             return !string.IsNullOrWhiteSpace(text);
         }
         catch
@@ -181,10 +201,10 @@ public static class RecentMessagePreviewParser
                !string.IsNullOrWhiteSpace(segment.MarketFaceName);
     }
 
-    private static string ParseUnknownPreviewBlob(byte[] content)
+    private static string ParseUnknownPreviewBlob(byte[] content, PreviewContext context)
     {
         var candidates = new List<PreviewCandidate>();
-        CollectCandidates(content, candidates, depth: 0);
+        CollectCandidates(content, candidates, context, depth: 0);
 
         var normalizedCandidates = candidates
             .Select(candidate => candidate with { Text = Normalize(candidate.Text) })
@@ -203,7 +223,7 @@ public static class RecentMessagePreviewParser
         var hasImageDisplayText = normalizedCandidates.Any(IsUsefulImageDisplayText);
         var previewParts = normalizedCandidates
             .Where(candidate => IsUsefulPreviewText(candidate.Text))
-            .Where(candidate => !IsRedundantImageMarker(candidate, hasImageDisplayText))
+            .Where(candidate => !IsRedundantMediaMarker(candidate, hasImageDisplayText))
             .Select(candidate => candidate.Text)
             .Take(4)
             .ToList();
@@ -213,7 +233,7 @@ public static class RecentMessagePreviewParser
             : string.Join(" ", previewParts);
     }
 
-    private static void CollectCandidates(byte[] bytes, List<PreviewCandidate> candidates, int depth)
+    private static void CollectCandidates(byte[] bytes, List<PreviewCandidate> candidates, PreviewContext context, int depth)
     {
         if (depth > 6 || bytes.Length == 0)
             return;
@@ -231,7 +251,7 @@ public static class RecentMessagePreviewParser
                 switch (WireFormat.GetTagWireType(tag))
                 {
                     case WireFormat.WireType.Varint:
-                        AddVarintCandidate(fieldNum, input.ReadUInt64(), candidates);
+                        AddVarintCandidate(fieldNum, input.ReadUInt64(), candidates, context);
                         break;
 
                     case WireFormat.WireType.Fixed64:
@@ -252,7 +272,7 @@ public static class RecentMessagePreviewParser
 
                         if (LooksLikeProtobuf(value))
                         {
-                            CollectCandidates(value, candidates, depth + 1);
+                            CollectCandidates(value, candidates, context, depth + 1);
                         }
                         else if (TryDecodeUtf8(value, out text))
                         {
@@ -275,33 +295,31 @@ public static class RecentMessagePreviewParser
         }
     }
 
-    private static void AddVarintCandidate(int fieldNum, ulong value, List<PreviewCandidate> candidates)
+    private static void AddVarintCandidate(int fieldNum, ulong value, List<PreviewCandidate> candidates, PreviewContext context)
     {
         if (fieldNum == 45002 && value <= int.MaxValue)
         {
-            var marker = (MessageSegmentType)(int)value switch
-            {
-                MessageSegmentType.Image => "[图片]",
-                MessageSegmentType.File => "[文件]",
-                MessageSegmentType.Record => "[语音]",
-                MessageSegmentType.System => "[系统消息]",
-                MessageSegmentType.App => "[应用消息]",
-                MessageSegmentType.RichMedia => "[应用卡片]",
-                MessageSegmentType.Xml => "[XML消息]",
-                MessageSegmentType.Call => "[通话]",
-                MessageSegmentType.Dynamic => "[动态消息]",
-                _ => null,
-            };
+            var marker = context.HasMessageContext
+                ? QQMessageDisplayText.CreateSegmentText(
+                    new QQMessageSegment { Type = (MessageSegmentType)(int)value },
+                    context.MessageType!.Value,
+                    context.SubMessageType!.Value)
+                : new QQMessageSegment { Type = (MessageSegmentType)(int)value }.GetDisplayText();
 
-            if (marker is not null)
+            if (!string.IsNullOrWhiteSpace(marker))
                 candidates.Add(new PreviewCandidate(fieldNum, marker));
         }
         else if (fieldNum == 47601 && value <= int.MaxValue)
         {
             var faceId = (int)value;
             var face = QQFaceCatalog.Get(faceId);
-            candidates.Add(new PreviewCandidate(fieldNum, face is null ? $"[QQ表情:{faceId}]" : $"[{face.Name}]"));
+            candidates.Add(new PreviewCandidate(fieldNum, CreateQQFacePreviewText(faceId, face)));
         }
+    }
+
+    private static string CreateQQFacePreviewText(int faceId, QQFaceInfo? face)
+    {
+        return face is { Name.Length: > 0 } ? $"[{face.Name}]" : $"[QQ表情:{faceId}]";
     }
 
     private static bool IsPreviewTextField(int fieldNum) => fieldNum switch
@@ -405,11 +423,46 @@ public static class RecentMessagePreviewParser
                !string.Equals(text, "[系统消息]", StringComparison.Ordinal);
     }
 
-    private static bool IsRedundantImageMarker(PreviewCandidateGroup candidate, bool hasImageDisplayText)
+    private static bool IsRedundantMediaMarker(PreviewCandidateGroup candidate, bool hasImageDisplayText)
     {
-        return string.Equals(candidate.Text, "[图片]", StringComparison.Ordinal) &&
+        return (string.Equals(candidate.Text, "[图片]", StringComparison.Ordinal) ||
+                string.Equals(candidate.Text, "[动画表情]", StringComparison.Ordinal)) &&
                hasImageDisplayText &&
                candidate.FieldNums.All(fieldNum => fieldNum == 45002);
+    }
+
+    private static bool TryCreatePriorityText(
+        MessageType? messageType,
+        SubMessageType? subMessageType,
+        out string text)
+    {
+        text = string.Empty;
+        if (messageType is null || subMessageType is null)
+            return false;
+
+        return QQMessageDisplayText.TryGetPriorityText(messageType.Value, subMessageType.Value, out text);
+    }
+
+    private static bool TryCreateFallbackText(
+        MessageType? messageType,
+        SubMessageType? subMessageType,
+        out string text)
+    {
+        text = string.Empty;
+        if (messageType is null || subMessageType is null)
+            return false;
+
+        return QQMessageDisplayText.TryGetFallbackText(messageType.Value, subMessageType.Value, out text);
+    }
+
+    private static string CreateContextFallbackText(MessageType? messageType, SubMessageType? subMessageType)
+    {
+        if (TryCreatePriorityText(messageType, subMessageType, out var rowTypeText))
+            return rowTypeText;
+
+        return TryCreateFallbackText(messageType, subMessageType, out var fallbackText)
+            ? fallbackText
+            : string.Empty;
     }
 
     private static bool IsUsefulImageDisplayText(PreviewCandidateGroup candidate)
@@ -458,4 +511,10 @@ public static class RecentMessagePreviewParser
     private sealed record PreviewCandidate(int FieldNum, string Text);
 
     private sealed record PreviewCandidateGroup(string Text, int[] FieldNums);
+
+    private readonly record struct PreviewContext(MessageType? MessageType, SubMessageType? SubMessageType)
+    {
+        public bool HasMessageContext => MessageType is not null && SubMessageType is not null;
+
+    }
 }
