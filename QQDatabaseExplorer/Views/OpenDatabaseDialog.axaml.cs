@@ -65,27 +65,32 @@ public partial class OpenDatabaseDialog : Window
 
     private async void PickNtMessageDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ViewModel.NtMessageDbPath = await PickDatabaseFileAsync("选择 nt_msg.db") ?? ViewModel.NtMessageDbPath;
+        if (await PickDatabaseFileAsync("选择 nt_msg.db") is { } filePath)
+            ViewModel.UsePickedNtMessageDbPath(filePath);
     }
 
     private async void PickNtGroupInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ViewModel.NtGroupInfoDbPath = await PickDatabaseFileAsync("选择 group_info.db") ?? ViewModel.NtGroupInfoDbPath;
+        if (await PickDatabaseFileAsync("选择 group_info.db") is { } filePath)
+            ViewModel.UsePickedNtGroupInfoDbPath(filePath);
     }
 
     private async void PickNtGroupMessageFtsDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ViewModel.NtGroupMessageFtsDbPath = await PickDatabaseFileAsync("选择 group_msg_fts.db") ?? ViewModel.NtGroupMessageFtsDbPath;
+        if (await PickDatabaseFileAsync("选择 group_msg_fts.db") is { } filePath)
+            ViewModel.UsePickedNtGroupMessageFtsDbPath(filePath);
     }
 
     private async void PickNtProfileInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ViewModel.NtProfileInfoDbPath = await PickDatabaseFileAsync("选择 profile_info.db") ?? ViewModel.NtProfileInfoDbPath;
+        if (await PickDatabaseFileAsync("选择 profile_info.db") is { } filePath)
+            ViewModel.UsePickedNtProfileInfoDbPath(filePath);
     }
 
     private async void PickPCQQMessageDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ViewModel.PCQQMessageDbPath = await PickDatabaseFileAsync("选择 PCQQ Msg3.0.db") ?? ViewModel.PCQQMessageDbPath;
+        if (await PickDatabaseFileAsync("选择 PCQQ Msg3.0.db") is { } filePath)
+            ViewModel.UsePickedPCQQMessageDbPath(filePath);
     }
 
     private async void PickPCQQInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -104,7 +109,7 @@ public partial class OpenDatabaseDialog : Window
             : null;
         if (!string.IsNullOrWhiteSpace(filePath))
         {
-            ViewModel.PCQQInfoDbPath = filePath;
+            ViewModel.UsePickedPCQQInfoDbPath(filePath);
         }
     }
 

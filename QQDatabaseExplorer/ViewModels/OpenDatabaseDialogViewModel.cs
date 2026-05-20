@@ -12,6 +12,13 @@ namespace QQDatabaseExplorer.ViewModels;
 
 public partial class OpenDatabaseDialogViewModel : ViewModelBase
 {
+    private const string NtMessageDbFileName = "nt_msg.db";
+    private const string NtGroupInfoDbFileName = "group_info.db";
+    private const string NtGroupMessageFtsDbFileName = "group_msg_fts.db";
+    private const string NtProfileInfoDbFileName = "profile_info.db";
+    private const string PCQQMessageDbFileName = "Msg3.0.db";
+    private const string PCQQInfoDbFileName = "Info.db";
+
     private readonly QQDatabaseService _qqDatabaseService;
     private readonly IDialogService _dialogService;
 
@@ -107,37 +114,34 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     public void SetInitialDatabaseFile(string databaseFilePath)
     {
-        var name = Path.GetFileNameWithoutExtension(databaseFilePath);
-        if (string.Equals(name, "Msg3.0", StringComparison.OrdinalIgnoreCase))
+        var fileName = Path.GetFileName(databaseFilePath);
+        if (string.Equals(fileName, PCQQMessageDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             PlatformType = DatabasePlatformType.PCQQ;
             PCQQMessageDbPath = databaseFilePath;
-            EnsurePCQQDataPath(databaseFilePath);
             return;
         }
 
         PlatformType = DatabasePlatformType.QQNT;
-        if (string.Equals(name, "nt_msg", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(fileName, NtMessageDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             NtMessageDbPath = databaseFilePath;
-            EnsureNtDataPath(databaseFilePath);
         }
-        else if (string.Equals(name, "group_info", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(fileName, NtGroupInfoDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             NtGroupInfoDbPath = databaseFilePath;
         }
-        else if (string.Equals(name, "group_msg_fts", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(fileName, NtGroupMessageFtsDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             NtGroupMessageFtsDbPath = databaseFilePath;
         }
-        else if (string.Equals(name, "profile_info", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(fileName, NtProfileInfoDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             NtProfileInfoDbPath = databaseFilePath;
         }
         else
         {
             NtMessageDbPath = databaseFilePath;
-            EnsureNtDataPath(databaseFilePath);
         }
     }
 
@@ -182,15 +186,40 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(FindDatabaseKeyButtonText));
     }
 
-    partial void OnNtMessageDbPathChanged(string value)
+    public void UsePickedNtMessageDbPath(string databaseFilePath)
     {
-        EnsureRand(value);
-        EnsureNtDataPath(value);
+        NtMessageDbPath = databaseFilePath;
+        TryCompleteNtDatabasePaths(databaseFilePath, NtMessageDbFileName);
     }
 
-    partial void OnPCQQMessageDbPathChanged(string value)
+    public void UsePickedNtGroupInfoDbPath(string databaseFilePath)
     {
-        EnsurePCQQDataPath(value);
+        NtGroupInfoDbPath = databaseFilePath;
+        TryCompleteNtDatabasePaths(databaseFilePath, NtGroupInfoDbFileName);
+    }
+
+    public void UsePickedNtGroupMessageFtsDbPath(string databaseFilePath)
+    {
+        NtGroupMessageFtsDbPath = databaseFilePath;
+        TryCompleteNtDatabasePaths(databaseFilePath, NtGroupMessageFtsDbFileName);
+    }
+
+    public void UsePickedNtProfileInfoDbPath(string databaseFilePath)
+    {
+        NtProfileInfoDbPath = databaseFilePath;
+        TryCompleteNtDatabasePaths(databaseFilePath, NtProfileInfoDbFileName);
+    }
+
+    public void UsePickedPCQQMessageDbPath(string databaseFilePath)
+    {
+        PCQQMessageDbPath = databaseFilePath;
+        TryCompletePCQQDatabasePaths(databaseFilePath, PCQQMessageDbFileName);
+    }
+
+    public void UsePickedPCQQInfoDbPath(string databaseFilePath)
+    {
+        PCQQInfoDbPath = databaseFilePath;
+        TryCompletePCQQDatabasePaths(databaseFilePath, PCQQInfoDbFileName);
     }
 
     partial void OnNtUidChanged(string value)
@@ -308,6 +337,68 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         if (IsAndroidQQNT && !string.IsNullOrWhiteSpace(NtUid) && !string.IsNullOrWhiteSpace(Rand))
             Key = RawDatabase.GetQQKey(NtUid, Rand);
+    }
+
+    private void TryCompleteNtDatabasePaths(string databaseFilePath, string expectedFileName)
+    {
+        if (!IsPickedStandardFile(databaseFilePath, expectedFileName))
+            return;
+
+        if (string.Equals(expectedFileName, NtMessageDbFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            EnsureRand(databaseFilePath);
+        }
+
+        var directory = Path.GetDirectoryName(databaseFilePath);
+        if (string.IsNullOrWhiteSpace(directory))
+            return;
+
+        if (TryGetExistingSiblingFile(NtMessageDbPath, directory, NtMessageDbFileName) is { } messageDbPath)
+            NtMessageDbPath = messageDbPath;
+
+        if (TryGetExistingSiblingFile(NtGroupInfoDbPath, directory, NtGroupInfoDbFileName) is { } groupInfoDbPath)
+            NtGroupInfoDbPath = groupInfoDbPath;
+
+        if (TryGetExistingSiblingFile(NtGroupMessageFtsDbPath, directory, NtGroupMessageFtsDbFileName) is { } groupMessageFtsDbPath)
+            NtGroupMessageFtsDbPath = groupMessageFtsDbPath;
+
+        if (TryGetExistingSiblingFile(NtProfileInfoDbPath, directory, NtProfileInfoDbFileName) is { } profileInfoDbPath)
+            NtProfileInfoDbPath = profileInfoDbPath;
+
+        EnsureNtDataPath(databaseFilePath);
+    }
+
+    private void TryCompletePCQQDatabasePaths(string databaseFilePath, string expectedFileName)
+    {
+        if (!IsPickedStandardFile(databaseFilePath, expectedFileName))
+            return;
+
+        var directory = Path.GetDirectoryName(databaseFilePath);
+        if (string.IsNullOrWhiteSpace(directory))
+            return;
+
+        if (TryGetExistingSiblingFile(PCQQMessageDbPath, directory, PCQQMessageDbFileName) is { } messageDbPath)
+            PCQQMessageDbPath = messageDbPath;
+
+        if (TryGetExistingSiblingFile(PCQQInfoDbPath, directory, PCQQInfoDbFileName) is { } infoDbPath)
+            PCQQInfoDbPath = infoDbPath;
+
+        EnsurePCQQDataPath(databaseFilePath);
+    }
+
+    private static bool IsPickedStandardFile(string databaseFilePath, string expectedFileName)
+    {
+        return File.Exists(databaseFilePath) &&
+               string.Equals(Path.GetFileName(databaseFilePath), expectedFileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryGetExistingSiblingFile(string currentPath, string directory, string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(currentPath))
+            return null;
+
+        var filePath = Path.Combine(directory, fileName);
+        return File.Exists(filePath) ? filePath : null;
     }
 
     private void EnsureRand(string databaseFilePath)
