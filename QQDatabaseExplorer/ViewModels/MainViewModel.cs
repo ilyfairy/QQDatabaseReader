@@ -15,6 +15,12 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     public partial int SelectedTabIndex { get; set; }
 
+    [ObservableProperty]
+    public partial bool IsLoadingConfig { get; set; }
+
+    [ObservableProperty]
+    public partial string LoadingText { get; set; } = string.Empty;
+
     public void ShowMessageTab()
     {
         SelectTab(MessageTabIndex);

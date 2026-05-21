@@ -8,11 +8,23 @@
 RequestedThemeVariant="Default">
     <!--  "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options.  -->
 
+    <Application.Resources>
+        <FontFamily x:Key="DefaultFontFamily">Inter, Microsoft YaHei UI, Segoe UI Emoji, fonts:QQDatabaseExplorerEmoji#Noto Color Emoji</FontFamily>
+    </Application.Resources>
+
     <Application.Styles>
         <semi:SemiTheme Locale="zh-CN" />
         <semi:DataGridSemiTheme />
         <semi:SemiPopupAnimations />
         <usemi:UrsaSemiTheme Locale="zh-CN"/>
+
+        <Style Selector="TextBlock">
+            <Setter Property="FontFamily" Value="{DynamicResource DefaultFontFamily}" />
+        </Style>
+
+        <Style Selector="SelectableTextBlock">
+            <Setter Property="FontFamily" Value="{DynamicResource DefaultFontFamily}" />
+        </Style>
 
         <Style Selector="ScrollViewer">
             <Setter Property="controls:SmoothScrollViewer.IsEnabled" Value="True" />

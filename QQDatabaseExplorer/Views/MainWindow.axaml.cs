@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using Avalonia.Controls;
 using QQDatabaseExplorer.Models;
@@ -15,6 +16,7 @@ public partial class MainWindow : UrsaWindow
     private readonly IDialogService _dialogService;
     private readonly ConfigService _configService;
     private readonly QQDatabaseService _qqDatabaseService;
+    private readonly MainViewModel _mainViewModel;
 
     public MainWindow(
         MainViewModel mainViewModel,
@@ -28,6 +30,7 @@ public partial class MainWindow : UrsaWindow
         _dialogService = dialogService;
         _configService = configService;
         _qqDatabaseService = qqDatabaseService;
+        _mainViewModel = mainViewModel;
 
         InitializeComponent();
     }
@@ -81,6 +84,9 @@ public partial class MainWindow : UrsaWindow
 
     private async void LoadConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        if (_mainViewModel.IsLoadingConfig)
+            return;
+
         if (!StorageProvider.CanOpen)
             return;
 
@@ -103,11 +109,19 @@ public partial class MainWindow : UrsaWindow
 
         try
         {
+            _mainViewModel.LoadingText = "正在打开数据库配置...";
+            _mainViewModel.IsLoadingConfig = true;
+            await Task.Yield();
             await _configService.LoadFromFileAsync(filePath);
         }
         catch (Exception ex)
         {
             await _dialogService.ShowMessageBox($"打开数据库配置失败:\n{ex.Message}", "错误");
+        }
+        finally
+        {
+            _mainViewModel.IsLoadingConfig = false;
+            _mainViewModel.LoadingText = string.Empty;
         }
     }
 

@@ -40,5 +40,6 @@ class Program
             .WithDeveloperTools()
 #endif
             .WithInterFont()
+            .WithQQDatabaseExplorerFonts()
             .LogToTrace();
 }

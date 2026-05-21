@@ -45,6 +45,9 @@ public static class MessageInlineRenderer
     private const double ReplyPreviewMaxWidth = 560;
     private const double ReplyPreviewMaxHeight = 70;
 
+    public static readonly FontFamily TextFontFamily = new("Inter, Microsoft YaHei UI, Segoe UI Emoji, fonts:QQDatabaseExplorerEmoji#Noto Color Emoji");
+    public static readonly FontFamily EmojiFontFamily = new("fonts:QQDatabaseExplorerEmoji#Noto Color Emoji, Segoe UI Emoji, Inter, Microsoft YaHei UI");
+
     public static readonly IBrush UnsupportedTextBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     public static readonly IBrush UrlTextBrush = new SolidColorBrush(Color.FromRgb(22, 119, 255));
 
@@ -426,11 +429,50 @@ public static class MessageInlineRenderer
         if (string.IsNullOrEmpty(text))
             return;
 
+        var copyStart = textPosition;
         var part = MessageCopyPart.CreateText(text, segment.Tone, segment.LinkUrl);
-        runs.Add(MessageRenderRun.CreateText(textPosition, text, GetTextBrush(segment), segment.LinkUrl is not null));
-        copySpans.Add(new MessageCopySpan(textPosition, text.Length, part));
+        var foreground = GetTextBrush(segment);
+        var isLink = segment.LinkUrl is not null;
+
+        if (!EmojiTextRunHelper.MayContainEmojiFontText(text))
+        {
+            runs.Add(MessageRenderRun.CreateText(textPosition, text, foreground, isLink));
+            textPosition += text.Length;
+            copySpans.Add(new MessageCopySpan(copyStart, text.Length, part));
+            logicalText.Append(text);
+            return;
+        }
+
+        var runStart = 0;
+        var enumerator = StringInfo.GetTextElementEnumerator(text);
+        while (enumerator.MoveNext())
+        {
+            var element = enumerator.GetTextElement();
+            if (!EmojiTextRunHelper.ShouldUseEmojiFont(element))
+                continue;
+
+            var elementIndex = enumerator.ElementIndex;
+            if (elementIndex > runStart)
+            {
+                var plainText = text[runStart..elementIndex];
+                runs.Add(MessageRenderRun.CreateText(textPosition, plainText, foreground, isLink));
+                textPosition += plainText.Length;
+            }
+
+            runs.Add(MessageRenderRun.CreateEmojiText(textPosition, element, foreground, isLink));
+            textPosition += element.Length;
+            runStart = elementIndex + element.Length;
+        }
+
+        if (runStart < text.Length)
+        {
+            var plainText = text[runStart..];
+            runs.Add(MessageRenderRun.CreateText(textPosition, plainText, foreground, isLink));
+            textPosition += plainText.Length;
+        }
+
+        copySpans.Add(new MessageCopySpan(copyStart, text.Length, part));
         logicalText.Append(text);
-        textPosition += text.Length;
     }
 
     private static void AddLineBreak(
@@ -1089,18 +1131,24 @@ public sealed record MessageRenderRun(
     string Text,
     IBrush? Foreground,
     bool IsLink,
+    bool UsesEmojiFont,
     MessageMediaRun? Media)
 {
     public int Length => Kind == MessageRenderRunKind.Text ? Text.Length : 1;
 
     public static MessageRenderRun CreateText(int start, string text, IBrush? foreground, bool isLink)
     {
-        return new MessageRenderRun(MessageRenderRunKind.Text, start, text, foreground, isLink, null);
+        return new MessageRenderRun(MessageRenderRunKind.Text, start, text, foreground, isLink, false, null);
+    }
+
+    public static MessageRenderRun CreateEmojiText(int start, string text, IBrush? foreground, bool isLink)
+    {
+        return new MessageRenderRun(MessageRenderRunKind.Text, start, text, foreground, isLink, true, null);
     }
 
     public static MessageRenderRun CreateMedia(MessageMediaRun media)
     {
-        return new MessageRenderRun(MessageRenderRunKind.Media, media.Start, MessageInlineRenderer.PlaceholderChar.ToString(), null, false, media);
+        return new MessageRenderRun(MessageRenderRunKind.Media, media.Start, MessageInlineRenderer.PlaceholderChar.ToString(), null, false, false, media);
     }
 }
 

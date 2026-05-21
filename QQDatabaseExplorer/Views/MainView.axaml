@@ -31,50 +31,78 @@
         </Styles>
     </UserControl.Styles>
 
-    <TabControl
-        x:Name="MainTabControl"
-        Padding="0"
-        SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}"
-        TabStripPlacement="Left">
+    <Grid>
+        <TabControl
+            x:Name="MainTabControl"
+            Padding="0"
+            SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}"
+            TabStripPlacement="Left">
 
-        <TabItem Name="messageTab">
-            <TabItem.Header>
-                <Image Width="32">
-                    <Image.Source>
-                        <SvgImage Css="* { fill: #777; }" Source="/Assets/message.svg" />
-                    </Image.Source>
-                </Image>
-            </TabItem.Header>
-        </TabItem>
+            <TabItem Name="messageTab">
+                <TabItem.Header>
+                    <Image Width="32">
+                        <Image.Source>
+                            <SvgImage Css="* { fill: #777; }" Source="/Assets/message.svg" />
+                        </Image.Source>
+                    </Image>
+                </TabItem.Header>
+            </TabItem>
 
-        <TabItem Name="databaseTab">
-            <TabItem.Header>
-                <Image Width="32">
-                    <Image.Source>
-                        <SvgImage Css="* { fill: #777; }" Source="/Assets/database.svg" />
-                    </Image.Source>
-                </Image>
-            </TabItem.Header>
-        </TabItem>
+            <TabItem Name="databaseTab">
+                <TabItem.Header>
+                    <Image Width="32">
+                        <Image.Source>
+                            <SvgImage Css="* { fill: #777; }" Source="/Assets/database.svg" />
+                        </Image.Source>
+                    </Image>
+                </TabItem.Header>
+            </TabItem>
 
-        <TabItem Name="groupMessageSearchTab">
-            <TabItem.Header>
-                <Image Width="32">
-                    <Image.Source>
-                        <SvgImage Css="* { fill: #777; }" Source="/Assets/search.svg" />
-                    </Image.Source>
-                </Image>
-            </TabItem.Header>
-        </TabItem>
+            <TabItem Name="groupMessageSearchTab">
+                <TabItem.Header>
+                    <Image Width="32">
+                        <Image.Source>
+                            <SvgImage Css="* { fill: #777; }" Source="/Assets/search.svg" />
+                        </Image.Source>
+                    </Image>
+                </TabItem.Header>
+            </TabItem>
 
-        <TabItem Name="settingsTab">
-            <TabItem.Header>
-                <Image Width="32">
-                    <Image.Source>
-                        <SvgImage Css="* { fill: #777; }" Source="/Assets/settings.svg" />
-                    </Image.Source>
-                </Image>
-            </TabItem.Header>
-        </TabItem>
-    </TabControl>
+            <TabItem Name="settingsTab">
+                <TabItem.Header>
+                    <Image Width="32">
+                        <Image.Source>
+                            <SvgImage Css="* { fill: #777; }" Source="/Assets/settings.svg" />
+                        </Image.Source>
+                    </Image>
+                </TabItem.Header>
+            </TabItem>
+        </TabControl>
+
+        <Border
+            Background="Transparent"
+            IsHitTestVisible="True"
+            IsVisible="{Binding IsLoadingConfig}">
+            <Border
+                Width="252"
+                Padding="18,14"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                BorderBrush="#22000000"
+                BorderThickness="1"
+                BoxShadow="0 8 24 0 #22000000"
+                CornerRadius="6">
+                <StackPanel Spacing="10">
+                    <ProgressBar
+                        Height="4"
+                        IsIndeterminate="True" />
+                    <TextBlock
+                        HorizontalAlignment="Center"
+                        FontSize="13"
+                        Text="{Binding LoadingText}" />
+                </StackPanel>
+            </Border>
+        </Border>
+    </Grid>
 </UserControl>

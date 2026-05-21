@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Threading.Tasks;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
 using QQDatabaseExplorer.Models;
@@ -10,6 +11,7 @@ namespace QQDatabaseExplorer.Services;
 public class QQDatabaseService
 {
     public event Action<IQQDatabase>? DatabaseAdded;
+    public event Func<IQQDatabase, Task>? DatabaseAddedAsync;
     public event Action<IQQDatabase>? DatabaseRemoved;
     public event Action? DatabaseGroupsChanged;
 
@@ -54,7 +56,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(groupInfoDatabase);
+        NotifyDatabaseAdded(groupInfoDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return groupInfoDatabase;
@@ -81,7 +83,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(messageDatabase);
+        NotifyDatabaseAdded(messageDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return messageDatabase;
@@ -111,7 +113,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(messageDatabase);
+        NotifyDatabaseAdded(messageDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return messageDatabase;
@@ -134,7 +136,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(groupMessageFtsDatabase);
+        NotifyDatabaseAdded(groupMessageFtsDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return groupMessageFtsDatabase;
@@ -158,7 +160,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(profileInfoDatabase);
+        NotifyDatabaseAdded(profileInfoDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return profileInfoDatabase;
@@ -182,7 +184,7 @@ public class QQDatabaseService
         if (previousDatabase is not null)
             NotifyDatabaseRemoved(previousDatabase);
 
-        DatabaseAdded?.Invoke(messageDatabase);
+        NotifyDatabaseAdded(messageDatabase, runAsyncHandlers: true);
         RebuildDatabaseGroups();
 
         return messageDatabase;
@@ -202,6 +204,27 @@ public class QQDatabaseService
                 ReplaceQQNTDatabases(qqnt, DatabasePlatformType.QQNT);
                 break;
         }
+    }
+
+    internal Task<PreparedDatabaseConfig> PrepareDatabaseConfigAsync(DatabaseConfig config)
+    {
+        return Task.Run(() => PrepareDatabaseConfig(config));
+    }
+
+    internal async Task ApplyPreparedDatabaseConfigAsync(PreparedDatabaseConfig prepared)
+    {
+        switch (prepared.PlatformType)
+        {
+            case DatabasePlatformType.PCQQ:
+                await ApplyPreparedPCQQDatabaseAsync(prepared);
+                break;
+            case DatabasePlatformType.QQNT:
+            case DatabasePlatformType.AndroidQQNT:
+                await ApplyPreparedQQNTDatabasesAsync(prepared);
+                break;
+        }
+
+        prepared.Detach();
     }
 
     public DatabaseConfig? CreateConfigForGroup(LoadedDatabaseGroup group)
@@ -392,6 +415,34 @@ public class QQDatabaseService
         RebuildDatabaseGroups();
     }
 
+    private async Task ApplyPreparedQQNTDatabasesAsync(PreparedDatabaseConfig prepared)
+    {
+        _currentQQNTConfig = prepared.Config;
+        _ntPlatformType = prepared.PlatformType;
+        RemoveQQNTDatabases(clearConfig: false);
+
+        NtDataPath = prepared.NtDataPath;
+        AndroidMobileQQPath = prepared.AndroidMobileQQPath;
+        GroupInfoDatabase = prepared.GroupInfoDatabase;
+        ProfileInfoDatabase = prepared.ProfileInfoDatabase;
+        MessageDatabase = prepared.MessageDatabase;
+        AndroidMessageDatabase = prepared.AndroidMessageDatabase;
+        GroupMessageFtsDatabase = prepared.GroupMessageFtsDatabase;
+
+        if (GroupInfoDatabase is not null)
+            await NotifyDatabaseAddedAsync(GroupInfoDatabase);
+        if (ProfileInfoDatabase is not null)
+            await NotifyDatabaseAddedAsync(ProfileInfoDatabase);
+        if (MessageDatabase is not null)
+            await NotifyDatabaseAddedAsync(MessageDatabase);
+        if (AndroidMessageDatabase is not null)
+            await NotifyDatabaseAddedAsync(AndroidMessageDatabase);
+        if (GroupMessageFtsDatabase is not null)
+            await NotifyDatabaseAddedAsync(GroupMessageFtsDatabase);
+
+        RebuildDatabaseGroups();
+    }
+
     private void ReplacePCQQDatabase(PCQQDatabaseConfig config)
     {
         _currentPCQQConfig = CreatePCQQDatabaseConfig(config);
@@ -406,6 +457,165 @@ public class QQDatabaseService
                 config.InfoDbKey,
                 config.DataPath);
         }
+    }
+
+    private async Task ApplyPreparedPCQQDatabaseAsync(PreparedDatabaseConfig prepared)
+    {
+        _currentPCQQConfig = prepared.Config;
+        RemovePCQQDatabase(clearConfig: false);
+
+        PCQQDataPath = prepared.PCQQDataPath;
+        PCQQMessageDatabase = prepared.PCQQMessageDatabase;
+        if (PCQQMessageDatabase is not null)
+            await NotifyDatabaseAddedAsync(PCQQMessageDatabase);
+
+        RebuildDatabaseGroups();
+    }
+
+    private static PreparedDatabaseConfig PrepareDatabaseConfig(DatabaseConfig config)
+    {
+        return config.Type switch
+        {
+            DatabasePlatformType.PCQQ when config.PCQQ is { } pcqq => PreparePCQQDatabase(pcqq),
+            DatabasePlatformType.AndroidQQNT when config.AndroidQQNT is { } android => PrepareQQNTDatabases(android, DatabasePlatformType.AndroidQQNT),
+            DatabasePlatformType.QQNT when config.QQNT is { } qqnt => PrepareQQNTDatabases(qqnt, DatabasePlatformType.QQNT),
+            _ => PreparedDatabaseConfig.Empty(config.Type),
+        };
+    }
+
+    private static PreparedDatabaseConfig PrepareQQNTDatabases(QQNTDatabaseConfig config, DatabasePlatformType platformType)
+    {
+        QQGroupInfoReader? groupInfoDatabase = null;
+        QQProfileInfoReader? profileInfoDatabase = null;
+        QQMessageReader? messageDatabase = null;
+        QQAndroidMessageReader? androidMessageDatabase = null;
+        QQGroupMessageFtsReader? groupMessageFtsDatabase = null;
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(config.GroupInfoDbPath))
+                groupInfoDatabase = CreateGroupInfoDatabase(config.GroupInfoDbPath, config.GroupInfoDbPassword);
+
+            if (!string.IsNullOrWhiteSpace(config.ProfileInfoDbPath))
+                profileInfoDatabase = CreateProfileInfoDatabase(config.ProfileInfoDbPath, config.ProfileInfoDbPassword);
+
+            if (!string.IsNullOrWhiteSpace(config.MessageDbPath) &&
+                platformType is DatabasePlatformType.AndroidQQNT)
+            {
+                androidMessageDatabase = CreateAndroidMessageDatabase(config.MessageDbPath, config.MessageDbPassword);
+            }
+            else if (!string.IsNullOrWhiteSpace(config.MessageDbPath))
+            {
+                messageDatabase = CreateMessageDatabase(config.MessageDbPath, config.MessageDbPassword);
+            }
+
+            if (!string.IsNullOrWhiteSpace(config.GroupMessageFtsDbPath))
+                groupMessageFtsDatabase = CreateGroupMessageFtsDatabase(config.GroupMessageFtsDbPath, config.GroupMessageFtsDbPassword);
+
+            return new PreparedDatabaseConfig(
+                platformType,
+                CreateQQNTDatabaseConfig(config, platformType),
+                groupInfoDatabase,
+                profileInfoDatabase,
+                messageDatabase,
+                androidMessageDatabase,
+                groupMessageFtsDatabase,
+                null,
+                config.NtDataPath,
+                config is AndroidQQNTDatabaseConfig android ? android.MobileQQPath : null,
+                null);
+        }
+        catch
+        {
+            groupInfoDatabase?.Dispose();
+            profileInfoDatabase?.Dispose();
+            messageDatabase?.Dispose();
+            androidMessageDatabase?.Dispose();
+            groupMessageFtsDatabase?.Dispose();
+            throw;
+        }
+    }
+
+    private static PreparedDatabaseConfig PreparePCQQDatabase(PCQQDatabaseConfig config)
+    {
+        PCQQMessageReader? messageDatabase = null;
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(config.MessageDbPath) &&
+                !string.IsNullOrWhiteSpace(config.MessageDbKey))
+            {
+                messageDatabase = new PCQQMessageReader(
+                    config.MessageDbPath,
+                    config.MessageDbKey,
+                    config.InfoDbPath,
+                    config.InfoDbKey);
+                messageDatabase.Initialize();
+            }
+
+            return new PreparedDatabaseConfig(
+                DatabasePlatformType.PCQQ,
+                CreatePCQQDatabaseConfig(config),
+                null,
+                null,
+                null,
+                null,
+                null,
+                messageDatabase,
+                null,
+                null,
+                config.DataPath);
+        }
+        catch
+        {
+            messageDatabase?.Dispose();
+            throw;
+        }
+    }
+
+    private static QQGroupInfoReader CreateGroupInfoDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQGroupInfoReader(databasePath)
+            : new QQGroupInfoReader(databasePath, password);
+        database.Initialize();
+        return database;
+    }
+
+    private static QQMessageReader CreateMessageDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQMessageReader(databasePath)
+            : new QQMessageReader(databasePath, password);
+        database.Initialize();
+        return database;
+    }
+
+    private static QQAndroidMessageReader CreateAndroidMessageDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQAndroidMessageReader(databasePath)
+            : new QQAndroidMessageReader(databasePath, password);
+        database.Initialize();
+        return database;
+    }
+
+    private static QQProfileInfoReader CreateProfileInfoDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQProfileInfoReader(databasePath)
+            : new QQProfileInfoReader(databasePath, password);
+        database.Initialize();
+        return database;
+    }
+
+    private static QQGroupMessageFtsReader CreateGroupMessageFtsDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQGroupMessageFtsReader(databasePath)
+            : new QQGroupMessageFtsReader(databasePath, password);
+        database.Initialize();
+        return database;
     }
 
     private void RemoveQQNTDatabases(bool clearConfig = true)
@@ -749,6 +959,29 @@ public class QQDatabaseService
         database.Dispose();
     }
 
+    private void NotifyDatabaseAdded(IQQDatabase database, bool runAsyncHandlers = false)
+    {
+        DatabaseAdded?.Invoke(database);
+        if (runAsyncHandlers)
+            _ = RunDatabaseAddedAsyncHandlersAsync(database);
+    }
+
+    private async Task NotifyDatabaseAddedAsync(IQQDatabase database)
+    {
+        NotifyDatabaseAdded(database);
+        await RunDatabaseAddedAsyncHandlersAsync(database);
+    }
+
+    private async Task RunDatabaseAddedAsyncHandlersAsync(IQQDatabase database)
+    {
+        if (DatabaseAddedAsync is null)
+            return;
+
+        foreach (Func<IQQDatabase, Task> handler in DatabaseAddedAsync.GetInvocationList())
+        {
+            await handler(database);
+        }
+    }
 }
 
 public sealed class LoadedDatabaseGroup
@@ -837,4 +1070,78 @@ public enum LoadedDatabaseItemKind
     PCQQMessageDb,
     PCQQInfoDb,
     PCQQDataPath,
+}
+
+internal sealed class PreparedDatabaseConfig : IDisposable
+{
+    private bool _isDetached;
+
+    public PreparedDatabaseConfig(
+        DatabasePlatformType platformType,
+        DatabaseConfig? config,
+        QQGroupInfoReader? groupInfoDatabase,
+        QQProfileInfoReader? profileInfoDatabase,
+        QQMessageReader? messageDatabase,
+        QQAndroidMessageReader? androidMessageDatabase,
+        QQGroupMessageFtsReader? groupMessageFtsDatabase,
+        PCQQMessageReader? pcqqMessageDatabase,
+        string? ntDataPath,
+        string? androidMobileQQPath,
+        string? pcqqDataPath)
+    {
+        PlatformType = platformType;
+        Config = config;
+        GroupInfoDatabase = groupInfoDatabase;
+        ProfileInfoDatabase = profileInfoDatabase;
+        MessageDatabase = messageDatabase;
+        AndroidMessageDatabase = androidMessageDatabase;
+        GroupMessageFtsDatabase = groupMessageFtsDatabase;
+        PCQQMessageDatabase = pcqqMessageDatabase;
+        NtDataPath = ntDataPath;
+        AndroidMobileQQPath = androidMobileQQPath;
+        PCQQDataPath = pcqqDataPath;
+    }
+
+    public DatabasePlatformType PlatformType { get; }
+
+    public DatabaseConfig? Config { get; }
+
+    public QQGroupInfoReader? GroupInfoDatabase { get; }
+
+    public QQProfileInfoReader? ProfileInfoDatabase { get; }
+
+    public QQMessageReader? MessageDatabase { get; }
+
+    public QQAndroidMessageReader? AndroidMessageDatabase { get; }
+
+    public QQGroupMessageFtsReader? GroupMessageFtsDatabase { get; }
+
+    public PCQQMessageReader? PCQQMessageDatabase { get; }
+
+    public string? NtDataPath { get; }
+
+    public string? AndroidMobileQQPath { get; }
+
+    public string? PCQQDataPath { get; }
+
+    public static PreparedDatabaseConfig Empty(DatabasePlatformType platformType) =>
+        new(platformType, null, null, null, null, null, null, null, null, null, null);
+
+    public void Detach()
+    {
+        _isDetached = true;
+    }
+
+    public void Dispose()
+    {
+        if (_isDetached)
+            return;
+
+        GroupMessageFtsDatabase?.Dispose();
+        ProfileInfoDatabase?.Dispose();
+        MessageDatabase?.Dispose();
+        AndroidMessageDatabase?.Dispose();
+        GroupInfoDatabase?.Dispose();
+        PCQQMessageDatabase?.Dispose();
+    }
 }

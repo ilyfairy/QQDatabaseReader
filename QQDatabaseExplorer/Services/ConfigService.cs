@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -124,20 +125,38 @@ public class ConfigService
     /// </summary>
     private async Task ApplyConfigAsync(AppConfig config)
     {
-        _qqDatabaseService.ClearDatabases();
-
-        foreach (var databaseConfig in config.Databases)
+        var preparedDatabases = new List<PreparedDatabaseConfig>();
+        try
         {
-            EnsureAndroidQQNTPassword(databaseConfig);
-            await ApplyDatabaseConfigAsync(databaseConfig);
+            foreach (var databaseConfig in config.Databases)
+            {
+                EnsureAndroidQQNTPassword(databaseConfig);
+                await PrepareDatabaseConfigAsync(databaseConfig, preparedDatabases);
+            }
+
+            _qqDatabaseService.ClearDatabases();
+
+            foreach (var preparedDatabase in preparedDatabases)
+            {
+                await _qqDatabaseService.ApplyPreparedDatabaseConfigAsync(preparedDatabase);
+            }
+        }
+        finally
+        {
+            foreach (var preparedDatabase in preparedDatabases)
+            {
+                preparedDatabase.Dispose();
+            }
         }
     }
 
-    private async Task ApplyDatabaseConfigAsync(DatabaseConfig config)
+    private async Task PrepareDatabaseConfigAsync(
+        DatabaseConfig config,
+        ICollection<PreparedDatabaseConfig> preparedDatabases)
     {
         try
         {
-            _qqDatabaseService.LoadDatabaseConfig(config);
+            preparedDatabases.Add(await _qqDatabaseService.PrepareDatabaseConfigAsync(config));
         }
         catch (Exception ex)
         {

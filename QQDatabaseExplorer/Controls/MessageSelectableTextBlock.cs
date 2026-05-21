@@ -85,7 +85,10 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
 
     protected override TextLayout CreateTextLayout(string? text)
     {
-        var typeface = new Typeface(FontFamily, FontStyle, FontWeight, FontStretch);
+        var fontFamily = Equals(FontFamily, FontFamily.Default)
+            ? MessageInlineRenderer.TextFontFamily
+            : FontFamily;
+        var typeface = new Typeface(fontFamily, FontStyle, FontWeight, FontStretch);
 
         var defaultProperties = new GenericTextRunProperties(
             typeface,
@@ -302,11 +305,15 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
 
     private TextRunProperties CreateRunProperties(TextRunProperties defaultProperties, MessageRenderRun run)
     {
-        if (run.Foreground is null && !run.IsLink)
+        if (run.Foreground is null && !run.IsLink && !run.UsesEmojiFont)
             return defaultProperties;
 
+        var typeface = run.UsesEmojiFont
+            ? new Typeface(MessageInlineRenderer.EmojiFontFamily, FontStyle, FontWeight, FontStretch)
+            : defaultProperties.Typeface;
+
         return new GenericTextRunProperties(
-            defaultProperties.Typeface,
+            typeface,
             defaultProperties.FontRenderingEmSize,
             run.IsLink ? Avalonia.Media.TextDecorations.Underline : TextDecorations,
             run.Foreground ?? defaultProperties.ForegroundBrush,

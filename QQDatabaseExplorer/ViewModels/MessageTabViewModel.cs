@@ -93,6 +93,7 @@ public partial class MessageTabViewModel : ViewModelBase
         _dialogService = dialogService;
         
         _qqDatabaseService.DatabaseAdded += OnDatabaseAdded;
+        _qqDatabaseService.DatabaseAddedAsync += OnDatabaseAddedAsync;
         _qqDatabaseService.DatabaseRemoved += OnDatabaseRemoved;
         _appSettingsService.SettingsChanged += OnAppSettingsChanged;
     }
@@ -4107,58 +4108,49 @@ public partial class MessageTabViewModel : ViewModelBase
 
     private void OnDatabaseAdded(IQQDatabase database)
     {
-        if (database is QQMessageReader messageDatabase)
-        {
-            LoadMessageConversations(messageDatabase);
-            RefreshFilteredGroups();
-        }
-        else if (database is QQAndroidMessageReader androidMessageDatabase)
-        {
-            LoadAndroidMessageConversations(androidMessageDatabase);
-            RefreshFilteredGroups();
-        }
-        else if (database is PCQQMessageReader pcqqMessageDatabase)
-        {
-            LoadPCQQMessageConversations(pcqqMessageDatabase);
-            RefreshFilteredGroups();
-        }
-        else if (database is QQGroupInfoReader groupDatabase)
-        {
-            var rawGroups = groupDatabase.DbContext.GroupList
-                .Where(v => v.GroupId != 0)
-                .ToList();
-
-            // 给现有的Groups加上群名
-            foreach (var item in _groups
-                         .Where(group => group.ConversationType == AvaConversationType.Group)
-                         .Join(rawGroups,
-                v => v.GroupId,
-                v => v.GroupId,
-                (group, rawGroup) => (group, rawGroup)))
-            {
-                item.group.GroupName = item.rawGroup.GroupName;
-            }
-
-            // 新增的Groups
-            var existingGroupIds = _groups
-                .Where(group => group.ConversationType == AvaConversationType.Group)
-                .Select(group => group.GroupId);
-            var newGroups = rawGroups.ExceptBy(existingGroupIds, v => v.GroupId)
-                .Select(v => new AvaQQGroup()
-                {
-                    ConversationType = AvaConversationType.Group,
-                    GroupId = v.GroupId,
-                    GroupName = v.GroupName,
-                    IsSelected = _selectedConversationKeys.Contains($"group:{v.GroupId}"),
-                    IsActive = _activeConversationKey == $"group:{v.GroupId}",
-                });
-            _groups.AddRange(newGroups);
-            RefreshFilteredGroups();
-        }
-        else if (database is QQProfileInfoReader)
+        if (database is QQProfileInfoReader)
         {
             _profileInfoNames = null;
-            ApplyProfileInfoNames();
+        }
+    }
+
+    private async Task OnDatabaseAddedAsync(IQQDatabase database)
+    {
+        try
+        {
+            if (database is QQGroupInfoReader groupDatabase)
+            {
+                var groups = await Task.Run(() => LoadGroupInfoItems(groupDatabase));
+                ApplyGroupInfoItems(groups);
+                RefreshFilteredGroups();
+            }
+            else if (database is QQMessageReader messageDatabase)
+            {
+                var conversations = await Task.Run(() => LoadMessageConversationItems(messageDatabase));
+                ApplyMessageConversations(conversations);
+                RefreshFilteredGroups();
+            }
+            else if (database is QQAndroidMessageReader androidMessageDatabase)
+            {
+                var conversations = await Task.Run(() => LoadAndroidMessageConversationItems(androidMessageDatabase));
+                ApplyMessageConversations(conversations);
+                RefreshFilteredGroups();
+            }
+            else if (database is PCQQMessageReader pcqqMessageDatabase)
+            {
+                var conversations = await Task.Run(() => LoadPCQQConversationItems(pcqqMessageDatabase));
+                ApplyPCQQMessageConversations(conversations);
+                RefreshFilteredGroups();
+            }
+            else if (database is QQProfileInfoReader profileInfoDatabase)
+            {
+                var profileInfoNames = await Task.Run(() => ProfileInfoNameCache.Create(profileInfoDatabase));
+                _profileInfoNames = profileInfoNames;
+                ApplyProfileInfoNames();
+            }
+        }
+        catch
+        {
         }
     }
 
@@ -4204,137 +4196,198 @@ public partial class MessageTabViewModel : ViewModelBase
         return conversation;
     }
 
+    private static IReadOnlyList<GroupInfoLoadItem> LoadGroupInfoItems(QQGroupInfoReader groupDatabase)
+    {
+        return groupDatabase.DbContext.GroupList
+            .Where(v => v.GroupId != 0)
+            .Select(group => new GroupInfoLoadItem(group.GroupId, group.GroupName))
+            .ToList();
+    }
+
+    private void ApplyGroupInfoItems(IReadOnlyList<GroupInfoLoadItem> rawGroups)
+    {
+        foreach (var item in _groups
+                     .Where(group => group.ConversationType == AvaConversationType.Group)
+                     .Join(rawGroups,
+                         v => v.GroupId,
+                         v => v.GroupId,
+                         (group, rawGroup) => (group, rawGroup)))
+        {
+            item.group.GroupName = item.rawGroup.GroupName;
+        }
+
+        var existingGroupIds = _groups
+            .Where(group => group.ConversationType == AvaConversationType.Group)
+            .Select(group => group.GroupId);
+        var newGroups = rawGroups.ExceptBy(existingGroupIds, v => v.GroupId)
+            .Select(v => new AvaQQGroup()
+            {
+                ConversationType = AvaConversationType.Group,
+                GroupId = v.GroupId,
+                GroupName = v.GroupName,
+                IsSelected = _selectedConversationKeys.Contains($"group:{v.GroupId}"),
+                IsActive = _activeConversationKey == $"group:{v.GroupId}",
+            });
+        _groups.AddRange(newGroups);
+    }
+
     private void LoadMessageConversations(QQMessageReader messageDatabase)
     {
-        var recentContacts = ReadRecentConversationContacts(messageDatabase);
-        var profileInfoNames = GetProfileInfoNameCache();
-        foreach (var contact in recentContacts)
-        {
-            var conversation = contact.ConversationType switch
-            {
-                AvaConversationType.Group when contact.GroupId != 0 => GetOrCreateGroup(contact.GroupId),
-                AvaConversationType.Private when contact.PrivateConversationId != 0 => GetOrCreatePrivateConversation(contact.PrivateConversationId),
-                _ => null,
-            };
-            if (conversation is null)
-                continue;
-
-            conversation.PrivateUin = contact.PrivateUin;
-            conversation.PrivateUid = contact.PrivateUid;
-            conversation.GroupName = contact.ConversationType == AvaConversationType.Private &&
-                                     profileInfoNames.TryGetName(contact.PrivateUin, contact.PrivateUid, out var profileName)
-                ? profileName
-                : FirstNonEmpty(contact.DisplayName, conversation.GroupName);
-            conversation.LatestMessageText = CreateLatestMessageText(contact);
-            conversation.LatestMessageTime = contact.LastTime;
-            conversation.IsSelected = _selectedConversationKeys.Contains(conversation.ConversationKey);
-            conversation.IsActive = _activeConversationKey == conversation.ConversationKey;
-        }
-
-        foreach (var groupId in messageDatabase.DbContext.GroupMessages
-                     .Select(v => v.GroupId)
-                     .Where(v => v != 0)
-                     .Distinct()
-                     .ToList())
-        {
-            var group = GetOrCreateGroup(groupId);
-            group.IsSelected = _selectedConversationKeys.Contains(group.ConversationKey);
-            group.IsActive = _activeConversationKey == group.ConversationKey;
-        }
-
-        foreach (var conversationInfo in messageDatabase.DbContext.PrivateMessages
-                     .Where(message => message.ConversationId != 0)
-                     .Where(message => message.MessageType != MessageType.Empty)
-                     .GroupBy(message => message.ConversationId)
-                     .Select(group => new
-                     {
-                         ConversationId = group.Key,
-                         PrivateUid = group.Max(message => message.PeerUid),
-                         PrivateUin = group.Max(message => message.PeerUin),
-                         LastTime = group.Max(message => message.MessageTime),
-                     })
-                     .ToList())
-        {
-            var conversation = GetOrCreatePrivateConversation(conversationInfo.ConversationId);
-            conversation.PrivateUid = conversationInfo.PrivateUid;
-            conversation.PrivateUin = conversationInfo.PrivateUin;
-            if (profileInfoNames.TryGetName(conversation.PrivateUin, conversation.PrivateUid, out var profileName))
-            {
-                conversation.GroupName = profileName;
-            }
-            conversation.LatestMessageTime = conversationInfo.LastTime;
-            conversation.IsSelected = _selectedConversationKeys.Contains(conversation.ConversationKey);
-            conversation.IsActive = _activeConversationKey == conversation.ConversationKey;
-        }
+        ApplyMessageConversations(LoadMessageConversationItems(messageDatabase));
     }
 
     private void LoadAndroidMessageConversations(QQAndroidMessageReader messageDatabase)
     {
-        var recentContacts = ReadAndroidRecentConversationContacts(messageDatabase);
-        var profileInfoNames = GetProfileInfoNameCache();
-        foreach (var contact in recentContacts)
-        {
-            var conversation = contact.ConversationType switch
+        ApplyMessageConversations(LoadAndroidMessageConversationItems(messageDatabase));
+    }
+
+    private List<ConversationLoadItem> LoadMessageConversationItems(QQMessageReader messageDatabase)
+    {
+        var items = ReadRecentConversationContacts(messageDatabase)
+            .Select(CreateConversationLoadItem)
+            .ToList();
+
+        items.AddRange(messageDatabase.DbContext.GroupMessages
+            .Select(v => v.GroupId)
+            .Where(v => v != 0)
+            .Distinct()
+            .ToList()
+            .Select(groupId => new ConversationLoadItem(
+                AvaConversationType.Group,
+                groupId,
+                0,
+                0,
+                null,
+                null,
+                string.Empty,
+                0)));
+
+        items.AddRange(messageDatabase.DbContext.PrivateMessages
+            .Where(message => message.ConversationId != 0)
+            .Where(message => message.MessageType != MessageType.Empty)
+            .GroupBy(message => message.ConversationId)
+            .Select(group => new
             {
-                AvaConversationType.Group when contact.GroupId != 0 => GetOrCreateGroup(contact.GroupId),
-                AvaConversationType.Private when contact.PrivateConversationId != 0 => GetOrCreatePrivateConversation(contact.PrivateConversationId),
+                ConversationId = group.Key,
+                PrivateUid = group.Max(message => message.PeerUid),
+                PrivateUin = group.Max(message => message.PeerUin),
+                LastTime = group.Max(message => message.MessageTime),
+            })
+            .ToList()
+            .Select(conversationInfo => new ConversationLoadItem(
+                AvaConversationType.Private,
+                0,
+                conversationInfo.ConversationId,
+                conversationInfo.PrivateUin,
+                conversationInfo.PrivateUid,
+                null,
+                string.Empty,
+                conversationInfo.LastTime)));
+
+        return items;
+    }
+
+    private List<ConversationLoadItem> LoadAndroidMessageConversationItems(QQAndroidMessageReader messageDatabase)
+    {
+        var items = ReadAndroidRecentConversationContacts(messageDatabase)
+            .Select(CreateConversationLoadItem)
+            .ToList();
+
+        items.AddRange(messageDatabase.DbContext.GroupMessages
+            .Select(v => v.GroupId)
+            .Where(v => v != 0)
+            .Distinct()
+            .ToList()
+            .Select(groupId => new ConversationLoadItem(
+                AvaConversationType.Group,
+                groupId,
+                0,
+                0,
+                null,
+                null,
+                string.Empty,
+                0)));
+
+        items.AddRange(messageDatabase.DbContext.PrivateMessages
+            .Where(message => message.ConversationId != 0)
+            .Where(message => message.MessageType != MessageType.Empty)
+            .GroupBy(message => message.ConversationId)
+            .Select(group => new
+            {
+                ConversationId = group.Key,
+                PrivateUid = group.Max(message => message.PeerUid),
+                PrivateUin = group.Max(message => message.PeerUin),
+                LastTime = group.Max(message => message.MessageTime),
+            })
+            .ToList()
+            .Select(conversationInfo => new ConversationLoadItem(
+                AvaConversationType.Private,
+                0,
+                conversationInfo.ConversationId,
+                conversationInfo.PrivateUin,
+                conversationInfo.PrivateUid,
+                null,
+                string.Empty,
+                conversationInfo.LastTime)));
+
+        return items;
+    }
+
+    private void ApplyMessageConversations(IEnumerable<ConversationLoadItem> items)
+    {
+        var profileInfoNames = GetProfileInfoNameCache();
+        foreach (var item in items)
+        {
+            var conversation = item.ConversationType switch
+            {
+                AvaConversationType.Group when item.GroupId != 0 => GetOrCreateGroup(item.GroupId),
+                AvaConversationType.Private when item.PrivateConversationId != 0 => GetOrCreatePrivateConversation(item.PrivateConversationId),
                 _ => null,
             };
             if (conversation is null)
                 continue;
 
-            conversation.PrivateUin = contact.PrivateUin;
-            conversation.PrivateUid = contact.PrivateUid;
-            conversation.GroupName = contact.ConversationType == AvaConversationType.Private &&
-                                     profileInfoNames.TryGetName(contact.PrivateUin, contact.PrivateUid, out var profileName)
+            conversation.PrivateUin = item.PrivateUin;
+            conversation.PrivateUid = item.PrivateUid;
+            conversation.GroupName = item.ConversationType == AvaConversationType.Private &&
+                                     profileInfoNames.TryGetName(item.PrivateUin, item.PrivateUid, out var profileName)
                 ? profileName
-                : FirstNonEmpty(contact.DisplayName, conversation.GroupName);
-            conversation.LatestMessageText = CreateLatestMessageText(contact);
-            conversation.LatestMessageTime = contact.LastTime;
-            conversation.IsSelected = _selectedConversationKeys.Contains(conversation.ConversationKey);
-            conversation.IsActive = _activeConversationKey == conversation.ConversationKey;
-        }
-
-        foreach (var groupId in messageDatabase.DbContext.GroupMessages
-                     .Select(v => v.GroupId)
-                     .Where(v => v != 0)
-                     .Distinct()
-                     .ToList())
-        {
-            var group = GetOrCreateGroup(groupId);
-            group.IsSelected = _selectedConversationKeys.Contains(group.ConversationKey);
-            group.IsActive = _activeConversationKey == group.ConversationKey;
-        }
-
-        foreach (var conversationInfo in messageDatabase.DbContext.PrivateMessages
-                     .Where(message => message.ConversationId != 0)
-                     .Where(message => message.MessageType != MessageType.Empty)
-                     .GroupBy(message => message.ConversationId)
-                     .Select(group => new
-                     {
-                         ConversationId = group.Key,
-                         PrivateUid = group.Max(message => message.PeerUid),
-                         PrivateUin = group.Max(message => message.PeerUin),
-                         LastTime = group.Max(message => message.MessageTime),
-                     })
-                     .ToList())
-        {
-            var conversation = GetOrCreatePrivateConversation(conversationInfo.ConversationId);
-            conversation.PrivateUid = conversationInfo.PrivateUid;
-            conversation.PrivateUin = conversationInfo.PrivateUin;
-            if (profileInfoNames.TryGetName(conversation.PrivateUin, conversation.PrivateUid, out var profileName))
-            {
-                conversation.GroupName = profileName;
-            }
-            conversation.LatestMessageTime = conversationInfo.LastTime;
+                : FirstNonEmpty(item.DisplayName, conversation.GroupName);
+            if (!string.IsNullOrWhiteSpace(item.LatestMessageText))
+                conversation.LatestMessageText = item.LatestMessageText;
+            if (item.LastTime != 0)
+                conversation.LatestMessageTime = item.LastTime;
             conversation.IsSelected = _selectedConversationKeys.Contains(conversation.ConversationKey);
             conversation.IsActive = _activeConversationKey == conversation.ConversationKey;
         }
     }
 
+    private ConversationLoadItem CreateConversationLoadItem(RecentConversationContact contact)
+    {
+        return new ConversationLoadItem(
+            contact.ConversationType,
+            contact.GroupId,
+            contact.PrivateConversationId,
+            contact.PrivateUin,
+            contact.PrivateUid,
+            contact.DisplayName,
+            CreateLatestMessageText(contact),
+            contact.LastTime);
+    }
+
     private void LoadPCQQMessageConversations(PCQQMessageReader messageDatabase)
     {
-        foreach (var item in messageDatabase.GetConversations())
+        ApplyPCQQMessageConversations(LoadPCQQConversationItems(messageDatabase));
+    }
+
+    private static IReadOnlyList<PCQQConversation> LoadPCQQConversationItems(PCQQMessageReader messageDatabase)
+    {
+        return messageDatabase.GetConversations();
+    }
+
+    private void ApplyPCQQMessageConversations(IEnumerable<PCQQConversation> items)
+    {
+        foreach (var item in items)
         {
             var conversation = item.ConversationType switch
             {
@@ -5378,6 +5431,18 @@ public partial class MessageTabViewModel : ViewModelBase
             _ => $"{ConversationType}:{GroupId}:{PrivateConversationId}",
         };
     }
+
+    private sealed record ConversationLoadItem(
+        AvaConversationType ConversationType,
+        uint GroupId,
+        long PrivateConversationId,
+        uint PrivateUin,
+        string? PrivateUid,
+        string? DisplayName,
+        string LatestMessageText,
+        int LastTime);
+
+    private sealed record GroupInfoLoadItem(uint GroupId, string? GroupName);
 
     private readonly record struct RecentGroupMessageKey(
         uint GroupId,
