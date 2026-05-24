@@ -3133,6 +3133,7 @@ public partial class MessageTabViewModel : ViewModelBase
     {
         if (item.NestedForwardedMessages.Count == 0 ||
             SharedContactCardParser.TryParse(segment.AppJson, out _) ||
+            MiniAppCardParser.TryParse(segment.AppJson, out _) ||
             ForwardedMessageCardParser.TryParse(
                 segment.AppJson,
                 segment.AppResid,
@@ -3348,6 +3349,13 @@ public partial class MessageTabViewModel : ViewModelBase
             sharedContact is not null)
         {
             segments.Add(AvaQQMessageSegment.CreateSharedContact(sharedContact));
+            return;
+        }
+
+        if (MiniAppCardParser.TryParse(segment.AppJson, out var miniApp) &&
+            miniApp is not null)
+        {
+            segments.Add(AvaQQMessageSegment.CreateMiniApp(miniApp));
             return;
         }
 

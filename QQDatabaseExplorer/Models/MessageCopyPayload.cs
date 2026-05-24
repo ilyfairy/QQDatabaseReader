@@ -182,6 +182,21 @@ public sealed class MessageCopyPayload
                 continue;
             }
 
+            if (segment.Type == AvaQQMessageSegmentType.MiniApp)
+            {
+                if (hasContent)
+                {
+                    parts.Add(MessageCopyPart.CreateText("\n"));
+                }
+
+                parts.Add(MessageCopyPart.CreateText(
+                    segment.DisplayText,
+                    linkUrl: segment.MiniApp?.JumpUrl));
+                hasContent = true;
+                needsLineBreak = true;
+                continue;
+            }
+
             var text = segment.DisplayText;
             if (string.IsNullOrEmpty(text))
                 continue;

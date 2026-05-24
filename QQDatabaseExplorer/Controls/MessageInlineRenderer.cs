@@ -46,6 +46,19 @@ public static class MessageInlineRenderer
     private const double SharedContactBodyBottomMargin = 9;
     private const double SharedContactFooterTopMargin = 7;
     private const double SharedContactFooterHeight = 17;
+    private static readonly Thickness MiniAppCardPadding = new(12, 10, 12, 6);
+    private const double MiniAppHeaderHeight = 20;
+    private const double MiniAppHeaderSpacing = 8;
+    private const double MiniAppIconSize = 18;
+    private const double MiniAppCardWidth = 320;
+    private const double MiniAppTitleHeight = 42;
+    private const double MiniAppHostTopMargin = 5;
+    private const double MiniAppHostHeight = 18;
+    private const double MiniAppPreviewTopMargin = 8;
+    private const double MiniAppPreviewHeight = 166;
+    private const double MiniAppFooterTopMargin = 10;
+    private const double MiniAppFooterSpacing = 4;
+    private const double MiniAppFooterHeight = 16;
     private const double ReplyPreviewMaxWidth = 560;
     private const double ReplyPreviewMaxHeight = 70;
 
@@ -78,6 +91,11 @@ public static class MessageInlineRenderer
     public static readonly AttachedProperty<AvaQQMessageSegment?> ForwardedMessageSegmentProperty =
         AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
             "ForwardedMessageSegment",
+            typeof(MessageInlineRenderer));
+
+    public static readonly AttachedProperty<AvaQQMessageSegment?> MiniAppSegmentProperty =
+        AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
+            "MiniAppSegment",
             typeof(MessageInlineRenderer));
 
     static MessageInlineRenderer()
@@ -138,9 +156,24 @@ public static class MessageInlineRenderer
         control.SetValue(ForwardedMessageSegmentProperty, value);
     }
 
+    public static AvaQQMessageSegment? GetMiniAppSegment(Control control)
+    {
+        return control.GetValue(MiniAppSegmentProperty);
+    }
+
+    public static void SetMiniAppSegment(Control control, AvaQQMessageSegment? value)
+    {
+        control.SetValue(MiniAppSegmentProperty, value);
+    }
+
     public static AvaQQMessageSegment? GetSharedContactSegmentAt(MessageSelectableTextBlock textBlock, Point position)
     {
         return textBlock.GetMediaSegmentAt(position, MessageMediaKind.SharedContact);
+    }
+
+    public static AvaQQMessageSegment? GetMiniAppSegmentAt(MessageSelectableTextBlock textBlock, Point position)
+    {
+        return textBlock.GetMediaSegmentAt(position, MessageMediaKind.MiniApp);
     }
 
     public static IReadOnlyList<AvaQQMessageSegment> CreateCompactPreviewSegments(
@@ -186,6 +219,13 @@ public static class MessageInlineRenderer
             if (segment.Type == AvaQQMessageSegmentType.SharedContact)
             {
                 compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText));
+                remainingTextLength -= segment.DisplayText.Length;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.MiniApp)
+            {
+                compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText, linkUrl: segment.MiniApp?.JumpUrl));
                 remainingTextLength -= segment.DisplayText.Length;
                 continue;
             }
@@ -322,6 +362,19 @@ public static class MessageInlineRenderer
                 continue;
             }
 
+            if (segment.Type == AvaQQMessageSegmentType.MiniApp &&
+                segment.MiniApp is not null)
+            {
+                if (textPosition > 0)
+                {
+                    AddLineBreak(runs, copySpans, logicalText, ref textPosition);
+                }
+
+                AddMiniApp(runs, copySpans, mediaSpans, logicalText, segment, ref textPosition);
+                needsLineBreak = true;
+                continue;
+            }
+
             var text = segment.DisplayText;
             if (string.IsNullOrEmpty(text))
                 continue;
@@ -429,6 +482,26 @@ public static class MessageInlineRenderer
         {
             var segment = control.DataContext as AvaQQMessageSegment;
             if (segment?.Type != AvaQQMessageSegmentType.SharedContact)
+                continue;
+
+            var topLeft = control.TranslatePoint(new Point(0, 0), root);
+            if (topLeft is null)
+                continue;
+
+            var bounds = new Rect(topLeft.Value, control.Bounds.Size);
+            if (bounds.Contains(position))
+                return segment;
+        }
+
+        return null;
+    }
+
+    public static AvaQQMessageSegment? GetMiniAppSegmentByBounds(Visual root, Point position)
+    {
+        foreach (var control in root.GetVisualDescendants().OfType<Control>())
+        {
+            var segment = control.DataContext as AvaQQMessageSegment;
+            if (segment?.Type != AvaQQMessageSegmentType.MiniApp)
                 continue;
 
             var topLeft = control.TranslatePoint(new Point(0, 0), root);
@@ -760,6 +833,24 @@ public static class MessageInlineRenderer
         textPosition++;
     }
 
+    private static void AddMiniApp(
+        List<MessageRenderRun> runs,
+        List<MessageCopySpan> copySpans,
+        List<MessageMediaSpan> mediaSpans,
+        StringBuilder logicalText,
+        AvaQQMessageSegment segment,
+        ref int textPosition)
+    {
+        var copyPart = MessageCopyPart.CreateText(segment.DisplayText, linkUrl: segment.MiniApp?.JumpUrl);
+        var media = MessageMediaRun.MiniApp(textPosition, segment, copyPart, MiniAppCardWidth, GetMiniAppCardHeight(segment.MiniApp));
+
+        runs.Add(MessageRenderRun.CreateMedia(media));
+        copySpans.Add(MessageCopySpan.Placeholder(textPosition, copyPart));
+        mediaSpans.Add(new MessageMediaSpan(textPosition, 1, media));
+        logicalText.Append(PlaceholderChar);
+        textPosition++;
+    }
+
     private static IBrush? GetTextBrush(AvaQQMessageSegment segment)
     {
         if (!string.IsNullOrWhiteSpace(segment.LinkUrl))
@@ -797,6 +888,7 @@ public static class MessageInlineRenderer
             MessageMediaKind.Video => CreateVideoControl(media),
             MessageMediaKind.ForwardedMessage => CreateForwardedMessageControl(media),
             MessageMediaKind.SharedContact => CreateSharedContactControl(media),
+            MessageMediaKind.MiniApp => CreateMiniAppControl(media),
             _ => CreateFaceControl(media),
         };
     }
@@ -1240,7 +1332,7 @@ public static class MessageInlineRenderer
         };
         Grid.SetRow(footer, 2);
 
-        return new Border
+        var control = new Border
         {
             Width = media.Width,
             Height = media.Height,
@@ -1264,6 +1356,8 @@ public static class MessageInlineRenderer
                 },
             },
         };
+
+        return control;
     }
 
     private static double GetSharedContactCardHeight(SharedContactCard? card)
@@ -1282,6 +1376,269 @@ public static class MessageInlineRenderer
     private static int GetSharedContactSubtitleLineCount(SharedContactCard? card)
     {
         return card?.Kind == SharedContactCardKind.Group ? 2 : 1;
+    }
+
+    private static Control CreateMiniAppControl(MessageMediaRun media)
+    {
+        var card = media.Segment?.MiniApp;
+        var appName = string.IsNullOrWhiteSpace(card?.AppName) ? "QQ小程序" : card!.AppName;
+        var title = string.IsNullOrWhiteSpace(card?.Title) ? appName : card!.Title;
+        var contentWidth = Math.Max(1, media.Width - MiniAppCardPadding.Left - MiniAppCardPadding.Right);
+
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            Width = contentWidth,
+            Height = MiniAppHeaderHeight,
+            ClipToBounds = true,
+            Children =
+            {
+                new RemoteImage
+                {
+                    SourceUrl = card?.IconUrl,
+                    Width = MiniAppIconSize,
+                    Height = MiniAppIconSize,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Stretch = Stretch.UniformToFill,
+                    ClipToBounds = true,
+                    IsHitTestVisible = false,
+                },
+                new TextBlock
+                {
+                    Text = appName,
+                    Width = Math.Max(1, contentWidth - MiniAppIconSize - 5),
+                    Height = MiniAppHeaderHeight,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromRgb(146, 146, 146)),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    IsHitTestVisible = false,
+                },
+            },
+        };
+        Grid.SetRow(header, 0);
+
+        var titleBlock = new TextBlock
+        {
+            Text = title,
+            Width = contentWidth,
+            Height = MiniAppTitleHeight,
+            Margin = new Thickness(0, MiniAppHeaderSpacing, 0, 0),
+            FontSize = 14,
+            LineHeight = 21,
+            Foreground = new SolidColorBrush(Color.FromRgb(28, 28, 28)),
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 2,
+            IsHitTestVisible = false,
+        };
+        Grid.SetRow(titleBlock, 1);
+
+        var hasHostName = !string.IsNullOrWhiteSpace(card?.HostName);
+        var host = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            Width = contentWidth,
+            Height = MiniAppHostHeight,
+            Margin = new Thickness(0, MiniAppHostTopMargin, 0, 0),
+            ClipToBounds = true,
+            IsVisible = hasHostName,
+            IsHitTestVisible = false,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = card?.HostName ?? string.Empty,
+                    MaxWidth = Math.Max(1, contentWidth - 30),
+                    Height = MiniAppHostHeight,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    IsHitTestVisible = false,
+                },
+                new Border
+                {
+                    Padding = new Thickness(3, 0),
+                    Height = 14,
+                    CornerRadius = new CornerRadius(2),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(255, 91, 151)),
+                    BorderThickness = new Thickness(1),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    IsHitTestVisible = false,
+                    Child = new TextBlock
+                    {
+                        Text = "UP",
+                        FontSize = 9,
+                        Foreground = new SolidColorBrush(Color.FromRgb(255, 91, 151)),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        IsHitTestVisible = false,
+                    },
+                },
+            },
+        };
+        Grid.SetRow(host, 2);
+
+        var preview = new Border
+        {
+            Width = contentWidth,
+            Height = MiniAppPreviewHeight,
+            Margin = new Thickness(0, MiniAppPreviewTopMargin, 0, 0),
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.FromRgb(242, 243, 245)),
+            ClipToBounds = true,
+            IsHitTestVisible = false,
+            Child = new Grid
+            {
+                Width = contentWidth,
+                Height = MiniAppPreviewHeight,
+                IsHitTestVisible = false,
+                Children =
+                {
+                    new RemoteImage
+                    {
+                        SourceUrl = card?.PreviewUrl,
+                        Width = contentWidth,
+                        Height = MiniAppPreviewHeight,
+                        Stretch = Stretch.UniformToFill,
+                        IsHitTestVisible = false,
+                    },
+                    CreateMiniAppPlayOverlay(),
+                },
+            },
+        };
+        Grid.SetRow(preview, 3);
+
+        var separator = new Border
+        {
+            Height = ForwardedCardSeparatorHeight,
+            Margin = new Thickness(0, MiniAppFooterTopMargin, 0, 0),
+            Background = new SolidColorBrush(Color.FromRgb(235, 235, 235)),
+            IsHitTestVisible = false,
+        };
+        Grid.SetRow(separator, 4);
+
+        var footer = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 5,
+            Width = contentWidth,
+            Height = MiniAppFooterHeight,
+            Margin = new Thickness(0, MiniAppFooterSpacing, 0, 0),
+            ClipToBounds = true,
+            IsHitTestVisible = false,
+            Children =
+            {
+                new Border
+                {
+                    Width = 16,
+                    Height = 14,
+                    CornerRadius = new CornerRadius(3),
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(30, 160, 230)),
+                    BorderThickness = new Thickness(1),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    IsHitTestVisible = false,
+                    Child = new TextBlock
+                    {
+                        Text = "QQ",
+                        FontSize = 7,
+                        Foreground = new SolidColorBrush(Color.FromRgb(30, 160, 230)),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        IsHitTestVisible = false,
+                    },
+                },
+                new TextBlock
+                {
+                    Text = "QQ小程序",
+                    Width = Math.Max(1, contentWidth - 21),
+                    Height = MiniAppFooterHeight,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Color.FromRgb(146, 146, 146)),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    IsHitTestVisible = false,
+                },
+            },
+        };
+        Grid.SetRow(footer, 5);
+
+        var control = new Border
+        {
+            Width = media.Width,
+            Height = media.Height,
+            Margin = new Thickness(0),
+            Padding = MiniAppCardPadding,
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
+            Cursor = string.IsNullOrWhiteSpace(card?.JumpUrl) ? null : new Cursor(StandardCursorType.Hand),
+            DataContext = media.Segment,
+            Child = new Grid
+            {
+                Width = contentWidth,
+                ClipToBounds = true,
+                RowDefinitions = RowDefinitions.Parse("Auto,Auto,Auto,Auto,Auto,Auto"),
+                Children =
+                {
+                    header,
+                    titleBlock,
+                    host,
+                    preview,
+                    separator,
+                    footer,
+                },
+            },
+        };
+
+        if (media.Segment is not null)
+            SetMiniAppSegment(control, media.Segment);
+
+        return control;
+    }
+
+    private static Control CreateMiniAppPlayOverlay()
+    {
+        return new Border
+        {
+            Width = 44,
+            Height = 34,
+            CornerRadius = new CornerRadius(7),
+            Background = new SolidColorBrush(Color.FromArgb(210, 255, 255, 255)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = new TextBlock
+            {
+                Text = "▶",
+                FontSize = 17,
+                Foreground = new SolidColorBrush(Color.FromRgb(255, 91, 151)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(2, 0, 0, 1),
+                IsHitTestVisible = false,
+            },
+        };
+    }
+
+    private static double GetMiniAppCardHeight(MiniAppCard? card)
+    {
+        var hostHeight = string.IsNullOrWhiteSpace(card?.HostName)
+            ? 0
+            : MiniAppHostTopMargin + MiniAppHostHeight;
+
+        return MiniAppCardPadding.Top +
+               MiniAppHeaderHeight +
+               MiniAppHeaderSpacing +
+               MiniAppTitleHeight +
+               hostHeight +
+               MiniAppPreviewTopMargin +
+               MiniAppPreviewHeight +
+               MiniAppFooterTopMargin +
+               ForwardedCardSeparatorHeight +
+               MiniAppFooterSpacing +
+               MiniAppFooterHeight +
+               MiniAppCardPadding.Bottom;
     }
 
     private static bool IsImageDisplayable(AvaQQMessageSegment segment)
@@ -1522,6 +1879,16 @@ public sealed record MessageMediaRun(
         return new MessageMediaRun(MessageMediaKind.SharedContact, start, null, segment, copyPart, width, height, height, true);
     }
 
+    public static MessageMediaRun MiniApp(
+        int start,
+        AvaQQMessageSegment segment,
+        MessageCopyPart copyPart,
+        double width,
+        double height)
+    {
+        return new MessageMediaRun(MessageMediaKind.MiniApp, start, null, segment, copyPart, width, height, height, true);
+    }
+
     public static MessageMediaRun Voice(
         int start,
         AvaQQMessageSegment segment,
@@ -1542,6 +1909,7 @@ public enum MessageMediaKind
     Video,
     ForwardedMessage,
     SharedContact,
+    MiniApp,
 }
 
 public readonly record struct MessageCopySpan(int Start, int Length, MessageCopyPart Part)

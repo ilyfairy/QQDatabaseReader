@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
@@ -19,6 +20,11 @@ public class RemoteImage : Image
     private static readonly ConcurrentDictionary<string, Task<Bitmap?>> BitmapCache = new();
 
     private string? _loadingSourceUrl;
+
+    public RemoteImage()
+    {
+        RenderOptions.SetBitmapInterpolationMode(this, BitmapInterpolationMode.HighQuality);
+    }
 
     public string? SourceUrl
     {

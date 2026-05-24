@@ -147,6 +147,13 @@ public static class RecentMessagePreviewParser
                 continue;
             }
 
+            if (MiniAppCardParser.TryParse(segment.AppJson, out var miniApp) &&
+                miniApp is not null)
+            {
+                builder.Append(miniApp.CopyText);
+                continue;
+            }
+
             builder.Append(context.HasMessageContext
                 ? QQMessageDisplayText.CreateSegmentText(segment, context.MessageType!.Value, context.SubMessageType!.Value)
                 : segment.GetDisplayText());

@@ -627,6 +627,12 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
             return;
         }
 
+        if (GetMediaAt(position, MessageMediaKind.MiniApp) is not null)
+        {
+            Cursor = HandCursor;
+            return;
+        }
+
         var isLinkHover = keyModifiers.HasFlag(KeyModifiers.Control) &&
                           MessageInlineRenderer.GetLinkUrlAt(this, position) is { Length: > 0 };
         Cursor = isLinkHover ? HandCursor : IBeamCursor;

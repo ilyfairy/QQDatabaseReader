@@ -74,7 +74,9 @@ public partial class AvaQQMessage : ObservableObject
 
     public bool IsCardOnly =>
         Segments.Count == 1 &&
-        Segments[0].Type is AvaQQMessageSegmentType.ForwardedMessage or AvaQQMessageSegmentType.SharedContact;
+        Segments[0].Type is AvaQQMessageSegmentType.ForwardedMessage
+            or AvaQQMessageSegmentType.SharedContact
+            or AvaQQMessageSegmentType.MiniApp;
 
     public bool IsVoiceOnly =>
         Segments.Count == 1 && Segments[0].Type == AvaQQMessageSegmentType.Voice;

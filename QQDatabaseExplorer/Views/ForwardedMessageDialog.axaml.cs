@@ -57,7 +57,7 @@ public partial class ForwardedMessageDialog : UrsaWindow
         }
 
         e.Handled = true;
-        OpenCopyContextMenu(control, MessageCopyPayload.FromMessage(message));
+        OpenCopyContextMenu(control, MessageCopyPayload.FromMessage(message), null);
     }
 
     private void MessageText_ContextRequested(object? sender, ContextRequestedEventArgs e)
@@ -95,6 +95,14 @@ public partial class ForwardedMessageDialog : UrsaWindow
             return;
         }
 
+        var miniAppSegment = MessageInlineRenderer.GetMiniAppSegmentAt(textBlock, e.GetPosition(textBlock));
+        if (miniAppSegment?.MiniApp?.JumpUrl is { Length: > 0 } miniAppUrl)
+        {
+            e.Handled = true;
+            _ = OpenUriAsync(miniAppUrl);
+            return;
+        }
+
         var sharedContactSegment = MessageInlineRenderer.GetSharedContactSegmentAt(textBlock, e.GetPosition(textBlock));
         if (sharedContactSegment?.SharedContact?.JumpUrl is not { Length: > 0 } jumpUrl)
             return;
@@ -114,13 +122,24 @@ public partial class ForwardedMessageDialog : UrsaWindow
         var selectedPayload = IsContextRequestInsideSelection(textBlock, e)
             ? MessageInlineRenderer.GetSelectedPayload(textBlock)
             : MessageCopyPayload.Empty;
+        if (!selectedPayload.HasContent &&
+            e.TryGetPosition(textBlock, out var position) &&
+            MessageInlineRenderer.GetMiniAppSegmentAt(textBlock, position)?.MiniApp?.JumpUrl is { Length: > 0 } jumpUrl)
+        {
+            OpenCopyContextMenu(
+                menuOwner,
+                MessageCopyPayload.FromMessage(message),
+                jumpUrl);
+            return;
+        }
 
         OpenCopyContextMenu(
             menuOwner,
-            selectedPayload.HasContent ? selectedPayload : MessageCopyPayload.FromMessage(message));
+            selectedPayload.HasContent ? selectedPayload : MessageCopyPayload.FromMessage(message),
+            null);
     }
 
-    private void OpenCopyContextMenu(Control owner, MessageCopyPayload copyPayload)
+    private void OpenCopyContextMenu(Control owner, MessageCopyPayload copyPayload, string? linkUrl)
     {
         var copyMenuItem = new MenuItem
         {
@@ -129,7 +148,24 @@ public partial class ForwardedMessageDialog : UrsaWindow
         };
         copyMenuItem.Click += async (_, _) => await _clipboard.SetMessagePayloadAsync(this, copyPayload);
 
-        OpenContextMenu(owner, new ContextMenu { ItemsSource = new Control[] { copyMenuItem } });
+        var copyLinkMenuItem = new MenuItem
+        {
+            Header = "复制链接",
+            IsEnabled = !string.IsNullOrWhiteSpace(linkUrl),
+        };
+        copyLinkMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(linkUrl))
+            {
+                await _clipboard.SetTextAsync(linkUrl);
+            }
+        };
+
+        var items = string.IsNullOrWhiteSpace(linkUrl)
+            ? new Control[] { copyMenuItem }
+            : [copyMenuItem, copyLinkMenuItem];
+
+        OpenContextMenu(owner, new ContextMenu { ItemsSource = items });
     }
 
     private static MessageSelectableTextBlock? FindSourceSelectableTextBlock(ContextRequestedEventArgs e)

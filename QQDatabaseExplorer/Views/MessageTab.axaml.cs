@@ -1105,6 +1105,13 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetMiniAppSegmentFromContextRequest(control, e) is { } sourceMiniAppSegment)
+        {
+            e.Handled = true;
+            OpenMiniAppContextMenu(control, sourceMiniAppSegment, message.ProtobufBase64, message);
+            return;
+        }
+
         if (TryGetImageSegmentFromContextRequest(control, e) is { } sourceImageSegment)
         {
             e.Handled = true;
@@ -1206,6 +1213,13 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetMiniAppSegmentFromTappedEvent(control, e)?.MiniApp?.JumpUrl is { Length: > 0 } miniAppUrl)
+        {
+            e.Handled = true;
+            await OpenUriAsync(miniAppUrl);
+            return;
+        }
+
         if (TryGetForwardedMessageSegmentFromTappedEvent(control, e) is { ForwardedMessage: { } card })
         {
             e.Handled = true;
@@ -1278,6 +1292,15 @@ public partial class MessageTab : UserControl
         {
             e.Handled = true;
             await ShowForwardedMessageDialog(card, message.ForwardedMessages);
+            return;
+        }
+
+        var miniAppSegment = TryGetMiniAppSegmentFromTappedEvent(textBlock, e) ??
+                             MessageInlineRenderer.GetMiniAppSegmentAt(textBlock, e.GetPosition(textBlock));
+        if (miniAppSegment?.MiniApp?.JumpUrl is { Length: > 0 } miniAppUrl)
+        {
+            e.Handled = true;
+            await OpenUriAsync(miniAppUrl);
             return;
         }
 
@@ -1366,7 +1389,78 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetMiniAppSegmentFromContextRequest(textBlock, e) is { } miniAppSegment)
+        {
+            OpenMiniAppContextMenu(menuOwner, miniAppSegment, message.ProtobufBase64, message);
+            return;
+        }
+
         OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64);
+    }
+
+    private void OpenMiniAppContextMenu(
+        Control owner,
+        AvaQQMessageSegment miniAppSegment,
+        string? protobufBase64,
+        AvaQQMessage message)
+    {
+        var contextMenu = new ContextMenu();
+        var messagePayload = MessageCopyPayload.FromMessage(message);
+        var copyMessageMenuItem = new MenuItem
+        {
+            Header = "复制",
+            IsEnabled = messagePayload.HasContent,
+        };
+        copyMessageMenuItem.Click += async (_, _) => await CopyPayloadToClipboard(messagePayload);
+
+        var copyLinkMenuItem = new MenuItem
+        {
+            Header = "复制链接",
+            IsEnabled = !string.IsNullOrWhiteSpace(miniAppSegment.MiniApp?.JumpUrl),
+        };
+        copyLinkMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(miniAppSegment.MiniApp?.JumpUrl))
+            {
+                await CopyTextToClipboard(miniAppSegment.MiniApp.JumpUrl);
+            }
+        };
+
+        var copyProtobufMenuItem = new MenuItem
+        {
+            Header = "复制 Protobuf Base64",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        copyProtobufMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                await CopyTextToClipboard(protobufBase64);
+            }
+        };
+
+        var analyzeProtobufMenuItem = new MenuItem
+        {
+            Header = "分析 Protobuf",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        analyzeProtobufMenuItem.Click += (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                ShowProtobufAnalyzer(protobufBase64);
+            }
+        };
+
+        contextMenu.ItemsSource = new Control[]
+        {
+            copyMessageMenuItem,
+            copyLinkMenuItem,
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        };
+        OpenContextMenu(owner, contextMenu);
     }
 
     private void OpenImageContextMenu(
@@ -1774,6 +1868,16 @@ public partial class MessageTab : UserControl
             : null;
     }
 
+    private static AvaQQMessageSegment? TryGetMiniAppSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)
+    {
+        if (TryGetMiniAppSegmentFromEventSource(e.Source) is { } miniAppSegment)
+            return miniAppSegment;
+
+        return e.TryGetPosition(textBlock, out var position)
+            ? MessageInlineRenderer.GetMiniAppSegmentAt(textBlock, position)
+            : null;
+    }
+
     private static AvaQQMessageSegment? TryGetImageSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
     {
         if (TryGetImageSegmentFromEventSource(e.Source) is { } imageSegment)
@@ -1804,6 +1908,16 @@ public partial class MessageTab : UserControl
             : null;
     }
 
+    private static AvaQQMessageSegment? TryGetMiniAppSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
+    {
+        if (TryGetMiniAppSegmentFromEventSource(e.Source) is { } miniAppSegment)
+            return miniAppSegment;
+
+        return e.TryGetPosition(root, out var position)
+            ? MessageInlineRenderer.GetMiniAppSegmentByBounds(root, position)
+            : null;
+    }
+
     private static AvaQQMessageSegment? TryGetImageSegmentFromTappedEvent(Control root, TappedEventArgs e)
     {
         return TryGetImageSegmentFromEventSource(e.Source) ??
@@ -1820,6 +1934,12 @@ public partial class MessageTab : UserControl
     {
         return TryGetSharedContactSegmentFromEventSource(e.Source) ??
                MessageInlineRenderer.GetSharedContactSegmentByBounds(root, e.GetPosition(root));
+    }
+
+    private static AvaQQMessageSegment? TryGetMiniAppSegmentFromTappedEvent(Control root, TappedEventArgs e)
+    {
+        return TryGetMiniAppSegmentFromEventSource(e.Source) ??
+               MessageInlineRenderer.GetMiniAppSegmentByBounds(root, e.GetPosition(root));
     }
 
     private static AvaQQMessageSegment? TryGetVideoSegmentFromTappedEvent(Control root, TappedEventArgs e)
@@ -1876,6 +1996,16 @@ public partial class MessageTab : UserControl
                 .Select(control => control.DataContext)
                 .OfType<AvaQQMessageSegment>()
                 .FirstOrDefault(segment => segment.Type == AvaQQMessageSegmentType.SharedContact)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetMiniAppSegmentFromEventSource(object? source)
+    {
+        return source is Visual visual
+            ? visual.GetSelfAndVisualAncestors()
+                .OfType<Control>()
+                .Select(MessageInlineRenderer.GetMiniAppSegment)
+                .FirstOrDefault(segment => segment is not null)
             : null;
     }
 

@@ -34,6 +34,7 @@ public partial class AvaQQMessageSegment : ObservableObject
     public bool IsVideoCoverAvailable { get; set; }
     public ForwardedMessageCard? ForwardedMessage { get; init; }
     public SharedContactCard? SharedContact { get; init; }
+    public MiniAppCard? MiniApp { get; init; }
 
     public string DisplayText
     {
@@ -59,6 +60,9 @@ public partial class AvaQQMessageSegment : ObservableObject
 
             if (Type == AvaQQMessageSegmentType.SharedContact)
                 return SharedContact?.CopyText ?? "[名片]";
+
+            if (Type == AvaQQMessageSegmentType.MiniApp)
+                return MiniApp?.CopyText ?? "[QQ小程序]";
 
             return FaceId is null ? "[QQ表情]" : $"[QQ表情:{FaceId}]";
         }
@@ -205,6 +209,15 @@ public partial class AvaQQMessageSegment : ObservableObject
         };
     }
 
+    public static AvaQQMessageSegment CreateMiniApp(MiniAppCard card)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.MiniApp,
+            MiniApp = card,
+        };
+    }
+
     private static string FormatVoiceDisplayText(int? durationMilliseconds, bool isAvailable)
     {
         if (!isAvailable)
@@ -234,6 +247,7 @@ public enum AvaQQMessageSegmentType
     Video,
     ForwardedMessage,
     SharedContact,
+    MiniApp,
     Unsupported,
 }
 
