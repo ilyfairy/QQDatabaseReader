@@ -2299,15 +2299,7 @@ public partial class MessageTabViewModel : ViewModelBase
         return reactions
             .Select(reaction =>
             {
-                QQFaceInfo? face = null;
-                if (int.TryParse(reaction.FaceId, out var faceId))
-                {
-                    face = QQFaceCatalog.Get(faceId);
-                }
-
-                var displayText = face is { Name.Length: > 0 }
-                    ? $"[{face.Name}]"
-                    : $"[QQ表情:{reaction.FaceId}]";
+                var (displayText, face) = ResolveReactionFace(reaction.FaceId);
                 return new AvaMessageReaction
                 {
                     FaceId = reaction.FaceId,
@@ -2317,6 +2309,40 @@ public partial class MessageTabViewModel : ViewModelBase
                 };
             })
             .ToArray();
+    }
+
+    private static (string DisplayText, QQFaceInfo? Face) ResolveReactionFace(string faceIdText)
+    {
+        if (!int.TryParse(faceIdText, out var faceId))
+            return ($"[QQ表情:{faceIdText}]", null);
+
+        if (TryCreateUnicodeEmoji(faceId, out var emojiText))
+        {
+            var unicodeFace = QQFaceCatalog.GetUnicodeEmoji(emojiText);
+            return (emojiText, unicodeFace);
+        }
+
+        var qqFace = QQFaceCatalog.Get(faceId);
+        return qqFace is { Name.Length: > 0 }
+            ? ($"[{qqFace.Name}]", qqFace)
+            : ($"[QQ表情:{faceIdText}]", null);
+    }
+
+    private static bool TryCreateUnicodeEmoji(int codePoint, out string emojiText)
+    {
+        emojiText = string.Empty;
+        if (codePoint is < 0x1F000 or > 0x10FFFF)
+            return false;
+
+        try
+        {
+            emojiText = char.ConvertFromUtf32(codePoint);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private SystemHintDisplay? CreateSystemHintMessage(QQMessageContent? content, uint groupId)
