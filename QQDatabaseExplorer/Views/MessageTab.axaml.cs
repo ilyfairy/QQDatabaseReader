@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -15,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Utilities;
 using QQDatabaseExplorer.ViewModels;
 
 namespace QQDatabaseExplorer.Views;
@@ -33,6 +35,7 @@ public partial class MessageTab : UserControl
 
     private readonly MessageTabViewModel _viewModel;
     private readonly IClipboardService _clipboard;
+    private readonly IVoicePlaybackService _voicePlaybackService;
     private readonly Dictionary<Control, CancellationTokenSource> _hoverTimeDelays = new();
     private ScrollViewer? _groupScrollViewer;
     private ScrollViewer? _messageScrollViewer;
@@ -49,14 +52,20 @@ public partial class MessageTab : UserControl
 
     private sealed record ScrollAnchor(AvaQQMessage Message, double RelativeY);
 
-    public MessageTab(MessageTabViewModel viewModel, ViewModelTokenService viewModelTokenService, IClipboardService clipboard)
+    public MessageTab(
+        MessageTabViewModel viewModel,
+        ViewModelTokenService viewModelTokenService,
+        IClipboardService clipboard,
+        IVoicePlaybackService voicePlaybackService)
     {
         viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
 
         DataContext = viewModel;
         _viewModel = viewModel;
         _clipboard = clipboard;
+        _voicePlaybackService = voicePlaybackService;
         viewModel.View = this;
+        _voicePlaybackService.StateChanged += VoicePlaybackService_StateChanged;
 
         InitializeComponent();
 
@@ -69,7 +78,20 @@ public partial class MessageTab : UserControl
         {
             DetachMessageScrollViewer();
             DetachShortcutHost();
+            _voicePlaybackService.StateChanged -= VoicePlaybackService_StateChanged;
         };
+    }
+
+    private Task PlayOrStopVoiceSegmentAsync(AvaQQMessageSegment voiceSegment)
+    {
+        return voiceSegment.IsVoiceAvailable
+            ? _voicePlaybackService.PlayOrStopAsync(voiceSegment.VoiceLocalPath)
+            : Task.CompletedTask;
+    }
+
+    private void VoicePlaybackService_StateChanged(object? sender, VoicePlaybackStateChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() => _viewModel.UpdateVoicePlaybackState(e.CurrentPlayingPath));
     }
 
     public void ScrollToBottom()
@@ -1090,6 +1112,20 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetVoiceSegmentFromContextRequest(control, e) is { } sourceVoiceSegment)
+        {
+            e.Handled = true;
+            OpenVoiceContextMenu(control, sourceVoiceSegment, message.ProtobufBase64, message);
+            return;
+        }
+
+        if (TryGetVideoSegmentFromContextRequest(control, e) is { } sourceVideoSegment)
+        {
+            e.Handled = true;
+            OpenVideoContextMenu(control, sourceVideoSegment, message.ProtobufBase64, message);
+            return;
+        }
+
         e.Handled = true;
         OpenCopyContextMenu(control, MessageCopyPayload.FromMessage(message), message.ProtobufBase64);
     }
@@ -1174,7 +1210,17 @@ public partial class MessageTab : UserControl
         {
             e.Handled = true;
             await ShowForwardedMessageDialog(card, message.ForwardedMessages);
+            return;
         }
+
+        if (TryGetVideoSegmentFromTappedEvent(control, e) is { } videoSegment)
+        {
+            e.Handled = true;
+            await OpenVideoFileAsync(videoSegment);
+            return;
+        }
+
+        return;
     }
 
     private void MessageItem_Tapped(object? sender, TappedEventArgs e)
@@ -1235,13 +1281,29 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        var videoSegment = TryGetVideoSegmentFromTappedEvent(textBlock, e) ??
+                           MessageInlineRenderer.GetVideoSegmentAt(textBlock, e.GetPosition(textBlock));
+        if (videoSegment is not null)
+        {
+            e.Handled = true;
+            await OpenVideoFileAsync(videoSegment);
+            return;
+        }
+
         var sharedContactSegment = TryGetSharedContactSegmentFromTappedEvent(textBlock, e) ??
                                    MessageInlineRenderer.GetSharedContactSegmentAt(textBlock, e.GetPosition(textBlock));
         if (sharedContactSegment?.SharedContact?.JumpUrl is not { Length: > 0 } jumpUrl)
+        {
             return;
+        }
 
         e.Handled = true;
         await OpenUriAsync(jumpUrl);
+    }
+
+    private async void MessageText_VoiceSegmentPressed(object? sender, VoiceSegmentPressedEventArgs e)
+    {
+        await PlayOrStopVoiceSegmentAsync(e.Segment);
     }
 
     private async void ReplyPreview_Tapped(object? sender, TappedEventArgs e)
@@ -1292,6 +1354,18 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetVoiceSegmentFromContextRequest(textBlock, e) is { } voiceSegment)
+        {
+            OpenVoiceContextMenu(menuOwner, voiceSegment, message.ProtobufBase64, message);
+            return;
+        }
+
+        if (TryGetVideoSegmentFromContextRequest(textBlock, e) is { } videoSegment)
+        {
+            OpenVideoContextMenu(menuOwner, videoSegment, message.ProtobufBase64, message);
+            return;
+        }
+
         OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64);
     }
 
@@ -1324,6 +1398,8 @@ public partial class MessageTab : UserControl
         };
         copyImageMenuItem.Click += async (_, _) => await CopyImageToClipboard(imageSegment.ImageLocalPath);
 
+        var locateFileMenuItem = CreateLocateFileMenuItem(imageSegment.ImageLocalPath);
+
         var copyProtobufMenuItem = new MenuItem
         {
             Header = "复制 Protobuf Base64",
@@ -1354,11 +1430,151 @@ public partial class MessageTab : UserControl
         {
             copyMessageMenuItem,
             copyImageMenuItem,
+            locateFileMenuItem,
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
         };
         OpenContextMenu(owner, contextMenu);
+    }
+
+    private void OpenVoiceContextMenu(
+        Control owner,
+        AvaQQMessageSegment voiceSegment,
+        string? protobufBase64,
+        AvaQQMessage message)
+    {
+        var contextMenu = new ContextMenu();
+        var messagePayload = MessageCopyPayload.FromMessage(message);
+        var copyMessageMenuItem = new MenuItem
+        {
+            Header = "复制",
+            IsEnabled = messagePayload.HasContent,
+        };
+        copyMessageMenuItem.Click += async (_, _) => await CopyPayloadToClipboard(messagePayload);
+
+        var locateFileMenuItem = CreateLocateFileMenuItem(voiceSegment.VoiceLocalPath);
+
+        var copyProtobufMenuItem = new MenuItem
+        {
+            Header = "复制 Protobuf Base64",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        copyProtobufMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                await CopyTextToClipboard(protobufBase64);
+            }
+        };
+
+        var analyzeProtobufMenuItem = new MenuItem
+        {
+            Header = "分析 Protobuf",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        analyzeProtobufMenuItem.Click += (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                ShowProtobufAnalyzer(protobufBase64);
+            }
+        };
+
+        contextMenu.ItemsSource = new Control[]
+        {
+            copyMessageMenuItem,
+            locateFileMenuItem,
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        };
+        OpenContextMenu(owner, contextMenu);
+    }
+
+    private void OpenVideoContextMenu(
+        Control owner,
+        AvaQQMessageSegment videoSegment,
+        string? protobufBase64,
+        AvaQQMessage message)
+    {
+        var contextMenu = new ContextMenu();
+        var messagePayload = MessageCopyPayload.FromMessage(message);
+        var copyMessageMenuItem = new MenuItem
+        {
+            Header = "复制",
+            IsEnabled = messagePayload.HasContent,
+        };
+        copyMessageMenuItem.Click += async (_, _) => await CopyPayloadToClipboard(messagePayload);
+
+        var copyVideoMenuItem = new MenuItem
+        {
+            Header = "复制视频",
+            IsEnabled = videoSegment.IsVideoAvailable &&
+                        !string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) &&
+                        File.Exists(videoSegment.VideoLocalPath),
+        };
+        copyVideoMenuItem.Click += async (_, _) => await CopyFileToClipboard(videoSegment.VideoLocalPath);
+
+        var openVideoMenuItem = new MenuItem
+        {
+            Header = "打开视频",
+            IsEnabled = videoSegment.IsVideoAvailable &&
+                        !string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) &&
+                        File.Exists(videoSegment.VideoLocalPath),
+        };
+        openVideoMenuItem.Click += async (_, _) => await OpenVideoFileAsync(videoSegment);
+
+        var locateFileMenuItem = CreateLocateFileMenuItem(videoSegment.VideoLocalPath);
+
+        var copyProtobufMenuItem = new MenuItem
+        {
+            Header = "复制 Protobuf Base64",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        copyProtobufMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                await CopyTextToClipboard(protobufBase64);
+            }
+        };
+
+        var analyzeProtobufMenuItem = new MenuItem
+        {
+            Header = "分析 Protobuf",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        analyzeProtobufMenuItem.Click += (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                ShowProtobufAnalyzer(protobufBase64);
+            }
+        };
+
+        contextMenu.ItemsSource = new Control[]
+        {
+            copyMessageMenuItem,
+            copyVideoMenuItem,
+            openVideoMenuItem,
+            locateFileMenuItem,
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        };
+        OpenContextMenu(owner, contextMenu);
+    }
+
+    private static MenuItem CreateLocateFileMenuItem(string? localPath)
+    {
+        var menuItem = new MenuItem
+        {
+            Header = "定位文件",
+            IsEnabled = !string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath),
+        };
+        menuItem.Click += (_, _) => ShellFileLocator.ShowFileInFolder(localPath);
+        return menuItem;
     }
 
     private void OpenCopyContextMenu(Control owner, MessageCopyPayload copyPayload, string? protobufBase64)
@@ -1538,6 +1754,26 @@ public partial class MessageTab : UserControl
             : null;
     }
 
+    private static AvaQQMessageSegment? TryGetVoiceSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)
+    {
+        if (TryGetVoiceSegmentFromEventSource(e.Source) is { } voiceSegment)
+            return voiceSegment;
+
+        return e.TryGetPosition(textBlock, out var position)
+            ? MessageInlineRenderer.GetVoiceSegmentAt(textBlock, position)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetVideoSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)
+    {
+        if (TryGetVideoSegmentFromEventSource(e.Source) is { } videoSegment)
+            return videoSegment;
+
+        return e.TryGetPosition(textBlock, out var position)
+            ? MessageInlineRenderer.GetVideoSegmentAt(textBlock, position)
+            : null;
+    }
+
     private static AvaQQMessageSegment? TryGetImageSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
     {
         if (TryGetImageSegmentFromEventSource(e.Source) is { } imageSegment)
@@ -1545,6 +1781,26 @@ public partial class MessageTab : UserControl
 
         return e.TryGetPosition(root, out var position)
             ? MessageInlineRenderer.GetImageSegmentByBounds(root, position)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetVoiceSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
+    {
+        if (TryGetVoiceSegmentFromEventSource(e.Source) is { } voiceSegment)
+            return voiceSegment;
+
+        return e.TryGetPosition(root, out var position)
+            ? MessageInlineRenderer.GetVoiceSegmentByBounds(root, position)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetVideoSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
+    {
+        if (TryGetVideoSegmentFromEventSource(e.Source) is { } videoSegment)
+            return videoSegment;
+
+        return e.TryGetPosition(root, out var position)
+            ? MessageInlineRenderer.GetVideoSegmentByBounds(root, position)
             : null;
     }
 
@@ -1566,12 +1822,38 @@ public partial class MessageTab : UserControl
                MessageInlineRenderer.GetSharedContactSegmentByBounds(root, e.GetPosition(root));
     }
 
+    private static AvaQQMessageSegment? TryGetVideoSegmentFromTappedEvent(Control root, TappedEventArgs e)
+    {
+        return TryGetVideoSegmentFromEventSource(e.Source) ??
+               MessageInlineRenderer.GetVideoSegmentByBounds(root, e.GetPosition(root));
+    }
+
     private static AvaQQMessageSegment? TryGetImageSegmentFromEventSource(object? source)
     {
         return source is Visual visual
             ? visual.GetSelfAndVisualAncestors()
                 .OfType<Control>()
                 .Select(MessageInlineRenderer.GetImageSegment)
+                .FirstOrDefault(segment => segment is not null)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetVoiceSegmentFromEventSource(object? source)
+    {
+        return source is Visual visual
+            ? visual.GetSelfAndVisualAncestors()
+                .OfType<Control>()
+                .Select(MessageInlineRenderer.GetVoiceSegment)
+                .FirstOrDefault(segment => segment is not null)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetVideoSegmentFromEventSource(object? source)
+    {
+        return source is Visual visual
+            ? visual.GetSelfAndVisualAncestors()
+                .OfType<Control>()
+                .Select(MessageInlineRenderer.GetVideoSegment)
                 .FirstOrDefault(segment => segment is not null)
             : null;
     }
@@ -1666,6 +1948,11 @@ public partial class MessageTab : UserControl
         await _clipboard.SetImageAsync(this, imagePath);
     }
 
+    private async Task CopyFileToClipboard(string? filePath)
+    {
+        await _clipboard.SetFileAsync(this, filePath);
+    }
+
     private async Task ShowImagePreviewDialog(string imagePath)
     {
         if (TopLevel.GetTopLevel(this) is not Window owner)
@@ -1690,6 +1977,30 @@ public partial class MessageTab : UserControl
         catch
         {
         }
+    }
+
+    private static Task OpenVideoFileAsync(AvaQQMessageSegment videoSegment)
+    {
+        if (!videoSegment.IsVideoAvailable ||
+            string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) ||
+            !File.Exists(videoSegment.VideoLocalPath))
+        {
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = videoSegment.VideoLocalPath,
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+        }
+
+        return Task.CompletedTask;
     }
 
     private Task ShowForwardedMessageDialog(

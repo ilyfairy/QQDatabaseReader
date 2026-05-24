@@ -1,10 +1,13 @@
+using System;
+using CommunityToolkit.Mvvm.ComponentModel;
+
 namespace QQDatabaseExplorer.Models;
 
-public sealed class AvaQQMessageSegment
+public partial class AvaQQMessageSegment : ObservableObject
 {
     public AvaQQMessageSegmentType Type { get; init; }
-    public AvaQQMessageSegmentTone Tone { get; init; }
-    public string Text { get; init; } = string.Empty;
+    public AvaQQMessageSegmentTone Tone { get; set; }
+    public string Text { get; set; } = string.Empty;
     public string? LinkUrl { get; init; }
     public int? FaceId { get; init; }
     public string? FaceName { get; init; }
@@ -16,6 +19,19 @@ public sealed class AvaQQMessageSegment
     public int? ImageMaxHeight { get; init; }
     public string? ImageDisplayText { get; set; }
     public bool IsImageAvailable { get; set; }
+    public string? VoiceLocalPath { get; set; }
+    public string? VoiceFileName { get; init; }
+    public int? VoiceDurationMilliseconds { get; set; }
+    public bool IsVoiceAvailable { get; set; }
+    [ObservableProperty]
+    public partial bool IsVoicePlaying { get; set; }
+    public string? VideoLocalPath { get; set; }
+    public string? VideoCoverLocalPath { get; set; }
+    public string? VideoFileName { get; init; }
+    public string? VideoCoverFileName { get; init; }
+    public int? VideoDurationMilliseconds { get; init; }
+    public bool IsVideoAvailable { get; set; }
+    public bool IsVideoCoverAvailable { get; set; }
     public ForwardedMessageCard? ForwardedMessage { get; init; }
     public SharedContactCard? SharedContact { get; init; }
 
@@ -31,6 +47,12 @@ public sealed class AvaQQMessageSegment
 
             if (Type == AvaQQMessageSegmentType.Image)
                 return string.IsNullOrEmpty(ImageDisplayText) ? "[图片]" : ImageDisplayText;
+
+            if (Type == AvaQQMessageSegmentType.Voice)
+                return string.IsNullOrEmpty(Text) ? "[语音]" : Text;
+
+            if (Type == AvaQQMessageSegmentType.Video)
+                return string.IsNullOrEmpty(Text) ? "[视频]" : Text;
 
             if (Type == AvaQQMessageSegmentType.ForwardedMessage)
                 return ForwardedMessage?.CopyText ?? "[聊天记录]";
@@ -119,6 +141,52 @@ public sealed class AvaQQMessageSegment
         };
     }
 
+    public static AvaQQMessageSegment CreateVoice(
+        string? localPath,
+        string? fileName,
+        int? durationMilliseconds,
+        bool isAvailable)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Voice,
+            Tone = isAvailable ? AvaQQMessageSegmentTone.Normal : AvaQQMessageSegmentTone.Warning,
+            Text = FormatVoiceDisplayText(durationMilliseconds, isAvailable),
+            VoiceLocalPath = localPath,
+            VoiceFileName = fileName,
+            VoiceDurationMilliseconds = durationMilliseconds,
+            IsVoiceAvailable = isAvailable,
+        };
+    }
+
+    public static AvaQQMessageSegment CreateVideo(
+        string? videoLocalPath,
+        string? coverLocalPath,
+        string? fileName,
+        string? coverFileName,
+        int? width,
+        int? height,
+        int? durationMilliseconds,
+        bool isVideoAvailable,
+        bool isCoverAvailable)
+    {
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.Video,
+            Tone = isVideoAvailable ? AvaQQMessageSegmentTone.Normal : AvaQQMessageSegmentTone.Warning,
+            Text = isVideoAvailable ? "[视频]" : "[视频文件未找到]",
+            VideoLocalPath = videoLocalPath,
+            VideoCoverLocalPath = coverLocalPath,
+            VideoFileName = fileName,
+            VideoCoverFileName = coverFileName,
+            VideoDurationMilliseconds = durationMilliseconds,
+            ImageWidth = width,
+            ImageHeight = height,
+            IsVideoAvailable = isVideoAvailable,
+            IsVideoCoverAvailable = isCoverAvailable,
+        };
+    }
+
     public static AvaQQMessageSegment CreateForwardedMessage(ForwardedMessageCard card)
     {
         return new AvaQQMessageSegment
@@ -136,6 +204,25 @@ public sealed class AvaQQMessageSegment
             SharedContact = card,
         };
     }
+
+    private static string FormatVoiceDisplayText(int? durationMilliseconds, bool isAvailable)
+    {
+        if (!isAvailable)
+            return "[语音文件未找到]";
+
+        return durationMilliseconds is > 0
+            ? $"[语音 {FormatVoiceDuration(durationMilliseconds.Value)}]"
+            : "[语音]";
+    }
+
+    public static string FormatVoiceDuration(int milliseconds)
+    {
+        var seconds = Math.Max(1, (int)Math.Round(milliseconds / 1000d, MidpointRounding.AwayFromZero));
+        if (seconds < 60)
+            return $"{seconds}\"";
+
+        return $"{seconds / 60}:{seconds % 60:00}";
+    }
 }
 
 public enum AvaQQMessageSegmentType
@@ -143,6 +230,8 @@ public enum AvaQQMessageSegmentType
     Text,
     QQFace,
     Image,
+    Voice,
+    Video,
     ForwardedMessage,
     SharedContact,
     Unsupported,

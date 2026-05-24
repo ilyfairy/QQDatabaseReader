@@ -439,6 +439,7 @@
                                                     CopyingToClipboard="MessageText_CopyingToClipboard"
                                                     ContextRequested="MessageText_ContextRequested"
                                                     TextAlignment="Left"
+                                                    VoiceSegmentPressed="MessageText_VoiceSegmentPressed"
                                                     Tapped="MessageText_Tapped"
                                                     DoubleTapped="MessageText_DoubleTapped"
                                                     controls:MessageInlineRenderer.Segments="{Binding Segments}"

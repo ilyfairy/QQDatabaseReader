@@ -26,8 +26,11 @@ public static class RecentMessagePreviewParser
         if (content is null || content.Length == 0)
             return CreateContextFallbackText(messageType, subMessageType);
 
-        if (TryCreatePriorityText(messageType, subMessageType, out var rowTypeText))
+        if (messageType != MessageType.Voice &&
+            TryCreatePriorityText(messageType, subMessageType, out var rowTypeText))
+        {
             return rowTypeText;
+        }
 
         var context = new PreviewContext(messageType, subMessageType);
         if (TryParseRecentWrapperPreview(content, context, out var recentPreviewText))

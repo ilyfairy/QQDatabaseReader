@@ -32,6 +32,7 @@ public partial class App : Application
         builder.Services.AddSingleton<AppSettingsService>();
         builder.Services.AddSingleton<IDialogService, DialogService>();
         builder.Services.AddSingleton<IClipboardService, ClipboardService>();
+        builder.Services.AddSingleton<IVoicePlaybackService, VoicePlaybackService>();
         builder.Services.AddTransient<ViewModelToken>();
 
         builder.Services.AddSingleton<MainWindow>();

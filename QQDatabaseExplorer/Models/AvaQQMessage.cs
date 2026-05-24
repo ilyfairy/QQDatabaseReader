@@ -73,6 +73,12 @@ public partial class AvaQQMessage : ObservableObject
         Segments.Count == 1 &&
         Segments[0].Type is AvaQQMessageSegmentType.ForwardedMessage or AvaQQMessageSegmentType.SharedContact;
 
+    public bool IsVoiceOnly =>
+        Segments.Count == 1 && Segments[0].Type == AvaQQMessageSegmentType.Voice;
+
+    public bool IsVideoOnly =>
+        Segments.Count == 1 && Segments[0].Type == AvaQQMessageSegmentType.Video;
+
     public bool HasReply => Reply is not null;
 
     public bool CanSelect => !IsSystemHint;
@@ -109,7 +115,11 @@ public partial class AvaQQMessage : ObservableObject
 
     public Thickness MessageContentPadding => IsCardOnly
         ? new Thickness(0)
-        : new Thickness(10, 8);
+        : IsVideoOnly
+            ? new Thickness(6)
+        : IsVoiceOnly
+            ? new Thickness(10, 4)
+            : new Thickness(10, 8);
 
     public string HoverTimeText
     {

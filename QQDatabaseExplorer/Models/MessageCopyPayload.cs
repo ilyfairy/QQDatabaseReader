@@ -23,6 +23,13 @@ public sealed class MessageCopyPayload
             .Select(part => part.ImagePath!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        FilePaths = parts
+            .Where(part => part.Kind == MessageCopyPartKind.File &&
+                           !string.IsNullOrWhiteSpace(part.FilePath) &&
+                           File.Exists(part.FilePath))
+            .Select(part => part.FilePath!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public IReadOnlyList<MessageCopyPart> Parts { get; }
@@ -30,13 +37,20 @@ public sealed class MessageCopyPayload
     public string Html { get; }
     public byte[]? QQRichEditBytes { get; }
     public IReadOnlyList<string> ImagePaths { get; }
-    public bool HasContent => Parts.Count > 0 && (!string.IsNullOrEmpty(PlainText) || ImagePaths.Count > 0);
+    public IReadOnlyList<string> FilePaths { get; }
+    public bool HasContent => Parts.Count > 0 && (!string.IsNullOrEmpty(PlainText) || ImagePaths.Count > 0 || FilePaths.Count > 0);
     public bool IsSingleLocalImage =>
         Parts.Count == 1 &&
         Parts[0].Kind == MessageCopyPartKind.Image &&
         !string.IsNullOrWhiteSpace(Parts[0].ImagePath) &&
         File.Exists(Parts[0].ImagePath);
     public string? SingleLocalImagePath => IsSingleLocalImage ? Parts[0].ImagePath : null;
+    public bool IsSingleLocalFile =>
+        Parts.Count == 1 &&
+        Parts[0].Kind == MessageCopyPartKind.File &&
+        !string.IsNullOrWhiteSpace(Parts[0].FilePath) &&
+        File.Exists(Parts[0].FilePath);
+    public string? SingleLocalFilePath => IsSingleLocalFile ? Parts[0].FilePath : null;
 
     public static MessageCopyPayload Empty { get; } = new([]);
 
@@ -107,6 +121,35 @@ public sealed class MessageCopyPayload
                 parts.Add(MessageCopyPart.CreateImage(
                     segment.DisplayText,
                     segment.IsImageAvailable ? segment.ImageLocalPath : null,
+                    segment.Tone));
+                hasContent = true;
+                needsLineBreak = true;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.Voice)
+            {
+                if (needsLineBreak)
+                {
+                    parts.Add(MessageCopyPart.CreateText("\n"));
+                    needsLineBreak = false;
+                }
+
+                parts.Add(MessageCopyPart.CreateText(segment.DisplayText, segment.Tone));
+                hasContent = true;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.Video)
+            {
+                if (hasContent)
+                {
+                    parts.Add(MessageCopyPart.CreateText("\n"));
+                }
+
+                parts.Add(MessageCopyPart.CreateFile(
+                    segment.DisplayText,
+                    segment.IsVideoAvailable ? segment.VideoLocalPath : null,
                     segment.Tone));
                 hasContent = true;
                 needsLineBreak = true;
@@ -187,6 +230,9 @@ public sealed class MessageCopyPayload
                             AppendImageHtml(builder, CreateFileImageDataUri(assetPath), part.Text, part.IsBlockImage);
                     }
                     break;
+                case MessageCopyPartKind.File when !string.IsNullOrWhiteSpace(part.FilePath) && File.Exists(part.FilePath):
+                    AppendFileHtml(builder, part.FilePath, part.Text);
+                    break;
                 default:
                     AppendTextHtml(builder, part);
                     break;
@@ -227,6 +273,11 @@ public sealed class MessageCopyPayload
                     .Append(WebUtility.HtmlEncode(part.ImagePath))
                     .Append("\" shortcut=\"\"></EditElement>");
                 continue;
+            }
+
+            if (part.Kind == MessageCopyPartKind.File)
+            {
+                return null;
             }
 
             return null;
@@ -290,6 +341,15 @@ public sealed class MessageCopyPayload
             .Append("\" style=\"")
             .Append(style)
             .Append("\" />");
+    }
+
+    private static void AppendFileHtml(StringBuilder builder, string filePath, string text)
+    {
+        builder.Append("<a href=\"")
+            .Append(WebUtility.HtmlEncode(new Uri(filePath).AbsoluteUri))
+            .Append("\">")
+            .Append(WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(text) ? Path.GetFileName(filePath) : text))
+            .Append("</a>");
     }
 
     private static string CreateFileImageDataUri(string imagePath)
@@ -362,12 +422,13 @@ public sealed record MessageCopyPart(
     AvaQQMessageSegmentTone Tone = AvaQQMessageSegmentTone.Normal,
     string? LinkUrl = null,
     string? ImagePath = null,
+    string? FilePath = null,
     IReadOnlyList<string>? AssetPaths = null,
     int? QQFaceId = null,
     bool IsBlockImage = false)
 {
     public IReadOnlyList<string> AssetPaths { get; init; } = AssetPaths ?? [];
-    public bool IsEmpty => Kind != MessageCopyPartKind.Image && string.IsNullOrEmpty(Text);
+    public bool IsEmpty => Kind is not (MessageCopyPartKind.Image or MessageCopyPartKind.File) && string.IsNullOrEmpty(Text);
 
     public static MessageCopyPart CreateText(
         string text,
@@ -383,6 +444,14 @@ public sealed record MessageCopyPart(
         AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal)
     {
         return new MessageCopyPart(MessageCopyPartKind.Image, text, tone, ImagePath: imagePath, IsBlockImage: true);
+    }
+
+    public static MessageCopyPart CreateFile(
+        string text,
+        string? filePath,
+        AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal)
+    {
+        return new MessageCopyPart(MessageCopyPartKind.File, text, tone, FilePath: filePath);
     }
 
     public static MessageCopyPart CreateAssetImages(
@@ -411,4 +480,5 @@ public enum MessageCopyPartKind
 {
     Text,
     Image,
+    File,
 }

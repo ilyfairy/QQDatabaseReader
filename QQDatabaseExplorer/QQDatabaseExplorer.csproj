@@ -10,10 +10,7 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" Exclude="Assets\QFace\qq_emoji\**" />
-    <Content
-      Include="Assets\QFace\qq_emoji\**\*.*"
-      CopyToOutputDirectory="PreserveNewest"
-      TargetPath="Assets\QFace\qq_emoji\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="Assets\QFace\qq_emoji\**\*.*" CopyToOutputDirectory="PreserveNewest" TargetPath="Assets\QFace\qq_emoji\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +25,8 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+
+    <PackageReference Include="DrAbc.SilkSharp" Version="2.0.8" />
     <PackageReference Include="Irihi.Ursa" Version="2.0.0" />
     <PackageReference Include="Irihi.Ursa.Themes.Semi" Version="2.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
@@ -35,6 +34,7 @@
     <PackageReference Include="Semi.Avalonia" Version="12.0.1" />
     <PackageReference Include="Semi.Avalonia.DataGrid" Version="12.0.0" />
     <PackageReference Include="SkiaSharp" Version="3.119.3-preview.1.1" />
+    <PackageReference Include="SoundFlow" Version="1.4.1" />
     <PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.6" />
   </ItemGroup>
 

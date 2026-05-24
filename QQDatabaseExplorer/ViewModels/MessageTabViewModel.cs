@@ -31,6 +31,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly QQDatabaseService _qqDatabaseService;
     private readonly AppSettingsService _appSettingsService;
     private readonly IDialogService _dialogService;
+    private readonly IVoicePlaybackService _voicePlaybackService;
     private readonly ObservableList<AvaQQGroup> _groups = new();
     private readonly ObservableList<AvaQQGroup> _filteredGroups = new();
     private readonly HashSet<string> _selectedConversationKeys = new(StringComparer.Ordinal);
@@ -84,13 +85,15 @@ public partial class MessageTabViewModel : ViewModelBase
     public MessageTabViewModel(
         QQDatabaseService qqDatabaseService,
         AppSettingsService appSettingsService,
-        IDialogService dialogService)
+        IDialogService dialogService,
+        IVoicePlaybackService voicePlaybackService)
     {
         Groups = _filteredGroups.ToNotifyCollectionChanged();
         Messages = _messages.ToNotifyCollectionChanged();
         _qqDatabaseService = qqDatabaseService;
         _appSettingsService = appSettingsService;
         _dialogService = dialogService;
+        _voicePlaybackService = voicePlaybackService;
         
         _qqDatabaseService.DatabaseAdded += OnDatabaseAdded;
         _qqDatabaseService.DatabaseAddedAsync += OnDatabaseAddedAsync;
@@ -103,6 +106,41 @@ public partial class MessageTabViewModel : ViewModelBase
     public void ScrollToBottom()
     {
         View?.ScrollToBottom();
+    }
+
+    public void UpdateVoicePlaybackState(string? currentPlayingPath)
+    {
+        var normalizedCurrentPath = NormalizeLocalPath(currentPlayingPath);
+        foreach (var message in _messages)
+        {
+            foreach (var segment in message.Segments)
+            {
+                if (segment.Type != AvaQQMessageSegmentType.Voice)
+                    continue;
+
+                segment.IsVoicePlaying = segment.IsVoiceAvailable &&
+                                         !string.IsNullOrWhiteSpace(normalizedCurrentPath) &&
+                                         string.Equals(
+                                             NormalizeLocalPath(segment.VoiceLocalPath),
+                                             normalizedCurrentPath,
+                                             StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    private static string? NormalizeLocalPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     public bool HasNewerMessages => _hasNewerMessages;
@@ -2917,7 +2955,7 @@ public partial class MessageTabViewModel : ViewModelBase
             : reply.SourceGroupId.ToString();
     }
 
-    private static IReadOnlyList<AvaQQMessage> CreateForwardedMessages(
+    private IReadOnlyList<AvaQQMessage> CreateForwardedMessages(
         MessageRecord item,
         QQMessageContent? content,
         LocalMediaContext mediaContext)
@@ -2939,7 +2977,7 @@ public partial class MessageTabViewModel : ViewModelBase
         }
     }
 
-    private static IReadOnlyList<AvaQQMessage> CreateForwardedMessages(
+    private IReadOnlyList<AvaQQMessage> CreateForwardedMessages(
         IReadOnlyList<QQForwardedMessage> messages,
         LocalMediaContext mediaContext)
     {
@@ -3230,6 +3268,22 @@ public partial class MessageTabViewModel : ViewModelBase
         if (segment.Type == MessageSegmentType.Reply)
             return;
 
+        if (IsVoiceSegment(messageType, segment))
+        {
+            segments.Add(AvaQQMessageSegment.CreateVoice(
+                null,
+                segment.VoiceFileName,
+                null,
+                isAvailable: false));
+            return;
+        }
+
+        if (IsVideoSegment(messageType, segment))
+        {
+            segments.Add(CreateVideoSegment(segment, messageTime, mediaContext));
+            return;
+        }
+
         if (QQMessageDisplayText.TryGetPriorityText(messageType, subMessageType, out var priorityText) &&
             !IsRenderableImageSegment(messageType, subMessageType, segment))
         {
@@ -3332,7 +3386,7 @@ public partial class MessageTabViewModel : ViewModelBase
         segments.Add(AvaQQMessageSegment.CreateUnsupportedText(unsupportedText));
     }
 
-    private static void ResolveMessageSegmentMediaPaths(
+    private void ResolveMessageSegmentMediaPaths(
         IReadOnlyList<AvaQQMessageSegment> segments,
         MessageRecord item,
         QQMessageContent? content,
@@ -3351,7 +3405,7 @@ public partial class MessageTabViewModel : ViewModelBase
             }
 
             while (segmentIndex < segments.Count &&
-                   segments[segmentIndex].Type != AvaQQMessageSegmentType.Image)
+                   !MatchesMediaSegment(segments[segmentIndex], parsedSegment))
             {
                 segmentIndex++;
             }
@@ -3359,16 +3413,143 @@ public partial class MessageTabViewModel : ViewModelBase
             if (segmentIndex >= segments.Count)
                 return;
 
-            segments[segmentIndex].ImageLocalPath = localPath;
-            segments[segmentIndex].IsImageAvailable = !isMissing;
-            if (isMissing)
-            {
-                segments[segmentIndex].ImageDisplayText = parsedSegment.IsMarketFace
-                    ? "[商城表情文件未找到]"
-                    : CreateUnavailableMediaText(item);
-            }
-
+            ApplyResolvedMediaPath(segments[segmentIndex], parsedSegment, item, localPath, isMissing);
             segmentIndex++;
+        }
+    }
+
+    private static bool MatchesMediaSegment(AvaQQMessageSegment displaySegment, QQMessageSegment parsedSegment)
+    {
+        if (parsedSegment.IsVoice)
+            return displaySegment.Type == AvaQQMessageSegmentType.Voice;
+
+        if (parsedSegment.IsVideo)
+            return displaySegment.Type == AvaQQMessageSegmentType.Video;
+
+        return displaySegment.Type == AvaQQMessageSegmentType.Image;
+    }
+
+    private void ApplyResolvedMediaPath(
+        AvaQQMessageSegment displaySegment,
+        QQMessageSegment parsedSegment,
+        MessageRecord item,
+        string? localPath,
+        bool isMissing)
+    {
+        if (displaySegment.Type == AvaQQMessageSegmentType.Voice)
+        {
+            displaySegment.VoiceLocalPath = localPath;
+            displaySegment.IsVoiceAvailable = !isMissing && _voicePlaybackService.CanPlay(localPath);
+            displaySegment.VoiceDurationMilliseconds = displaySegment.IsVoiceAvailable
+                ? _voicePlaybackService.GetDurationMilliseconds(localPath)
+                : null;
+            displaySegment.Text = displaySegment.IsVoiceAvailable
+                ? CreateVoiceDisplayText(displaySegment.VoiceDurationMilliseconds)
+                : "[语音文件未找到]";
+            displaySegment.Tone = displaySegment.IsVoiceAvailable
+                ? AvaQQMessageSegmentTone.Normal
+                : AvaQQMessageSegmentTone.Warning;
+            return;
+        }
+
+        if (displaySegment.Type == AvaQQMessageSegmentType.Video)
+        {
+            displaySegment.VideoLocalPath = localPath;
+            displaySegment.IsVideoAvailable = !isMissing && !string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath);
+            displaySegment.Text = displaySegment.IsVideoAvailable ? "[视频]" : "[视频文件未找到]";
+            displaySegment.Tone = displaySegment.IsVideoAvailable
+                ? AvaQQMessageSegmentTone.Normal
+                : AvaQQMessageSegmentTone.Warning;
+            return;
+        }
+
+        displaySegment.ImageLocalPath = localPath;
+        displaySegment.IsImageAvailable = !isMissing;
+        if (isMissing)
+        {
+            displaySegment.ImageDisplayText = parsedSegment.IsMarketFace
+                ? "[商城表情文件未找到]"
+                : CreateUnavailableMediaText(item);
+        }
+    }
+
+    private static string CreateVoiceDisplayText(int? durationMilliseconds)
+    {
+        return durationMilliseconds is > 0
+            ? $"[语音 {AvaQQMessageSegment.FormatVoiceDuration(durationMilliseconds.Value)}]"
+            : "[语音]";
+    }
+
+    private static bool IsVoiceSegment(MessageType messageType, QQMessageSegment segment)
+    {
+        return segment.IsVoice || messageType == MessageType.Voice;
+    }
+
+    private static bool IsVideoSegment(MessageType messageType, QQMessageSegment segment)
+    {
+        return segment.IsVideo || messageType == MessageType.Video;
+    }
+
+    private static AvaQQMessageSegment CreateVideoSegment(
+        QQMessageSegment segment,
+        int messageTime,
+        LocalMediaContext mediaContext)
+    {
+        var resolved = ResolveLocalVideoMediaPath(mediaContext, messageTime, segment);
+        var coverSize = LocalImageFile.TryGetImageSize(resolved.CoverPath);
+        return AvaQQMessageSegment.CreateVideo(
+            resolved.VideoPath,
+            resolved.CoverPath,
+            segment.VideoFileName,
+            segment.VideoCoverFileName,
+            coverSize?.Width ?? segment.ImageWidth,
+            coverSize?.Height ?? segment.ImageHeight,
+            segment.VideoDurationMilliseconds,
+            resolved.IsVideoAvailable,
+            resolved.IsCoverAvailable);
+    }
+
+    private void ApplyResolvedForwardedMediaPath(
+        AvaQQMessageSegment displaySegment,
+        QQMessageSegment parsedSegment,
+        QQForwardedMessage item,
+        string? localPath,
+        bool isMissing)
+    {
+        if (displaySegment.Type == AvaQQMessageSegmentType.Voice)
+        {
+            displaySegment.VoiceLocalPath = localPath;
+            displaySegment.IsVoiceAvailable = !isMissing && _voicePlaybackService.CanPlay(localPath);
+            displaySegment.VoiceDurationMilliseconds = displaySegment.IsVoiceAvailable
+                ? _voicePlaybackService.GetDurationMilliseconds(localPath)
+                : null;
+            displaySegment.Text = displaySegment.IsVoiceAvailable
+                ? CreateVoiceDisplayText(displaySegment.VoiceDurationMilliseconds)
+                : "[语音文件未找到]";
+            displaySegment.Tone = displaySegment.IsVoiceAvailable
+                ? AvaQQMessageSegmentTone.Normal
+                : AvaQQMessageSegmentTone.Warning;
+            return;
+        }
+
+        if (displaySegment.Type == AvaQQMessageSegmentType.Video)
+        {
+            displaySegment.VideoLocalPath = localPath;
+            displaySegment.IsVideoAvailable = !isMissing && !string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath);
+            displaySegment.Text = displaySegment.IsVideoAvailable ? "[视频]" : "[视频文件未找到]";
+            displaySegment.Tone = displaySegment.IsVideoAvailable
+                ? AvaQQMessageSegmentTone.Normal
+                : AvaQQMessageSegmentTone.Warning;
+            return;
+        }
+
+        displaySegment.ImageLocalPath = localPath;
+        displaySegment.IsImageAvailable = !isMissing;
+        if (isMissing)
+        {
+            displaySegment.ImageDisplayText = parsedSegment.IsMarketFace
+                ? "[商城表情文件未找到]"
+                : CreateUnavailableMediaText(item.SubMessageType);
         }
     }
 
@@ -3389,6 +3570,21 @@ public partial class MessageTabViewModel : ViewModelBase
             return true;
         }
 
+        if (IsVoiceSegment(item.MessageType, segment))
+        {
+            localPath = ResolveLocalVoicePath(mediaContext, item.MessageTime, segment);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        if (IsVideoSegment(item.MessageType, segment))
+        {
+            var resolved = ResolveLocalVideoMediaPath(mediaContext, item.MessageTime, segment);
+            localPath = resolved.VideoPath;
+            isMissing = !resolved.IsVideoAvailable;
+            return true;
+        }
+
         if (IsRenderableImageSegment(item.MessageType, item.SubMessageType, segment))
         {
             localPath = ResolveLocalMediaPath(mediaContext, item.MessageTime, segment, item.SubMessageType);
@@ -3399,7 +3595,7 @@ public partial class MessageTabViewModel : ViewModelBase
         return false;
     }
 
-    private static void ResolveMessageSegmentMediaPaths(
+    private void ResolveMessageSegmentMediaPaths(
         IReadOnlyList<AvaQQMessageSegment> segments,
         QQForwardedMessage item,
         LocalMediaContext mediaContext)
@@ -3417,7 +3613,7 @@ public partial class MessageTabViewModel : ViewModelBase
             }
 
             while (segmentIndex < segments.Count &&
-                   segments[segmentIndex].Type != AvaQQMessageSegmentType.Image)
+                   !MatchesMediaSegment(segments[segmentIndex], parsedSegment))
             {
                 segmentIndex++;
             }
@@ -3425,15 +3621,7 @@ public partial class MessageTabViewModel : ViewModelBase
             if (segmentIndex >= segments.Count)
                 return;
 
-            segments[segmentIndex].ImageLocalPath = localPath;
-            segments[segmentIndex].IsImageAvailable = !isMissing;
-            if (isMissing)
-            {
-                segments[segmentIndex].ImageDisplayText = parsedSegment.IsMarketFace
-                    ? "[商城表情文件未找到]"
-                    : CreateUnavailableMediaText(item.SubMessageType);
-            }
-
+            ApplyResolvedForwardedMediaPath(segments[segmentIndex], parsedSegment, item, localPath, isMissing);
             segmentIndex++;
         }
     }
@@ -3452,6 +3640,21 @@ public partial class MessageTabViewModel : ViewModelBase
         {
             localPath = ResolveMarketFacePath(mediaContext.NtDataPath, segment);
             isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        if (IsVoiceSegment(item.MessageType, segment))
+        {
+            localPath = ResolveLocalVoicePath(mediaContext, item.MessageTime, segment);
+            isMissing = string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath);
+            return true;
+        }
+
+        if (IsVideoSegment(item.MessageType, segment))
+        {
+            var resolved = ResolveLocalVideoMediaPath(mediaContext, item.MessageTime, segment);
+            localPath = resolved.VideoPath;
+            isMissing = !resolved.IsVideoAvailable;
             return true;
         }
 
@@ -3618,6 +3821,52 @@ public partial class MessageTabViewModel : ViewModelBase
         return ResolveExplicitLocalImagePath(segment.ImageLocalPath);
     }
 
+    private static string? ResolveLocalVoicePath(
+        LocalMediaContext mediaContext,
+        int messageTime,
+        QQMessageSegment segment)
+    {
+        if (mediaContext.PlatformType is DatabasePlatformType.AndroidQQNT ||
+            string.IsNullOrWhiteSpace(mediaContext.NtDataPath))
+        {
+            return null;
+        }
+
+        if (!TryGetMessageUtcMonth(messageTime, out var month))
+            return null;
+
+        var voiceDirectory = Path.Combine(mediaContext.NtDataPath, "Ptt", month, "Ori");
+        return ResolveVoicePath(voiceDirectory, CreateVoiceFileNameCandidates(segment));
+    }
+
+    private static ResolvedVideoMediaPath ResolveLocalVideoMediaPath(
+        LocalMediaContext mediaContext,
+        int messageTime,
+        QQMessageSegment segment)
+    {
+        if (mediaContext.PlatformType is DatabasePlatformType.AndroidQQNT ||
+            string.IsNullOrWhiteSpace(mediaContext.NtDataPath) ||
+            !TryGetMessageUtcMonth(messageTime, out var month))
+        {
+            return ResolvedVideoMediaPath.Missing;
+        }
+
+        var videoMonthDirectory = Path.Combine(mediaContext.NtDataPath, "Video", month);
+        var videoPath = ResolveMediaOriginalPath(
+            videoMonthDirectory,
+            CreateVideoFileNameCandidates(segment).ToArray());
+        var coverPath = ResolveMediaThumbnailPath(
+            videoMonthDirectory,
+            CreateVideoCoverFileNameCandidates(segment).ToArray())
+            ?? ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+
+        return new ResolvedVideoMediaPath(
+            videoPath,
+            coverPath,
+            !string.IsNullOrWhiteSpace(videoPath) && File.Exists(videoPath),
+            LocalImageFile.IsDisplayableImageFile(coverPath));
+    }
+
     private static string? ResolvePCQQImagePath(string? pcqqDataPath, string? imageRelativePath)
     {
         if (string.IsNullOrWhiteSpace(pcqqDataPath) ||
@@ -3753,6 +4002,78 @@ public partial class MessageTabViewModel : ViewModelBase
             var md5FileName = string.IsNullOrEmpty(extension) ? md5Name : md5Name + extension;
             if (seen.Add(md5FileName))
                 yield return md5FileName;
+        }
+    }
+
+    private static IEnumerable<string> CreateVoiceFileNameCandidates(QQMessageSegment segment)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in CreateImageFileNameCandidates(segment.VoiceFileName))
+        {
+            if (seen.Add(fileName))
+                yield return fileName;
+        }
+
+        if (segment.VoiceMd5 is { Length: > 0 } md5)
+        {
+            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
+            var extension = GetImageExtension(segment.VoiceFileName);
+            if (string.IsNullOrWhiteSpace(extension))
+                extension = ".amr";
+
+            var md5FileName = md5Name + extension;
+            if (seen.Add(md5FileName))
+                yield return md5FileName;
+
+            var amrFileName = md5Name + ".amr";
+            if (seen.Add(amrFileName))
+                yield return amrFileName;
+        }
+    }
+
+    private static IEnumerable<string> CreateVideoFileNameCandidates(QQMessageSegment segment)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in CreateImageFileNameCandidates(segment.VideoFileName))
+        {
+            if (seen.Add(fileName))
+                yield return fileName;
+        }
+
+        if (segment.VideoMd5 is { Length: > 0 } md5)
+        {
+            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
+            var extension = GetImageExtension(segment.VideoFileName);
+            if (string.IsNullOrWhiteSpace(extension))
+                extension = ".mp4";
+
+            var md5FileName = md5Name + extension;
+            if (seen.Add(md5FileName))
+                yield return md5FileName;
+
+            var mp4FileName = md5Name + ".mp4";
+            if (seen.Add(mp4FileName))
+                yield return mp4FileName;
+        }
+    }
+
+    private static IEnumerable<string> CreateVideoCoverFileNameCandidates(QQMessageSegment segment)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fileName in CreateImageFileNameCandidates(segment.VideoCoverFileName))
+        {
+            if (seen.Add(fileName))
+                yield return fileName;
+        }
+
+        if (segment.VideoMd5 is { Length: > 0 } md5)
+        {
+            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
+            foreach (var fileName in new[] { $"{md5Name}_0.png", $"{md5Name}_0.jpg", $"{md5Name}.png", $"{md5Name}.jpg" })
+            {
+                if (seen.Add(fileName))
+                    yield return fileName;
+            }
         }
     }
 
@@ -3990,6 +4311,15 @@ public partial class MessageTabViewModel : ViewModelBase
 
     private static string? ResolveMediaPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
     {
+        var originalPath = ResolveMediaOriginalPath(mediaMonthDirectory, candidateFileNames);
+        if (originalPath is not null)
+            return originalPath;
+
+        return ResolveMediaThumbnailPath(mediaMonthDirectory, candidateFileNames);
+    }
+
+    private static string? ResolveMediaOriginalPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
+    {
         foreach (var imageFileName in candidateFileNames)
         {
             var result = ResolveOriginalImagePath(mediaMonthDirectory, imageFileName);
@@ -3997,9 +4327,35 @@ public partial class MessageTabViewModel : ViewModelBase
                 return result;
         }
 
+        return null;
+    }
+
+    private static string? ResolveMediaThumbnailPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
+    {
         foreach (var imageFileName in candidateFileNames)
         {
+            var thumbDirectory = Path.Combine(mediaMonthDirectory, "Thumb");
+            var directResult = ResolveExistingFile(thumbDirectory, imageFileName) ??
+                               ResolveExistingFile(thumbDirectory, imageFileName.ToLowerInvariant());
+            if (directResult is not null)
+                return directResult;
+
             var result = ResolveThumbnailImagePath(mediaMonthDirectory, imageFileName);
+            if (result is not null)
+                return result;
+        }
+
+        return null;
+    }
+
+    private static string? ResolveVoicePath(string voiceOriginalDirectory, IEnumerable<string> candidateFileNames)
+    {
+        if (!Directory.Exists(voiceOriginalDirectory))
+            return null;
+
+        foreach (var fileName in candidateFileNames)
+        {
+            var result = ResolveExistingFile(voiceOriginalDirectory, fileName);
             if (result is not null)
                 return result;
         }
@@ -4105,6 +4461,15 @@ public partial class MessageTabViewModel : ViewModelBase
     }
 
     private readonly record struct ThumbnailCandidate(string Path, int Spec, bool MatchesPreferredExtension);
+
+    private readonly record struct ResolvedVideoMediaPath(
+        string? VideoPath,
+        string? CoverPath,
+        bool IsVideoAvailable,
+        bool IsCoverAvailable)
+    {
+        public static ResolvedVideoMediaPath Missing { get; } = new(null, null, false, false);
+    }
 
     private void OnDatabaseAdded(IQQDatabase database)
     {
@@ -5174,7 +5539,8 @@ public partial class MessageTabViewModel : ViewModelBase
             return PCQQMessageContentParser.GetDisplayText(pcqqContent);
         }
 
-        if (QQMessageDisplayText.TryGetPriorityText(message.MessageType, message.SubMessageType, out var priorityText))
+        if (message.MessageType != MessageType.Voice &&
+            QQMessageDisplayText.TryGetPriorityText(message.MessageType, message.SubMessageType, out var priorityText))
         {
             return priorityText;
         }

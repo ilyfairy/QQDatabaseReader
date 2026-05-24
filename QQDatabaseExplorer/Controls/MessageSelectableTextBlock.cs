@@ -21,6 +21,7 @@ namespace QQDatabaseExplorer.Controls;
 public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
 {
     private const double DrawableRunWrapSlack = 1d / 1024d;
+    private const double ClickMovementThreshold = 4;
     private static readonly IBrush DefaultSelectionBrush = new SolidColorBrush(Color.FromArgb(120, 0, 120, 215));
     private static readonly Cursor IBeamCursor = new(StandardCursorType.Ibeam);
     private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
@@ -32,6 +33,8 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
     private TopLevel? _keyboardHost;
     private bool _isOpeningLink;
     private bool _isPointerOver;
+    private Point? _voicePointerPressedPosition;
+    private AvaQQMessageSegment? _voicePointerPressedSegment;
     private Point _lastPointerPosition;
 
     static MessageSelectableTextBlock()
@@ -43,6 +46,8 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
     }
 
     public MessageRenderDocument Document { get; private set; } = MessageRenderDocument.Empty;
+
+    public event EventHandler<VoiceSegmentPressedEventArgs>? VoiceSegmentPressed;
 
     public bool HitTest(Point point)
     {
@@ -79,7 +84,9 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
 
     public AvaQQMessageSegment? GetMediaSegmentAt(Point position, MessageMediaKind kind)
     {
-        var media = GetMediaAt(position, kind);
+        var media = kind == MessageMediaKind.Voice
+            ? GetVoiceMediaAt(position)
+            : GetMediaAt(position, kind);
         return media?.Segment;
     }
 
@@ -163,8 +170,21 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
+        _voicePointerPressedPosition = null;
+        _voicePointerPressedSegment = null;
+
+        var pressedPosition = e.GetPosition(this);
+        var pressedMedia = GetVoiceMediaAt(pressedPosition);
+
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            pressedMedia?.Segment is { IsVoiceAvailable: true } voiceSegment)
+        {
+            _voicePointerPressedPosition = pressedPosition;
+            _voicePointerPressedSegment = voiceSegment;
+        }
+
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) &&
-            e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.LeftButtonPressed &&
+            e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
             MessageInlineRenderer.GetLinkUrlAt(this, e.GetPosition(this)) is { Length: > 0 } url)
         {
             e.Handled = true;
@@ -203,12 +223,34 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
             return;
         }
 
+        if (_voicePointerPressedPosition is { } pressedPosition &&
+            _voicePointerPressedSegment is { IsVoiceAvailable: true } voiceSegment)
+        {
+            var releasePosition = e.GetPosition(this);
+            _voicePointerPressedPosition = null;
+            _voicePointerPressedSegment = null;
+            var releaseMedia = GetVoiceMediaAt(releasePosition);
+            var distance = Distance(pressedPosition, releasePosition);
+
+            if (distance <= ClickMovementThreshold &&
+                releaseMedia?.Segment == voiceSegment)
+            {
+                e.Pointer.Capture(null);
+                e.Handled = true;
+                e.PreventGestureRecognition();
+                VoiceSegmentPressed?.Invoke(this, new VoiceSegmentPressedEventArgs(voiceSegment));
+                return;
+            }
+        }
+
         base.OnPointerReleased(e);
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         _isOpeningLink = false;
+        _voicePointerPressedPosition = null;
+        _voicePointerPressedSegment = null;
         base.OnPointerCaptureLost(e);
     }
 
@@ -479,6 +521,30 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
         return baselineOffset;
     }
 
+    private static double Distance(Point first, Point second)
+    {
+        var x = first.X - second.X;
+        var y = first.Y - second.Y;
+        return Math.Sqrt(x * x + y * y);
+    }
+
+    private MessageMediaRun? GetVoiceMediaAt(Point position)
+    {
+        var media = GetMediaAt(position, MessageMediaKind.Voice);
+        if (media is not null)
+            return media;
+
+        if (!new Rect(Bounds.Size).Contains(position) ||
+            Document.Text.Length != 1 ||
+            Document.MediaSpans.Count != 1 ||
+            Document.MediaSpans[0].Media.Kind != MessageMediaKind.Voice)
+        {
+            return null;
+        }
+
+        return Document.MediaSpans[0].Media;
+    }
+
     private MessageMediaRun? GetMediaAt(Point position, bool imageOnly)
     {
         foreach (var pair in _mediaBounds)
@@ -534,6 +600,18 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
         if (GetMediaAt(position, imageOnly: true) is not null)
         {
             Cursor = ArrowCursor;
+            return;
+        }
+
+        if (GetVoiceMediaAt(position)?.IsDisplayable == true)
+        {
+            Cursor = HandCursor;
+            return;
+        }
+
+        if (GetMediaAt(position, MessageMediaKind.Video) is { Segment.IsVideoAvailable: true })
+        {
+            Cursor = HandCursor;
             return;
         }
 
@@ -730,4 +808,9 @@ public class MessageSelectableTextBlock : SelectableTextBlock, ICustomHitTest
         {
         }
     }
+}
+
+public sealed class VoiceSegmentPressedEventArgs(AvaQQMessageSegment segment) : EventArgs
+{
+    public AvaQQMessageSegment Segment { get; } = segment;
 }

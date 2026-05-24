@@ -10,4 +10,5 @@ public interface IClipboardService
     Task SetMessagePayloadAsync(Control owner, MessageCopyPayload payload);
     Task SetMessageBatchPayloadAsync(Control owner, MessageBatchCopyPayload payload);
     Task SetImageAsync(Control owner, string? imagePath);
+    Task SetFileAsync(Control owner, string? filePath);
 }

@@ -12,6 +12,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Utilities;
 
 namespace QQDatabaseExplorer.Services;
 
@@ -21,6 +22,8 @@ public class ClipboardService : IClipboardService
     private static readonly DataFormat<byte[]> TextHtmlDataFormat = DataFormat.CreateBytesPlatformFormat("text/html");
     private static readonly DataFormat<byte[]> QQRichEditDataFormat = DataFormat.CreateBytesPlatformFormat("QQ_Unicode_RichEdit_Format");
     private static readonly DataFormat<byte[]> QQMultiMsgRichEditDataFormat = DataFormat.CreateBytesPlatformFormat("QQ_MultiMsg_RichEdit_Format");
+    private static readonly DataFormat<byte[]> PreferredDropEffectDataFormat = DataFormat.CreateBytesPlatformFormat("Preferred DropEffect");
+    private static readonly byte[] CopyDropEffectBytes = [1, 0, 0, 0];
 
     private IClipboard? _cachedClipboard;
 
@@ -39,6 +42,12 @@ public class ClipboardService : IClipboardService
         if (payload.SingleLocalImagePath is { } singleImagePath)
         {
             await SetImageAsync(owner, singleImagePath);
+            return;
+        }
+
+        if (payload.SingleLocalFilePath is { } singleFilePath)
+        {
+            await SetFileAsync(owner, singleFilePath);
             return;
         }
 
@@ -112,6 +121,32 @@ public class ClipboardService : IClipboardService
 
         if (await topLevel.StorageProvider.TryGetFileFromPathAsync(imagePath) is { } storageFile)
             transfer.Add(DataTransferItem.CreateFile(storageFile));
+
+        await clipboard.SetDataAsync(transfer);
+        await clipboard.FlushAsync();
+    }
+
+    public async Task SetFileAsync(Control owner, string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return;
+
+        if (ClipboardFileWriter.TrySetFile(filePath))
+            return;
+
+        if (TopLevel.GetTopLevel(owner) is not { } topLevel ||
+            topLevel.Clipboard is not { } clipboard ||
+            await topLevel.StorageProvider.TryGetFileFromPathAsync(filePath) is not { } storageFile)
+        {
+            return;
+        }
+
+        var transfer = new DataTransfer();
+        transfer.Add(DataTransferItem.CreateFile(storageFile));
+
+        var item = new DataTransferItem();
+        item.Set(PreferredDropEffectDataFormat, CopyDropEffectBytes);
+        transfer.Add(item);
 
         await clipboard.SetDataAsync(transfer);
         await clipboard.FlushAsync();

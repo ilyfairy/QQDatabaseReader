@@ -26,6 +26,10 @@ public static class MessageInlineRenderer
     private const double ImageMaxHeight = 180;
     private const double BrokenImageMinWidth = 88;
     private const double BrokenImageMinHeight = 72;
+    private const double VoiceCardHeight = 24;
+    private const double VoiceCardBaseWidth = 58;
+    private const double VoiceCardMinWidth = 66;
+    private const double VoiceCardMaxWidth = 104;
     private const double MessageCardWidth = 270;
     private static readonly Thickness ForwardedCardPadding = new(12, 10, 12, 9);
     private static readonly Thickness SharedContactCardPadding = new(12, 9, 12, 8);
@@ -61,6 +65,16 @@ public static class MessageInlineRenderer
             "ImageSegment",
             typeof(MessageInlineRenderer));
 
+    public static readonly AttachedProperty<AvaQQMessageSegment?> VoiceSegmentProperty =
+        AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
+            "VoiceSegment",
+            typeof(MessageInlineRenderer));
+
+    public static readonly AttachedProperty<AvaQQMessageSegment?> VideoSegmentProperty =
+        AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
+            "VideoSegment",
+            typeof(MessageInlineRenderer));
+
     public static readonly AttachedProperty<AvaQQMessageSegment?> ForwardedMessageSegmentProperty =
         AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
             "ForwardedMessageSegment",
@@ -94,6 +108,26 @@ public static class MessageInlineRenderer
         control.SetValue(ImageSegmentProperty, value);
     }
 
+    public static AvaQQMessageSegment? GetVoiceSegment(Control control)
+    {
+        return control.GetValue(VoiceSegmentProperty);
+    }
+
+    public static void SetVoiceSegment(Control control, AvaQQMessageSegment? value)
+    {
+        control.SetValue(VoiceSegmentProperty, value);
+    }
+
+    public static AvaQQMessageSegment? GetVideoSegment(Control control)
+    {
+        return control.GetValue(VideoSegmentProperty);
+    }
+
+    public static void SetVideoSegment(Control control, AvaQQMessageSegment? value)
+    {
+        control.SetValue(VideoSegmentProperty, value);
+    }
+
     public static AvaQQMessageSegment? GetForwardedMessageSegment(Control control)
     {
         return control.GetValue(ForwardedMessageSegmentProperty);
@@ -125,6 +159,20 @@ public static class MessageInlineRenderer
                 var imageText = string.IsNullOrWhiteSpace(segment.DisplayText) ? "[图片]" : segment.DisplayText;
                 compactSegments.Add(AvaQQMessageSegment.CreateText(imageText, segment.Tone));
                 remainingTextLength -= imageText.Length;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.Voice)
+            {
+                compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText, segment.Tone));
+                remainingTextLength -= segment.DisplayText.Length;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.Video)
+            {
+                compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText, segment.Tone));
+                remainingTextLength -= segment.DisplayText.Length;
                 continue;
             }
 
@@ -224,6 +272,30 @@ public static class MessageInlineRenderer
                 continue;
             }
 
+            if (segment.Type == AvaQQMessageSegmentType.Voice)
+            {
+                if (textPosition > 0)
+                {
+                    AddLineBreak(runs, copySpans, logicalText, ref textPosition);
+                }
+
+                AddVoice(runs, copySpans, mediaSpans, logicalText, segment, ref textPosition);
+                needsLineBreak = true;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.Video)
+            {
+                if (textPosition > 0)
+                {
+                    AddLineBreak(runs, copySpans, logicalText, ref textPosition);
+                }
+
+                AddVideo(runs, copySpans, mediaSpans, logicalText, segment, ref textPosition);
+                needsLineBreak = true;
+                continue;
+            }
+
             if (segment.Type == AvaQQMessageSegmentType.ForwardedMessage &&
                 segment.ForwardedMessage is not null)
             {
@@ -301,6 +373,16 @@ public static class MessageInlineRenderer
         return textBlock.GetMediaSegmentAt(position, MessageMediaKind.ForwardedMessage);
     }
 
+    public static AvaQQMessageSegment? GetVoiceSegmentAt(MessageSelectableTextBlock textBlock, Point position)
+    {
+        return textBlock.GetMediaSegmentAt(position, MessageMediaKind.Voice);
+    }
+
+    public static AvaQQMessageSegment? GetVideoSegmentAt(MessageSelectableTextBlock textBlock, Point position)
+    {
+        return textBlock.GetMediaSegmentAt(position, MessageMediaKind.Video);
+    }
+
     public static AvaQQMessageSegment? GetImageSegmentByBounds(Visual root, Point position)
     {
         foreach (var control in root.GetVisualDescendants().OfType<Control>())
@@ -347,6 +429,46 @@ public static class MessageInlineRenderer
         {
             var segment = control.DataContext as AvaQQMessageSegment;
             if (segment?.Type != AvaQQMessageSegmentType.SharedContact)
+                continue;
+
+            var topLeft = control.TranslatePoint(new Point(0, 0), root);
+            if (topLeft is null)
+                continue;
+
+            var bounds = new Rect(topLeft.Value, control.Bounds.Size);
+            if (bounds.Contains(position))
+                return segment;
+        }
+
+        return null;
+    }
+
+    public static AvaQQMessageSegment? GetVoiceSegmentByBounds(Visual root, Point position)
+    {
+        foreach (var control in root.GetVisualDescendants().OfType<Control>())
+        {
+            var segment = control.DataContext as AvaQQMessageSegment;
+            if (segment?.Type != AvaQQMessageSegmentType.Voice)
+                continue;
+
+            var topLeft = control.TranslatePoint(new Point(0, 0), root);
+            if (topLeft is null)
+                continue;
+
+            var bounds = new Rect(topLeft.Value, control.Bounds.Size);
+            if (bounds.Contains(position))
+                return segment;
+        }
+
+        return null;
+    }
+
+    public static AvaQQMessageSegment? GetVideoSegmentByBounds(Visual root, Point position)
+    {
+        foreach (var control in root.GetVisualDescendants().OfType<Control>())
+        {
+            var segment = GetVideoSegment(control);
+            if (segment is null)
                 continue;
 
             var topLeft = control.TranslatePoint(new Point(0, 0), root);
@@ -554,6 +676,72 @@ public static class MessageInlineRenderer
         textPosition++;
     }
 
+    private static void AddVoice(
+        List<MessageRenderRun> runs,
+        List<MessageCopySpan> copySpans,
+        List<MessageMediaSpan> mediaSpans,
+        StringBuilder logicalText,
+        AvaQQMessageSegment segment,
+        ref int textPosition)
+    {
+        var copyPart = MessageCopyPart.CreateText(segment.DisplayText, segment.Tone);
+        var media = MessageMediaRun.Voice(
+            textPosition,
+            segment,
+            copyPart,
+            GetVoiceCardWidth(segment),
+            VoiceCardHeight,
+            segment.IsVoiceAvailable);
+
+        runs.Add(MessageRenderRun.CreateMedia(media));
+        copySpans.Add(MessageCopySpan.Placeholder(textPosition, copyPart));
+        mediaSpans.Add(new MessageMediaSpan(textPosition, 1, media));
+        logicalText.Append(PlaceholderChar);
+        textPosition++;
+    }
+
+    private static void AddVideo(
+        List<MessageRenderRun> runs,
+        List<MessageCopySpan> copySpans,
+        List<MessageMediaSpan> mediaSpans,
+        StringBuilder logicalText,
+        AvaQQMessageSegment segment,
+        ref int textPosition)
+    {
+        var isDisplayable = segment.IsVideoCoverAvailable &&
+                            LocalMessageImage.CanDisplayImage(segment.VideoCoverLocalPath);
+        var (width, height) = GetImageDisplaySize(segment.ImageWidth, segment.ImageHeight);
+        if (!isDisplayable && !HasKnownImageSize(segment))
+        {
+            width = BrokenImageMinWidth;
+            height = BrokenImageMinHeight;
+        }
+
+        var copyPart = MessageCopyPart.CreateFile(
+            segment.DisplayText,
+            segment.IsVideoAvailable ? segment.VideoLocalPath : null,
+            segment.Tone);
+        var media = MessageMediaRun.Video(textPosition, segment, copyPart, width, height, isDisplayable);
+
+        runs.Add(MessageRenderRun.CreateMedia(media));
+        copySpans.Add(MessageCopySpan.Placeholder(textPosition, copyPart));
+        mediaSpans.Add(new MessageMediaSpan(textPosition, 1, media));
+        logicalText.Append(PlaceholderChar);
+        textPosition++;
+    }
+
+    private static double GetVoiceCardWidth(AvaQQMessageSegment segment)
+    {
+        var text = segment.IsVoiceAvailable
+            ? segment.VoiceDurationMilliseconds is > 0
+                ? AvaQQMessageSegment.FormatVoiceDuration(segment.VoiceDurationMilliseconds.Value)
+                : "语音"
+            : "语音未找到";
+
+        var textWidth = text.Sum(ch => ch < 128 ? 7d : 13d);
+        return Math.Clamp(VoiceCardBaseWidth + textWidth, VoiceCardMinWidth, VoiceCardMaxWidth);
+    }
+
     private static void AddSharedContact(
         List<MessageRenderRun> runs,
         List<MessageCopySpan> copySpans,
@@ -605,9 +793,120 @@ public static class MessageInlineRenderer
         return media.Kind switch
         {
             MessageMediaKind.Image => CreateImageControl(media),
+            MessageMediaKind.Voice => CreateVoiceControl(media),
+            MessageMediaKind.Video => CreateVideoControl(media),
             MessageMediaKind.ForwardedMessage => CreateForwardedMessageControl(media),
             MessageMediaKind.SharedContact => CreateSharedContactControl(media),
             _ => CreateFaceControl(media),
+        };
+    }
+
+    private static Control CreateVoiceControl(MessageMediaRun media)
+    {
+        var segment = media.Segment;
+        var control = new VoiceMessageInline
+        {
+            Segment = segment,
+            Margin = new Thickness(0),
+            DataContext = segment,
+            IsHitTestVisible = false,
+            Width = media.Width,
+            Height = media.Height,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        SetVoiceSegment(control, segment);
+
+        return control;
+    }
+
+    private static Control CreateVideoControl(MessageMediaRun media)
+    {
+        if (media.Segment is null || !media.IsDisplayable)
+        {
+            return CreateBrokenImageControl(media);
+        }
+
+        var overlay = media.Segment.IsVideoAvailable
+            ? CreateVideoPlayOverlay()
+            : CreateUnavailableVideoOverlay();
+
+        var control = new Border
+        {
+            Width = media.Width,
+            Height = media.Height,
+            MaxWidth = media.Width,
+            MaxHeight = media.Height,
+            Margin = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            ClipToBounds = true,
+            UseLayoutRounding = true,
+            IsHitTestVisible = false,
+            Child = new Grid
+            {
+                Width = media.Width,
+                Height = media.Height,
+                Children =
+                {
+                    new LocalMessageImage
+                    {
+                        SourcePath = media.SourcePath,
+                        Width = media.Width,
+                        Height = media.Height,
+                        MaxWidth = media.Width,
+                        MaxHeight = media.Height,
+                        Stretch = Stretch.UniformToFill,
+                        IsHitTestVisible = false,
+                    },
+                    overlay,
+                },
+            },
+        };
+        RenderOptions.SetBitmapInterpolationMode(control, BitmapInterpolationMode.HighQuality);
+        SetVideoSegment(control, media.Segment);
+        return control;
+    }
+
+    private static Control CreateVideoPlayOverlay()
+    {
+        return new Border
+        {
+            Width = 42,
+            Height = 42,
+            CornerRadius = new CornerRadius(21),
+            Background = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = new TextBlock
+            {
+                Text = "▶",
+                FontSize = 20,
+                Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(2, 0, 0, 1),
+                IsHitTestVisible = false,
+            },
+        };
+    }
+
+    private static Control CreateUnavailableVideoOverlay()
+    {
+        return new Border
+        {
+            Padding = new Thickness(8, 4),
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.FromArgb(190, 127, 29, 29)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = new TextBlock
+            {
+                Text = "视频文件未找到",
+                FontSize = 12,
+                Foreground = Brushes.White,
+                IsHitTestVisible = false,
+            },
         };
     }
 
@@ -693,7 +992,7 @@ public static class MessageInlineRenderer
         };
         Grid.SetRow(content, 1);
 
-        return new Border
+        var control = new Border
         {
             Width = width,
             Height = height,
@@ -716,6 +1015,7 @@ public static class MessageInlineRenderer
                 },
             },
         };
+        return control;
     }
 
     private static Control CreateForwardedMessageControl(MessageMediaRun media)
@@ -1188,7 +1488,18 @@ public sealed record MessageMediaRun(
         double height,
         bool isDisplayable)
     {
-        return new MessageMediaRun(MessageMediaKind.Image, start, segment.ImageLocalPath, segment, copyPart, width, height, height, isDisplayable);
+        return new MessageMediaRun(MessageMediaKind.Image, start, segment.ImageLocalPath, segment, copyPart, width, height, Math.Round(height / 2, 2), isDisplayable);
+    }
+
+    public static MessageMediaRun Video(
+        int start,
+        AvaQQMessageSegment segment,
+        MessageCopyPart copyPart,
+        double width,
+        double height,
+        bool isDisplayable)
+    {
+        return new MessageMediaRun(MessageMediaKind.Video, start, segment.VideoCoverLocalPath, segment, copyPart, width, height, Math.Round(height / 2, 2), isDisplayable);
     }
 
     public static MessageMediaRun ForwardedMessage(
@@ -1210,12 +1521,25 @@ public sealed record MessageMediaRun(
     {
         return new MessageMediaRun(MessageMediaKind.SharedContact, start, null, segment, copyPart, width, height, height, true);
     }
+
+    public static MessageMediaRun Voice(
+        int start,
+        AvaQQMessageSegment segment,
+        MessageCopyPart copyPart,
+        double width,
+        double height,
+        bool isDisplayable)
+    {
+        return new MessageMediaRun(MessageMediaKind.Voice, start, segment.VoiceLocalPath, segment, copyPart, width, height, Math.Round(height * 0.78, 2), isDisplayable);
+    }
 }
 
 public enum MessageMediaKind
 {
     Face,
     Image,
+    Voice,
+    Video,
     ForwardedMessage,
     SharedContact,
 }

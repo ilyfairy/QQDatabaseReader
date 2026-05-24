@@ -124,22 +124,32 @@ public class QQAndroidMessageReader : IQQDatabase
 
 public partial class QQMessageReader
 {
-
-
     public static QQMessageContent ParseMessage(byte[] protobufMessage)
     {
-        var root = new CodedInputStream(protobufMessage);
         QQMessageSegment? firstMessage = null;
         List<QQMessageSegment>? messages = null;
+        var position = 0;
 
-        while (!root.IsAtEnd)
+        while (position < protobufMessage.Length)
         {
-            int key = WireFormat.GetTagFieldNumber(root.ReadTag());
-
-            if (key != 40800)
+            if (!TryReadVarint32(protobufMessage, ref position, out var tag))
                 break;
 
-            var currentMessage = ParseMessageSegment(root.ReadBytes().ToByteArray());
+            int key = WireFormat.GetTagFieldNumber(tag);
+
+            if (key != 40800 || WireFormat.GetTagWireType(tag) != WireFormat.WireType.LengthDelimited)
+                break;
+
+            if (!TryReadVarint32(protobufMessage, ref position, out var segmentLength))
+                break;
+
+            var remaining = protobufMessage.Length - position;
+            var safeLength = segmentLength <= remaining ? (int)segmentLength : Math.Max(0, remaining);
+            if (safeLength == 0)
+                break;
+
+            var currentMessage = ParseMessageSegment(protobufMessage.AsSpan(position, safeLength).ToArray());
+            position += safeLength;
 
             if (firstMessage == null)
             {
@@ -172,6 +182,28 @@ public partial class QQMessageReader
         //};
     }
 
+    private static bool TryReadVarint32(ReadOnlySpan<byte> data, ref int position, out uint value)
+    {
+        value = 0;
+        var result = 0u;
+        var shift = 0;
+
+        while (position < data.Length && shift < 32)
+        {
+            var current = data[position++];
+            result |= (uint)(current & 0x7F) << shift;
+            if ((current & 0x80) == 0)
+            {
+                value = result;
+                return true;
+            }
+
+            shift += 7;
+        }
+
+        return false;
+    }
+
     public static QQMessageSegment ParseMessageSegment(byte[] segmentMessage)
     {
         var currentMessage = new QQMessageSegment();
@@ -179,7 +211,17 @@ public partial class QQMessageReader
 
         while (!input.IsAtEnd)
         {
-            uint tag = input.ReadTag();
+            uint tag;
+            try
+            {
+                tag = input.ReadTag();
+            }
+            catch (Exception ex)
+            {
+                currentMessage.ParseError = ex.Message;
+                break;
+            }
+
             if (tag == 0)
                 break;
 
@@ -213,6 +255,10 @@ public partial class QQMessageReader
             {
                 currentMessage.ImageFileName = input.ReadBytes().ToStringUtf8();
             }
+            else if (key == 45405)
+            {
+                currentMessage.MediaFileSize = input.ReadInt64();
+            }
             else if (key == 45406)
             {
                 currentMessage.ImageMd5 = input.ReadBytes().ToByteArray();
@@ -224,6 +270,14 @@ public partial class QQMessageReader
             else if (key == 45412)
             {
                 currentMessage.ImageHeight = input.ReadInt32();
+            }
+            else if (key == 45415)
+            {
+                currentMessage.VideoDurationMilliseconds = input.ReadInt32();
+            }
+            else if (key == 45422)
+            {
+                currentMessage.VideoCoverFileName = input.ReadBytes().ToStringUtf8();
             }
             else if (key == 45503)
             {
@@ -1218,6 +1272,7 @@ public partial class QQMessageReader
                !string.IsNullOrWhiteSpace(segment.AltText) ||
                segment.FaceId is not null ||
                segment.SystemHint is not null ||
+               segment.MediaFileSize is > 0 ||
                !string.IsNullOrWhiteSpace(segment.ImageFileName) ||
                segment.ImageMd5 is { Length: > 0 } ||
                !string.IsNullOrWhiteSpace(segment.ImageLocalPath) ||
@@ -1687,9 +1742,19 @@ public class QQMessageSegment
     public string? ImageFileName { get; set; }
 
     /// <summary>
+    /// 45422. 视频封面文件名。
+    /// </summary>
+    public string? VideoCoverFileName { get; set; }
+
+    /// <summary>
     /// 45406
     /// </summary>
     public byte[]? ImageMd5 { get; set; }
+
+    /// <summary>
+    /// 45405. 语音消息里是本地 Ptt 文件大小。
+    /// </summary>
+    public long? MediaFileSize { get; set; }
 
     /// <summary>
     /// 45503
@@ -1735,6 +1800,11 @@ public class QQMessageSegment
     /// 45412
     /// </summary>
     public int? ImageHeight { get; set; }
+
+    /// <summary>
+    /// 45415. 视频时长，单位是毫秒。
+    /// </summary>
+    public int? VideoDurationMilliseconds { get; set; }
 
     /// <summary>
     /// 45003
@@ -1817,6 +1887,12 @@ public class QQMessageSegment
     public bool IsQQFace => Type == MessageSegmentType.Emoji && FaceId is not null;
     public bool IsMarketFace => Type == MessageSegmentType.MarketFace;
     public bool IsImage => Type is MessageSegmentType.Image;
+    public bool IsVoice => Type == MessageSegmentType.Record;
+    public bool IsVideo => Type == MessageSegmentType.Video;
+    public string? VoiceFileName => IsVoice ? ImageFileName : null;
+    public byte[]? VoiceMd5 => IsVoice ? ImageMd5 : null;
+    public string? VideoFileName => IsVideo ? ImageFileName : null;
+    public byte[]? VideoMd5 => IsVideo ? ImageMd5 : null;
 
     public void AppendAltText(string text)
     {
