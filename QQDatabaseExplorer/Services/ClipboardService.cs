@@ -119,9 +119,6 @@ public class ClipboardService : IClipboardService
         item.Set(DataFormat.Bitmap, () => TryCreateBitmap(imagePath));
         transfer.Add(item);
 
-        if (await topLevel.StorageProvider.TryGetFileFromPathAsync(imagePath) is { } storageFile)
-            transfer.Add(DataTransferItem.CreateFile(storageFile));
-
         await clipboard.SetDataAsync(transfer);
         await clipboard.FlushAsync();
     }
