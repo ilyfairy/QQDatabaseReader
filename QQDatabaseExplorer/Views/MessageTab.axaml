@@ -156,6 +156,7 @@
                                         Width="40"
                                         Height="40"
                                         VerticalAlignment="Center"
+                                        SourcePath="{Binding AvatarLocalPath}"
                                         SourceUrl="{Binding AvatarUrl}"
                                         Stretch="UniformToFill" />
 
@@ -350,6 +351,7 @@
                                             CornerRadius="18" />
 
                                         <controls:AvatarImage
+                                            SourcePath="{Binding AvatarLocalPath}"
                                             SourceUrl="{Binding AvatarUrl}"
                                             Stretch="UniformToFill" />
                                     </Grid>

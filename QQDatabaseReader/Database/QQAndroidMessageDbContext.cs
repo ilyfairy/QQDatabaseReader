@@ -122,6 +122,9 @@ public class AndroidRecentContact
     [Column("40033")]
     public uint Uin2 { get; set; }
 
+    /// <summary>
+    /// 最近联系人头像本地缓存路径。群聊通常是群头像，私聊通常是好友头像。
+    /// </summary>
     [Column("41110")]
     public string? GroupAvatar { get; set; }
 

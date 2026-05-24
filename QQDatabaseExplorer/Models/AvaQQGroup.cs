@@ -66,6 +66,9 @@ public partial class AvaQQGroup : ObservableObject
         _ => null,
     };
 
+    [ObservableProperty]
+    public partial string? AvatarLocalPath { get; set; }
+
     public string LatestMessageTimeText
     {
         get

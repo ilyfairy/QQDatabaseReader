@@ -26,6 +26,7 @@ public partial class AvaQQMessage : ObservableObject
     public long PrivateConversationId { get; set; }
     public uint PrivateUin { get; set; }
     public string? PeerUid { get; set; }
+    public string? CachedAvatarLocalPath { get; set; }
     public string? CachedAvatarUrl { get; set; }
     public bool IsRecalledMessage { get; set; }
     public bool IsSystemHint { get; set; }
@@ -65,6 +66,8 @@ public partial class AvaQQMessage : ObservableObject
         : SenderId == 0
             ? null
             : $"http://q1.qlogo.cn/g?b=qq&nk={SenderId}&s=100";
+
+    public string? AvatarLocalPath => CachedAvatarLocalPath;
 
     public bool IsForwardedCardOnly =>
         Segments.Count == 1 && Segments[0].Type == AvaQQMessageSegmentType.ForwardedMessage;

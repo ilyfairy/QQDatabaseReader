@@ -37,6 +37,8 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly HashSet<string> _selectedConversationKeys = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<uint, string>> _conversationSenderNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<long, MessageSenderInfo>> _conversationMessageSenderInfos = new(StringComparer.Ordinal);
+    private readonly Dictionary<uint, string> _localAvatarPathsByUin = new();
+    private readonly Dictionary<string, string> _localAvatarPathsByUid = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MessageFilterCriteria> _conversationMessageFilters = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _messageDatabaseQueryLock = new(1, 1);
     private ProfileInfoNameCache? _profileInfoNames;
@@ -2201,6 +2203,7 @@ public partial class MessageTabViewModel : ViewModelBase
             Name = senderName,
             MessageTime = item.MessageTime,
             SenderId = item.SenderId,
+            CachedAvatarLocalPath = ResolveMessageAvatarLocalPath(item, conversation),
             ProtobufContent = item.Content,
             IsHoverTimeVisible = AlwaysShowMessageTime,
         };
@@ -2618,6 +2621,30 @@ public partial class MessageTabViewModel : ViewModelBase
         }
 
         return false;
+    }
+
+    private string? ResolveMessageAvatarLocalPath(MessageRecord item, AvaQQGroup conversation)
+    {
+        if (conversation.ConversationType == AvaConversationType.Private &&
+            IsPrivatePeerMessage(item, conversation) &&
+            !string.IsNullOrWhiteSpace(conversation.AvatarLocalPath))
+        {
+            return conversation.AvatarLocalPath;
+        }
+
+        if (item.SenderId != 0 &&
+            _localAvatarPathsByUin.TryGetValue(item.SenderId, out var uinAvatarPath))
+        {
+            return uinAvatarPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.SenderUid) &&
+            _localAvatarPathsByUid.TryGetValue(item.SenderUid, out var uidAvatarPath))
+        {
+            return uidAvatarPath;
+        }
+
+        return null;
     }
 
     private static bool IsPrivatePeerMessage(AvaQQMessage item, AvaQQGroup conversation)
@@ -4625,6 +4652,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 null,
                 null,
                 string.Empty,
+                null,
                 0)));
 
         items.AddRange(messageDatabase.DbContext.PrivateMessages
@@ -4647,6 +4675,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 conversationInfo.PrivateUid,
                 null,
                 string.Empty,
+                null,
                 conversationInfo.LastTime)));
 
         return items;
@@ -4671,6 +4700,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 null,
                 null,
                 string.Empty,
+                null,
                 0)));
 
         items.AddRange(messageDatabase.DbContext.PrivateMessages
@@ -4693,6 +4723,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 conversationInfo.PrivateUid,
                 null,
                 string.Empty,
+                null,
                 conversationInfo.LastTime)));
 
         return items;
@@ -4720,6 +4751,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 : FirstNonEmpty(item.DisplayName, conversation.GroupName);
             if (!string.IsNullOrWhiteSpace(item.LatestMessageText))
                 conversation.LatestMessageText = item.LatestMessageText;
+            ApplyConversationAvatarLocalPath(conversation, item);
             if (item.LastTime != 0)
                 conversation.LatestMessageTime = item.LastTime;
             conversation.IsSelected = _selectedConversationKeys.Contains(conversation.ConversationKey);
@@ -4737,7 +4769,30 @@ public partial class MessageTabViewModel : ViewModelBase
             contact.PrivateUid,
             contact.DisplayName,
             CreateLatestMessageText(contact),
+            ResolveRecentAvatarLocalPath(contact.AvatarPath),
             contact.LastTime);
+    }
+
+    private string? ResolveRecentAvatarLocalPath(string? avatarPath)
+    {
+        return AvatarCacheResolver.ResolveStoredAvatarPath(avatarPath, _qqDatabaseService.NtDataPath);
+    }
+
+    private void ApplyConversationAvatarLocalPath(AvaQQGroup conversation, ConversationLoadItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.AvatarLocalPath))
+            return;
+
+        conversation.AvatarLocalPath = item.AvatarLocalPath;
+
+        if (conversation.ConversationType != AvaConversationType.Private)
+            return;
+
+        if (item.PrivateUin != 0)
+            _localAvatarPathsByUin[item.PrivateUin] = item.AvatarLocalPath;
+
+        if (!string.IsNullOrWhiteSpace(item.PrivateUid))
+            _localAvatarPathsByUid[item.PrivateUid] = item.AvatarLocalPath;
     }
 
     private void LoadPCQQMessageConversations(PCQQMessageReader messageDatabase)
@@ -4897,6 +4952,7 @@ public partial class MessageTabViewModel : ViewModelBase
                     v.SendNickName,
                     v.Uin2,
                     v.NtUid,
+                    v.GroupAvatar,
                 })
                 .ToList();
 
@@ -4949,6 +5005,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.SendremarkName,
                             contact.SendMemberName,
                             contact.SendNickName,
+                            contact.GroupAvatar,
                             latestMessage);
                     }
 
@@ -4977,6 +5034,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.SendremarkName,
                             contact.SendMemberName,
                             contact.SendNickName,
+                            contact.GroupAvatar,
                             privateMessage.LatestMessage);
                     }
 
@@ -5021,6 +5079,7 @@ public partial class MessageTabViewModel : ViewModelBase
                     v.SendNickName,
                     v.Uin2,
                     v.NtUid,
+                    v.GroupAvatar,
                 })
                 .ToList();
 
@@ -5073,6 +5132,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.SendremarkName,
                             contact.SendMemberName,
                             contact.SendNickName,
+                            contact.GroupAvatar,
                             latestMessage);
                     }
 
@@ -5101,6 +5161,7 @@ public partial class MessageTabViewModel : ViewModelBase
                             contact.SendremarkName,
                             contact.SendMemberName,
                             contact.SendNickName,
+                            contact.GroupAvatar,
                             privateMessage.LatestMessage);
                     }
 
@@ -5788,6 +5849,7 @@ public partial class MessageTabViewModel : ViewModelBase
         string? SendremarkName,
         string? SendMemberName,
         string? SendNickName,
+        string? AvatarPath,
         MessageRecord? LatestMessage)
     {
         public string ConversationKey => ConversationType switch
@@ -5806,6 +5868,7 @@ public partial class MessageTabViewModel : ViewModelBase
         string? PrivateUid,
         string? DisplayName,
         string LatestMessageText,
+        string? AvatarLocalPath,
         int LastTime);
 
     private sealed record GroupInfoLoadItem(uint GroupId, string? GroupName);
@@ -5864,6 +5927,7 @@ public partial class MessageTabViewModel : ViewModelBase
             _messages.Clear();
             _conversationSenderNames.Clear();
             _conversationMessageSenderInfos.Clear();
+            ClearAvatarPathCaches();
             if (_qqDatabaseService.GroupInfoDatabase is null)
             {
                 _groups.Clear();
@@ -5877,6 +5941,7 @@ public partial class MessageTabViewModel : ViewModelBase
             _messages.Clear();
             _conversationSenderNames.Clear();
             _conversationMessageSenderInfos.Clear();
+            ClearAvatarPathCaches();
             foreach (var group in _groups
                          .Where(static group => group.ConversationType is AvaConversationType.PCQQGroup or AvaConversationType.PCQQPrivate)
                          .ToArray())
@@ -5933,6 +5998,12 @@ public partial class MessageTabViewModel : ViewModelBase
             .OrderByDescending(group => group.LatestMessageTime)
             .ThenBy(group => group.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ToArray());
+    }
+
+    private void ClearAvatarPathCaches()
+    {
+        _localAvatarPathsByUin.Clear();
+        _localAvatarPathsByUid.Clear();
     }
 
     private void ApplyFilteredGroups(IReadOnlyList<AvaQQGroup> targetGroups)
