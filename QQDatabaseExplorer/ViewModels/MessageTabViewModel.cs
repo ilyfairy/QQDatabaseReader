@@ -22,6 +22,8 @@ namespace QQDatabaseExplorer.ViewModels;
 public partial class MessageTabViewModel : ViewModelBase
 {
     private const long AndroidMobileQQImageCacheCrc64Polynomial = -7661587058870466123L;
+    private static readonly IReadOnlyDictionary<ReplyTargetKey, MessageRecord> EmptyReplyTargetMessages =
+        new Dictionary<ReplyTargetKey, MessageRecord>();
     private static readonly Lazy<long[]> AndroidMobileQQImageCacheCrc64Table = new(CreateAndroidMobileQQImageCacheCrc64Table);
 
     private static readonly Regex UrlRegex = new(
@@ -104,6 +106,8 @@ public partial class MessageTabViewModel : ViewModelBase
     }
 
     public bool AlwaysShowMessageTime => _appSettingsService.AlwaysShowMessageTime;
+
+    public bool HighlightMentions => _appSettingsService.HighlightMentions;
 
     public void ScrollToBottom()
     {
@@ -1068,7 +1072,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
             CacheSenderInfos(conversation, page);
             var avaMessages = await Task.Run(() => page.Messages
-                .Select(message => CreateAvaQQMessage(message, conversation))
+                .Select(message => CreateAvaQQMessage(message, conversation, page.ReplyTargetMessages))
                 .ToArray());
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1117,7 +1121,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
             CacheSenderInfos(conversation, page);
             var avaMessages = await Task.Run(() => page.Messages
-                .Select(message => CreateAvaQQMessage(message, conversation))
+                .Select(message => CreateAvaQQMessage(message, conversation, page.ReplyTargetMessages))
                 .ToArray());
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1161,14 +1165,16 @@ public partial class MessageTabViewModel : ViewModelBase
                 SelectedGroup?.ConversationKey != conversation.ConversationKey)
                 return;
 
-            var (olderMessages, targetAndNewerMessages, referencedMessages) = await RunMessageDatabaseQueryAsync(() =>
+            var (olderMessages, targetAndNewerMessages, referencedMessages, replyTargetMessages) = await RunMessageDatabaseQueryAsync(() =>
             {
                 var older = LoadOlderMessages(conversation, messageSeq, messageId, JumpContextPageSize);
                 var targetAndNewer = LoadTargetAndNewerMessages(conversation, messageSeq, messageId);
+                var messages = older.Concat(targetAndNewer).DistinctBy(message => message.MessageId).ToArray();
                 var referenced = LoadReferencedPrivateReplySenderInfos(
                     conversation,
-                    older.Concat(targetAndNewer).DistinctBy(message => message.MessageId).ToArray());
-                return (older, targetAndNewer, referenced);
+                    messages);
+                var replyTargets = LoadReferencedReplyTargetMessages(conversation, messages);
+                return (older, targetAndNewer, referenced, replyTargets);
             });
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1183,9 +1189,9 @@ public partial class MessageTabViewModel : ViewModelBase
                 .ThenBy(message => message.MessageId)
                 .ToList();
 
-            CacheSenderInfos(conversation, messages, referencedMessages);
+            CacheSenderInfos(conversation, messages, referencedMessages.Concat(replyTargetMessages.Values).ToArray());
             var avaMessages = await Task.Run(() => messages
-                .Select(message => CreateAvaQQMessage(message, conversation))
+                .Select(message => CreateAvaQQMessage(message, conversation, replyTargetMessages))
                 .ToArray());
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1238,7 +1244,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
             CacheSenderInfos(conversation, page);
             var avaMessages = await Task.Run(() => page.Messages
-                .Select(message => CreateAvaQQMessage(message, conversation))
+                .Select(message => CreateAvaQQMessage(message, conversation, page.ReplyTargetMessages))
                 .ToArray());
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1293,7 +1299,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
             CacheSenderInfos(conversation, page);
             var avaMessages = await Task.Run(() => page.Messages
-                .Select(message => CreateAvaQQMessage(message, conversation))
+                .Select(message => CreateAvaQQMessage(message, conversation, page.ReplyTargetMessages))
                 .ToArray());
 
             if (loadVersion != _initialMessageLoadVersion ||
@@ -1948,12 +1954,18 @@ public partial class MessageTabViewModel : ViewModelBase
         Func<List<MessageRecord>> loadMessages)
     {
         var messages = loadMessages();
-        return new MessagePage(messages, LoadReferencedPrivateReplySenderInfos(conversation, messages));
+        return new MessagePage(
+            messages,
+            LoadReferencedPrivateReplySenderInfos(conversation, messages),
+            LoadReferencedReplyTargetMessages(conversation, messages));
     }
 
     private void CacheSenderInfos(AvaQQGroup conversation, MessagePage page)
     {
-        CacheSenderInfos(conversation, page.Messages, page.ReferencedMessages);
+        CacheSenderInfos(
+            conversation,
+            page.Messages,
+            page.ReferencedMessages.Concat(page.ReplyTargetMessages.Values).ToArray());
     }
 
     private void CacheSenderInfos(
@@ -2105,6 +2117,70 @@ public partial class MessageTabViewModel : ViewModelBase
                 : [];
     }
 
+    private IReadOnlyDictionary<ReplyTargetKey, MessageRecord> LoadReferencedReplyTargetMessages(
+        AvaQQGroup conversation,
+        IReadOnlyList<MessageRecord> messages)
+    {
+        if (!HasNtMessageDatabase)
+            return EmptyReplyTargetMessages;
+
+        var replies = messages
+            .Select(message => new
+            {
+                Message = message,
+                Reply = TryParseMessageContent(message.Content)?
+                    .Segments
+                    .Select(segment => segment.Reply)
+                    .FirstOrDefault(reply => reply is not null),
+            })
+            .Where(item => item.Reply is not null)
+            .Take(PageSize)
+            .ToArray();
+
+        if (replies.Length == 0)
+            return EmptyReplyTargetMessages;
+
+        var result = new Dictionary<ReplyTargetKey, MessageRecord>();
+        foreach (var item in replies)
+        {
+            var reply = item.Reply!;
+            if (ResolveReplyTargetConversation(conversation, item.Message, reply) is not { } targetConversation)
+                continue;
+
+            var key = CreateReplyTargetKey(
+                targetConversation.ConversationType,
+                targetConversation.GroupId,
+                targetConversation.PrivateConversationId,
+                reply);
+            if (result.ContainsKey(key))
+                continue;
+
+            var target = targetConversation.ConversationType switch
+            {
+                AvaConversationType.Group => ResolveJumpTarget(
+                    targetConversation.GroupId,
+                    GetReplyMessageIdCandidates(reply),
+                    GetReplyMessageRandomCandidates(reply),
+                    GetReplyMessageSeqCandidates(reply, targetConversation.ConversationType),
+                    null),
+                AvaConversationType.Private => ResolvePrivateJumpTarget(
+                    targetConversation.PrivateConversationId,
+                    GetReplyMessageIdCandidates(reply),
+                    GetReplyMessageRandomCandidates(reply),
+                    GetReplyMessageSeqCandidates(reply, targetConversation.ConversationType),
+                    null),
+                _ => null,
+            };
+
+            if (target is not null)
+            {
+                result[key] = target;
+            }
+        }
+
+        return result.Count == 0 ? EmptyReplyTargetMessages : result;
+    }
+
     private async Task<T> RunMessageDatabaseQueryAsync<T>(Func<T> query)
     {
         await _messageDatabaseQueryLock.WaitAsync();
@@ -2137,7 +2213,10 @@ public partial class MessageTabViewModel : ViewModelBase
     /// <summary>
     /// 从数据库消息创建 AvaQQMessage
     /// </summary>
-    private AvaQQMessage CreateAvaQQMessage(MessageRecord item, AvaQQGroup conversation)
+    private AvaQQMessage CreateAvaQQMessage(
+        MessageRecord item,
+        AvaQQGroup conversation,
+        IReadOnlyDictionary<ReplyTargetKey, MessageRecord>? replyTargetMessages = null)
     {
         if (IsPCQQConversation(conversation))
         {
@@ -2165,7 +2244,12 @@ public partial class MessageTabViewModel : ViewModelBase
                 senderName);
         }
 
-        var systemHint = CreateSystemHintMessage(content, conversation.GroupId);
+        var systemHint = CreateSystemHintMessage(
+            content,
+            conversation.GroupId,
+            item.SenderId,
+            item.SenderUid,
+            senderName);
         var reactions = CreateMessageReactions(item.MessageReactions);
         var reply = CreateReplyMessage(
             item,
@@ -2174,6 +2258,7 @@ public partial class MessageTabViewModel : ViewModelBase
             senderName,
             senderNames,
             messageSenderInfos,
+            replyTargetMessages ?? EmptyReplyTargetMessages,
             mediaContext);
 
         if (systemHint is null && !HasDisplayContent(segments))
@@ -2206,6 +2291,7 @@ public partial class MessageTabViewModel : ViewModelBase
             CachedAvatarLocalPath = ResolveMessageAvatarLocalPath(item, conversation),
             ProtobufContent = item.Content,
             IsHoverTimeVisible = AlwaysShowMessageTime,
+            HighlightMentions = HighlightMentions,
         };
 
         if (systemHint is not null && recalledMessage is null)
@@ -2345,7 +2431,12 @@ public partial class MessageTabViewModel : ViewModelBase
         }
     }
 
-    private SystemHintDisplay? CreateSystemHintMessage(QQMessageContent? content, uint groupId)
+    private SystemHintDisplay? CreateSystemHintMessage(
+        QQMessageContent? content,
+        uint groupId,
+        uint senderId,
+        string? senderUid,
+        string? senderName)
     {
         if (content is null)
             return null;
@@ -2358,33 +2449,48 @@ public partial class MessageTabViewModel : ViewModelBase
         if (hint is null)
             return null;
 
-        var sourceName = FirstNonEmpty(
-            hint.SourceName,
-            hint.Participants.FirstOrDefault()?.Nickname).Trim();
-        var sourceNtUid = hint.Participants.FirstOrDefault()?.Uid.Trim() ?? string.Empty;
+        var sourceParticipant = hint.Participants.FirstOrDefault();
+        var sourceNtUid = CleanSystemHintText(sourceParticipant?.Uid);
         var sourceUin = string.Empty;
         var sourceIsUser = hint.SourceIsUser && hint.Participants.Count > 0;
         if (hint.Participants.Count > 0)
         {
-            sourceUin = (hint.GetProperty("uin_str1") ?? string.Empty).Trim();
+            sourceUin = CleanSystemHintText(hint.GetProperty("uin_str1"));
             if (string.IsNullOrWhiteSpace(sourceUin))
             {
                 sourceUin = ResolveSystemHintSourceUin(groupId, sourceNtUid);
             }
         }
+        var sourceMatchesMessageSender = SystemHintParticipantMatchesMessageSender(
+            sourceNtUid,
+            sourceUin,
+            senderUid,
+            senderId);
+        var sourceName = ResolveSystemHintParticipantName(
+            groupId,
+            sourceNtUid,
+            sourceUin,
+            hint.SourceName,
+            sourceParticipant?.Nickname,
+            sourceMatchesMessageSender ? senderName : null);
 
-        var targetName = hint.Participants.Count >= 2
-            ? hint.Participants[1].Nickname.Trim()
-            : (hint.TargetName ?? string.Empty).Trim();
+        var targetParticipant = hint.Participants.Count >= 2 ? hint.Participants[1] : null;
         var targetIsUser = hint.Participants.Count >= 2;
 
-        var targetUin = (hint.GetProperty("uin_str2") ?? string.Empty).Trim();
+        var targetNtUid = CleanSystemHintText(targetParticipant?.Uid);
+        var targetUin = CleanSystemHintText(hint.GetProperty("uin_str2"));
         if (string.IsNullOrWhiteSpace(targetUin) && hint.Participants.Count >= 2)
         {
-            targetUin = ResolveSystemHintSourceUin(groupId, hint.Participants[1].Uid.Trim());
+            targetUin = ResolveSystemHintSourceUin(groupId, targetNtUid);
         }
+        var targetName = ResolveSystemHintParticipantName(
+            groupId,
+            targetNtUid,
+            targetUin,
+            targetParticipant?.Nickname,
+            hint.TargetName);
 
-        var action = (hint.Action ?? string.Empty).Trim();
+        var action = CleanSystemHintText(hint.Action);
         var suffix = hint.Suffix ?? string.Empty;
         if (string.IsNullOrWhiteSpace(sourceName) || string.IsNullOrWhiteSpace(action))
         {
@@ -2402,9 +2508,7 @@ public partial class MessageTabViewModel : ViewModelBase
                 ? $"[{face.Name}]"
                 : $"[QQ表情:{hint.FaceId}]"
             : string.Empty;
-        var displayText = !string.IsNullOrWhiteSpace(hint.DisplayText)
-            ? hint.DisplayText.Trim()
-            : $"{sourceName}{action}{targetName}{faceDisplayText}{suffix}";
+        var displayText = $"{sourceName}{action}{targetName}{faceDisplayText}{suffix}";
         return new SystemHintDisplay(
             sourceName,
             sourceUin,
@@ -2419,6 +2523,96 @@ public partial class MessageTabViewModel : ViewModelBase
             hint.FaceId,
             face?.AssetPath,
             displayText);
+    }
+
+    private string ResolveSystemHintParticipantName(
+        uint groupId,
+        string? ntUid,
+        string? uin,
+        params string?[] fallbacks)
+    {
+        var fallback = FirstNonEmpty(fallbacks.Select(CleanSystemHintText).ToArray());
+        var resolvedUin = ParseUin(uin);
+
+        if (_qqDatabaseService.GroupInfoDatabase is { } groupInfoDatabase)
+        {
+            try
+            {
+                var query = groupInfoDatabase.DbContext.GroupMembers
+                    .Where(member => member.Uin != 0 || !string.IsNullOrEmpty(member.NtUid));
+
+                if (!string.IsNullOrWhiteSpace(ntUid))
+                {
+                    query = query.Where(member => member.NtUid == ntUid);
+                }
+                else if (resolvedUin != 0)
+                {
+                    query = query.Where(member => member.Uin == resolvedUin);
+                }
+                else
+                {
+                    return fallback;
+                }
+
+                if (groupId != 0)
+                {
+                    var groupName = query
+                        .Where(member => member.GroupId == groupId)
+                        .Select(member => new { member.MemberName, member.NickName })
+                        .FirstOrDefault();
+                    var name = FirstNonEmpty(groupName?.MemberName, groupName?.NickName);
+                    if (!string.IsNullOrWhiteSpace(name))
+                        return name;
+                }
+
+                var match = query
+                    .Select(member => new { member.MemberName, member.NickName })
+                    .FirstOrDefault();
+                var matchedName = FirstNonEmpty(match?.MemberName, match?.NickName);
+                if (!string.IsNullOrWhiteSpace(matchedName))
+                    return matchedName;
+            }
+            catch
+            {
+            }
+        }
+
+        return GetProfileInfoNameCache().TryGetName(resolvedUin, ntUid, out var profileName)
+            ? profileName
+            : fallback;
+    }
+
+    private static uint ParseUin(string? value)
+    {
+        return uint.TryParse(CleanSystemHintText(value), out var uin) ? uin : 0;
+    }
+
+    private static bool SystemHintParticipantMatchesMessageSender(
+        string? participantNtUid,
+        string? participantUin,
+        string? senderUid,
+        uint senderId)
+    {
+        var cleanParticipantNtUid = CleanSystemHintText(participantNtUid);
+        if (!string.IsNullOrWhiteSpace(cleanParticipantNtUid) &&
+            string.Equals(cleanParticipantNtUid, CleanSystemHintText(senderUid), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return senderId != 0 && ParseUin(participantUin) == senderId;
+    }
+
+    private static string CleanSystemHintText(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Replace('\u00A0', ' ')
+                .Replace("\u200B", string.Empty, StringComparison.Ordinal)
+                .Replace("\u200C", string.Empty, StringComparison.Ordinal)
+                .Replace("\u200D", string.Empty, StringComparison.Ordinal)
+                .Replace("\uFEFF", string.Empty, StringComparison.Ordinal)
+                .Trim();
     }
 
     private string ResolveSystemHintSourceUin(uint groupId, string? ntUid)
@@ -2460,6 +2654,11 @@ public partial class MessageTabViewModel : ViewModelBase
         return GetProfileInfoNameCache().TryGetUin(ntUid, out var profileUin)
             ? profileUin.ToString()
             : string.Empty;
+    }
+
+    public string ResolveMentionUin(uint groupId, string? ntUid)
+    {
+        return ResolveSystemHintSourceUin(groupId, ntUid);
     }
 
     private AvaQQMessage CreatePCQQAvaMessage(MessageRecord item, AvaQQGroup conversation)
@@ -2506,6 +2705,7 @@ public partial class MessageTabViewModel : ViewModelBase
             SenderId = item.SenderId,
             ProtobufContent = item.Content,
             IsHoverTimeVisible = AlwaysShowMessageTime,
+            HighlightMentions = HighlightMentions,
         };
     }
 
@@ -2549,7 +2749,7 @@ public partial class MessageTabViewModel : ViewModelBase
         {
             if (segment.Type == PCQQMessageSegmentType.Text)
             {
-                segments.AddRange(CreateTextSegments(segment.Text));
+                segments.AddRange(CreateTextSegments(segment.Text, isMention: segment.IsMention));
                 continue;
             }
 
@@ -2793,6 +2993,7 @@ public partial class MessageTabViewModel : ViewModelBase
         string currentSenderName,
         IReadOnlyDictionary<uint, string> groupSenderNames,
         IReadOnlyDictionary<long, MessageSenderInfo> messageSenderInfos,
+        IReadOnlyDictionary<ReplyTargetKey, MessageRecord> replyTargetMessages,
         LocalMediaContext mediaContext)
     {
         if (content is null)
@@ -2804,12 +3005,17 @@ public partial class MessageTabViewModel : ViewModelBase
         if (reply is null)
             return null;
 
-        var replySegments = CreateReplyPreviewSegments(
-            item.MessageType,
-            item.SubMessageType,
-            item.MessageTime,
-            reply,
-            mediaContext);
+        var replyTargetMessage = ResolveReplyTargetConversation(conversation, item, reply) is { } targetConversation
+            ? TryGetReplyTargetMessage(replyTargetMessages, targetConversation, reply)
+            : null;
+        var replySegments = replyTargetMessage is null
+            ? CreateReplyPreviewSegments(
+                item.MessageType,
+                item.SubMessageType,
+                item.MessageTime,
+                reply,
+                mediaContext)
+            : CreateReplyPreviewSegments(replyTargetMessage, mediaContext);
         var previewText = CreateDisplayText(replySegments);
         if (string.IsNullOrWhiteSpace(previewText))
         {
@@ -2871,6 +3077,23 @@ public partial class MessageTabViewModel : ViewModelBase
             segments.AddRange(CreateTextSegments(reply.PreviewText));
         }
 
+        return segments;
+    }
+
+    private static List<AvaQQMessageSegment> CreateReplyPreviewSegments(
+        MessageRecord replyTargetMessage,
+        LocalMediaContext mediaContext)
+    {
+        var content = TryParseMessageContent(replyTargetMessage.Content);
+        if (content is null)
+            return [];
+
+        var segments = CreateMessageSegments(replyTargetMessage, content, mediaContext);
+        if (HasDisplayContent(segments))
+            return segments;
+
+        segments.Clear();
+        segments.Add(AvaQQMessageSegment.CreateUnsupportedText(CreateMissingMessageText(replyTargetMessage)));
         return segments;
     }
 
@@ -2965,6 +3188,62 @@ public partial class MessageTabViewModel : ViewModelBase
             return 0;
 
         return reply.SourceGroupId;
+    }
+
+    private static ReplyTargetConversation? ResolveReplyTargetConversation(
+        AvaQQGroup conversation,
+        MessageRecord sourceMessage,
+        QQReplyMessage reply)
+    {
+        if (reply.SourceGroupId != 0 &&
+            reply.SourceGroupId != sourceMessage.GroupId &&
+            conversation.ConversationType == AvaConversationType.Group)
+        {
+            return new ReplyTargetConversation(AvaConversationType.Group, reply.SourceGroupId, 0);
+        }
+
+        return conversation.ConversationType switch
+        {
+            AvaConversationType.Group => new ReplyTargetConversation(AvaConversationType.Group, conversation.GroupId, 0),
+            AvaConversationType.Private => new ReplyTargetConversation(AvaConversationType.Private, 0, conversation.PrivateConversationId),
+            _ => null,
+        };
+    }
+
+    private static ReplyTargetKey CreateReplyTargetKey(
+        AvaConversationType conversationType,
+        uint groupId,
+        long privateConversationId,
+        QQReplyMessage reply)
+    {
+        var messageIds = GetReplyMessageIdCandidates(reply).ToArray();
+        var messageRandoms = GetReplyMessageRandomCandidates(reply).ToArray();
+        var messageSeqs = GetReplyMessageSeqCandidates(reply, conversationType).ToArray();
+        return new ReplyTargetKey(
+            conversationType,
+            groupId,
+            privateConversationId,
+            messageIds.Length > 0 ? messageIds[0] : 0,
+            messageIds.Length > 1 ? messageIds[1] : 0,
+            messageRandoms.Length > 0 ? messageRandoms[0] : 0,
+            messageSeqs.Length > 0 ? messageSeqs[0] : 0,
+            messageSeqs.Length > 1 ? messageSeqs[1] : 0);
+    }
+
+    private static MessageRecord? TryGetReplyTargetMessage(
+        IReadOnlyDictionary<ReplyTargetKey, MessageRecord> replyTargetMessages,
+        ReplyTargetConversation targetConversation,
+        QQReplyMessage reply)
+    {
+        return replyTargetMessages.TryGetValue(
+            CreateReplyTargetKey(
+                targetConversation.ConversationType,
+                targetConversation.GroupId,
+                targetConversation.PrivateConversationId,
+                reply),
+            out var message)
+            ? message
+            : null;
     }
 
     private string ResolveProfileDisplayName(uint uin, string? ntUid, string fallback)
@@ -3074,6 +3353,7 @@ public partial class MessageTabViewModel : ViewModelBase
                     Reply = CreateReplyMessage(message, senderName, senderNames, mediaContext),
                     DisplayText = CreateDisplayText(segments),
                     IsHoverTimeVisible = true,
+                    HighlightMentions = HighlightMentions,
                 };
             })
             .ToArray();
@@ -3258,7 +3538,26 @@ public partial class MessageTabViewModel : ViewModelBase
             .ToArray();
     }
 
+    private static IReadOnlyList<long> GetReplyMessageIdCandidates(QQReplyMessage reply)
+    {
+        return new[]
+            {
+                reply.MessageId,
+                reply.InternalMessageId,
+            }
+            .Where(value => value > 0)
+            .Distinct()
+            .ToArray();
+    }
+
     private static IReadOnlyList<long> GetReplyMessageRandomCandidates(AvaReplyMessage reply)
+    {
+        return reply.MessageRandom > 0
+            ? [reply.MessageRandom]
+            : [];
+    }
+
+    private static IReadOnlyList<long> GetReplyMessageRandomCandidates(QQReplyMessage reply)
     {
         return reply.MessageRandom > 0
             ? [reply.MessageRandom]
@@ -3280,6 +3579,28 @@ public partial class MessageTabViewModel : ViewModelBase
             {
                 reply.MessageSeq,
                 reply.AlternateMessageSeq,
+            };
+
+        return candidates
+            .Where(value => value > 0)
+            .Distinct()
+            .ToArray();
+    }
+
+    private static IReadOnlyList<long> GetReplyMessageSeqCandidates(
+        QQReplyMessage reply,
+        AvaConversationType conversationType)
+    {
+        var candidates = conversationType == AvaConversationType.Private
+            ? new[]
+            {
+                reply.MessageSeq2,
+                reply.MessageSeq,
+            }
+            : new[]
+            {
+                reply.MessageSeq,
+                reply.MessageSeq2,
             };
 
         return candidates
@@ -3424,7 +3745,7 @@ public partial class MessageTabViewModel : ViewModelBase
             }
             else
             {
-                segments.AddRange(CreateTextSegments(text));
+                segments.AddRange(CreateTextSegments(text, isMention: segment.IsMention, mentionUid: segment.MentionUid));
             }
 
             return;
@@ -3731,7 +4052,9 @@ public partial class MessageTabViewModel : ViewModelBase
 
     private static IReadOnlyList<AvaQQMessageSegment> CreateTextSegments(
         string text,
-        AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal)
+        AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal,
+        bool isMention = false,
+        string? mentionUid = null)
     {
         if (string.IsNullOrEmpty(text))
             return [];
@@ -3743,16 +4066,16 @@ public partial class MessageTabViewModel : ViewModelBase
         {
             if (match.Index > index)
             {
-                segments.Add(AvaQQMessageSegment.CreateText(text[index..match.Index], tone));
+                segments.Add(AvaQQMessageSegment.CreateText(text[index..match.Index], tone, isMention: isMention, mentionUid: mentionUid));
             }
 
             var urlText = match.Groups["url"].Value.TrimEnd('.', ',', ';', ':', '!', '?', '，', '。', '；', '：', '！', '？');
             var trailingText = match.Groups["url"].Value[urlText.Length..];
-            segments.Add(AvaQQMessageSegment.CreateText(urlText, tone, NormalizeUrl(urlText)));
+            segments.Add(AvaQQMessageSegment.CreateText(urlText, tone, NormalizeUrl(urlText), isMention, mentionUid));
 
             if (!string.IsNullOrEmpty(trailingText))
             {
-                segments.Add(AvaQQMessageSegment.CreateText(trailingText, tone));
+                segments.Add(AvaQQMessageSegment.CreateText(trailingText, tone, isMention: isMention, mentionUid: mentionUid));
             }
 
             index = match.Index + match.Length;
@@ -3760,7 +4083,7 @@ public partial class MessageTabViewModel : ViewModelBase
 
         if (index < text.Length)
         {
-            segments.Add(AvaQQMessageSegment.CreateText(text[index..], tone));
+            segments.Add(AvaQQMessageSegment.CreateText(text[index..], tone, isMention: isMention, mentionUid: mentionUid));
         }
 
         return segments;
@@ -4585,6 +4908,7 @@ public partial class MessageTabViewModel : ViewModelBase
         foreach (var message in _messages)
         {
             message.IsHoverTimeVisible = AlwaysShowMessageTime;
+            message.HighlightMentions = HighlightMentions;
         }
     }
 
@@ -5588,22 +5912,38 @@ public partial class MessageTabViewModel : ViewModelBase
 
     private string CreateLatestMessageText(AvaConversationType conversationType, MessageRecord message)
     {
-        var messageText = CreateLatestMessagePreviewText(message);
-        if (string.IsNullOrWhiteSpace(messageText))
-            return string.Empty;
-
-        if (conversationType is AvaConversationType.Private or AvaConversationType.PCQQPrivate)
-            return messageText;
-
         var senderName = FirstNonEmpty(message.SendMemberName, message.SendNickName);
         if (string.IsNullOrWhiteSpace(senderName) && message.SenderId != 0)
         {
             senderName = ResolveProfileDisplayName(message.SenderId, message.SenderUid, message.SenderId.ToString());
         }
 
+        var messageText = CreateLatestMessagePreviewText(message, senderName);
+        if (string.IsNullOrWhiteSpace(messageText))
+            return string.Empty;
+
+        if (conversationType is AvaConversationType.Private or AvaConversationType.PCQQPrivate)
+            return messageText;
+
         return string.IsNullOrWhiteSpace(senderName)
             ? messageText
             : $"{senderName}: {messageText}";
+    }
+
+    private string CreateLatestMessagePreviewText(MessageRecord message, string? senderName)
+    {
+        if (TryParseMessageContent(message.Content) is { } content &&
+            CreateSystemHintMessage(
+                content,
+                message.GroupId,
+                message.SenderId,
+                message.SenderUid,
+                senderName) is { } systemHint)
+        {
+            return systemHint.DisplayText;
+        }
+
+        return CreateLatestMessagePreviewText(message);
     }
 
     private static string CreatePCQQLatestMessageText(
@@ -5932,7 +6272,23 @@ public partial class MessageTabViewModel : ViewModelBase
 
     private sealed record MessagePage(
         IReadOnlyList<MessageRecord> Messages,
-        IReadOnlyList<MessageRecord> ReferencedMessages);
+        IReadOnlyList<MessageRecord> ReferencedMessages,
+        IReadOnlyDictionary<ReplyTargetKey, MessageRecord> ReplyTargetMessages);
+
+    private readonly record struct ReplyTargetConversation(
+        AvaConversationType ConversationType,
+        uint GroupId,
+        long PrivateConversationId);
+
+    private readonly record struct ReplyTargetKey(
+        AvaConversationType ConversationType,
+        uint GroupId,
+        long PrivateConversationId,
+        long MessageId,
+        long InternalMessageId,
+        long MessageRandom,
+        long MessageSeq,
+        long AlternateMessageSeq);
 
     private readonly record struct SystemHintDisplay(
         string SourceName,

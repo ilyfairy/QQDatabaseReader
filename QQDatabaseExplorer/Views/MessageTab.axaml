@@ -471,7 +471,7 @@
                                                                 Stretch="Uniform" />
                                                             <TextBlock
                                                                 VerticalAlignment="Center"
-                                                                FontFamily="fonts:QQDatabaseExplorerEmoji#Noto Color Emoji, Segoe UI Emoji, Inter, Microsoft YaHei UI"
+                                                                FontFamily="Segoe UI Emoji, fonts:QQDatabaseExplorerEmoji#Noto Color Emoji, Inter, Microsoft YaHei UI"
                                                                 FontSize="10"
                                                                 Foreground="#444"
                                                                 Text="{Binding DisplayText}"

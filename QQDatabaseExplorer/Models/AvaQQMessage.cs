@@ -9,6 +9,7 @@ public partial class AvaQQMessage : ObservableObject
 {
     private byte[]? _protobufContent;
     private string? _protobufBase64;
+    private bool _highlightMentions;
 
     public string DisplayText { get; set; } = string.Empty;
     public IReadOnlyList<AvaQQMessageSegment> Segments { get; set; } = [];
@@ -43,6 +44,18 @@ public partial class AvaQQMessage : ObservableObject
     public int SystemHintFaceId { get; set; }
     public string? SystemHintFaceAssetPath { get; set; }
     public IReadOnlyList<AvaMessageReaction> Reactions { get; set; } = [];
+
+    public bool HighlightMentions
+    {
+        get => _highlightMentions;
+        set
+        {
+            if (SetProperty(ref _highlightMentions, value))
+            {
+                ApplyMentionHighlight(value);
+            }
+        }
+    }
 
     public byte[]? ProtobufContent
     {
@@ -152,4 +165,17 @@ public partial class AvaQQMessage : ObservableObject
 
     [ObservableProperty]
     public partial bool IsJumpHighlightVisible { get; set; }
+
+    public void ApplyMentionHighlight(bool highlight)
+    {
+        foreach (var segment in Segments)
+        {
+            if (segment.Type != AvaQQMessageSegmentType.Text || !segment.IsMention)
+                continue;
+
+            segment.Tone = highlight ? AvaQQMessageSegmentTone.Mention : AvaQQMessageSegmentTone.Normal;
+        }
+
+        OnPropertyChanged(nameof(Segments));
+    }
 }

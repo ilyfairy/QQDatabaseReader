@@ -251,6 +251,14 @@ public partial class QQMessageReader
             {
                 currentMessage.Text = input.ReadBytes().ToStringUtf8();
             }
+            else if (key == 45102)
+            {
+                currentMessage.TextElementType = input.ReadInt32();
+            }
+            else if (key == 45105)
+            {
+                currentMessage.MentionUid = input.ReadBytes().ToStringUtf8();
+            }
             else if (key == 45402)
             {
                 currentMessage.ImageFileName = input.ReadBytes().ToStringUtf8();
@@ -618,7 +626,26 @@ public partial class QQMessageReader
 
     private static string FirstNonEmpty(params string?[] values)
     {
-        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+        foreach (var value in values)
+        {
+            var normalized = NormalizeSystemHintText(value);
+            if (!string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+        }
+
+        return string.Empty;
+    }
+
+    private static string NormalizeSystemHintText(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Replace('\u00A0', ' ')
+                .Replace("\u200B", string.Empty, StringComparison.Ordinal)
+                .Replace("\u200C", string.Empty, StringComparison.Ordinal)
+                .Replace("\u200D", string.Empty, StringComparison.Ordinal)
+                .Replace("\uFEFF", string.Empty, StringComparison.Ordinal)
+                .Trim();
     }
 
     private static void ReadSystemHintParticipant(QQMessageSegment currentMessage, byte[] data)
@@ -658,13 +685,15 @@ public partial class QQMessageReader
             // Keep any participant fields decoded before an unknown/truncated tail.
         }
 
+        uid = NormalizeSystemHintText(uid);
+        nickname = NormalizeSystemHintText(nickname);
         if (string.IsNullOrWhiteSpace(uid) && string.IsNullOrWhiteSpace(nickname))
             return;
 
         currentMessage.SystemHint ??= new QQSystemHintMessage();
-        currentMessage.SystemHint.Participants.Add(new QQSystemHintParticipant(
-            uid ?? string.Empty,
-            nickname ?? string.Empty));
+        AddOrUpdateSystemHintParticipant(
+            currentMessage.SystemHint,
+            new QQSystemHintParticipant(uid, nickname));
     }
 
     private static void ReadSystemHintProperty(QQMessageSegment currentMessage, byte[] data)
@@ -737,18 +766,18 @@ public partial class QQMessageReader
                             GetXmlAttribute(element, "uin"),
                             GetXmlAttribute(element, "uid"),
                             GetXmlAttribute(element, "jp"));
-                        var uin = GetXmlAttribute(element, "jp")?.Trim() ?? string.Empty;
-                        var nickname = GetXmlAttribute(element, "nm")?.Trim() ?? string.Empty;
+                        var uin = NormalizeSystemHintText(GetXmlAttribute(element, "jp"));
+                        var nickname = NormalizeSystemHintText(GetXmlAttribute(element, "nm"));
                         if (string.IsNullOrWhiteSpace(nickname))
                         {
-                            nickname = hint.Participants
+                            nickname = NormalizeSystemHintText(hint.Participants
                                 .FirstOrDefault(participant => string.Equals(participant.Uid, uid, StringComparison.Ordinal))
-                                ?.Nickname ?? string.Empty;
+                                ?.Nickname);
                         }
 
                         AddOrUpdateSystemHintParticipant(
                             hint,
-                            new QQSystemHintParticipant(uid.Trim(), nickname));
+                            new QQSystemHintParticipant(NormalizeSystemHintText(uid), nickname));
 
                         if (!string.IsNullOrWhiteSpace(uin))
                         {
@@ -769,7 +798,7 @@ public partial class QQMessageReader
                     }
                     case "nor":
                     {
-                        var text = GetXmlAttribute(element, "txt");
+                        var text = NormalizeSystemHintText(GetXmlAttribute(element, "txt"));
                         if (!string.IsNullOrWhiteSpace(text))
                         {
                             textParts.Add(text);
@@ -780,10 +809,10 @@ public partial class QQMessageReader
                     }
                     case "url":
                     {
-                        var text = GetXmlAttribute(element, "txt");
+                        var text = NormalizeSystemHintText(GetXmlAttribute(element, "txt"));
                         if (!string.IsNullOrWhiteSpace(text))
                         {
-                            targetName = text.Trim();
+                            targetName = text;
                             displayParts.Add(targetName);
                         }
 
@@ -807,13 +836,13 @@ public partial class QQMessageReader
 
             if (textParts.Count > 0)
             {
-                SetSystemHintPropertyIfMissing(hint, "action_str", textParts[0].Trim());
+                SetSystemHintPropertyIfMissing(hint, "action_str", textParts[0]);
             }
 
             SetSystemHintPropertyIfMissing(hint, "target_name", targetName);
             if (displayParts.Count > 0)
             {
-                SetSystemHintPropertyIfMissing(hint, "display_text", string.Concat(displayParts).Trim());
+                SetSystemHintPropertyIfMissing(hint, "display_text", NormalizeSystemHintText(string.Concat(displayParts)));
             }
         }
         catch
@@ -856,14 +885,14 @@ public partial class QQMessageReader
                 var type = GetJsonString(item, "type");
                 if (string.Equals(type, "qq", StringComparison.OrdinalIgnoreCase))
                 {
-                    var nickname = GetJsonString(item, "nm")?.Trim() ?? string.Empty;
+                    var nickname = NormalizeSystemHintText(GetJsonString(item, "nm"));
                     var uid = FirstNonEmpty(
                         GetJsonString(item, "uid"),
                         GetJsonString(item, "jp"),
                         GetJsonString(item, "uin"));
                     var uin = GetJsonString(item, "uin")?.Trim() ?? string.Empty;
 
-                    participants.Add((uid.Trim(), uin, nickname));
+                    participants.Add((NormalizeSystemHintText(uid), uin, nickname));
                     if (!string.IsNullOrWhiteSpace(nickname))
                     {
                         displayParts.Add(nickname);
@@ -874,7 +903,7 @@ public partial class QQMessageReader
 
                 if (!string.Equals(type, "img", StringComparison.OrdinalIgnoreCase))
                 {
-                    var text = GetJsonString(item, "txt");
+                    var text = NormalizeSystemHintText(GetJsonString(item, "txt"));
                     if (!string.IsNullOrWhiteSpace(text))
                     {
                         textParts.Add(text);
@@ -899,13 +928,13 @@ public partial class QQMessageReader
             SetSystemHintPropertyIfMissing(hint, "action_img_url", actionImageUrl);
             if (displayParts.Count > 0)
             {
-                SetSystemHintPropertyIfMissing(hint, "display_text", string.Concat(displayParts).Trim());
+                SetSystemHintPropertyIfMissing(hint, "display_text", NormalizeSystemHintText(string.Concat(displayParts)));
             }
 
             if (textParts.Count == 0)
                 return;
 
-            SetSystemHintPropertyIfMissing(hint, "action_str", textParts[0].Trim());
+            SetSystemHintPropertyIfMissing(hint, "action_str", textParts[0]);
             if (participants.Count <= 1)
             {
                 SetSystemHintPropertyIfMissing(hint, "single_actor", "1");
@@ -925,8 +954,11 @@ public partial class QQMessageReader
         QQSystemHintMessage hint,
         QQSystemHintParticipant participant)
     {
-        if (string.IsNullOrWhiteSpace(participant.Uid) &&
-            string.IsNullOrWhiteSpace(participant.Nickname))
+        var normalizedParticipant = new QQSystemHintParticipant(
+            NormalizeSystemHintText(participant.Uid),
+            NormalizeSystemHintText(participant.Nickname));
+        if (string.IsNullOrWhiteSpace(normalizedParticipant.Uid) &&
+            string.IsNullOrWhiteSpace(normalizedParticipant.Nickname))
         {
             return;
         }
@@ -934,25 +966,32 @@ public partial class QQMessageReader
         for (var i = 0; i < hint.Participants.Count; i++)
         {
             var existing = hint.Participants[i];
-            var sameUid = !string.IsNullOrWhiteSpace(participant.Uid) &&
-                          string.Equals(existing.Uid, participant.Uid, StringComparison.Ordinal);
-            var sameName = string.IsNullOrWhiteSpace(existing.Uid) &&
-                           string.IsNullOrWhiteSpace(participant.Uid) &&
-                           !string.IsNullOrWhiteSpace(participant.Nickname) &&
-                           string.Equals(existing.Nickname, participant.Nickname, StringComparison.Ordinal);
+            var normalizedExisting = new QQSystemHintParticipant(
+                NormalizeSystemHintText(existing.Uid),
+                NormalizeSystemHintText(existing.Nickname));
+            var sameUid = !string.IsNullOrWhiteSpace(normalizedParticipant.Uid) &&
+                          string.Equals(normalizedExisting.Uid, normalizedParticipant.Uid, StringComparison.Ordinal);
+            var sameName = string.IsNullOrWhiteSpace(normalizedExisting.Uid) &&
+                           string.IsNullOrWhiteSpace(normalizedParticipant.Uid) &&
+                           !string.IsNullOrWhiteSpace(normalizedParticipant.Nickname) &&
+                           string.Equals(normalizedExisting.Nickname, normalizedParticipant.Nickname, StringComparison.Ordinal);
             if (!sameUid && !sameName)
                 continue;
 
-            if (string.IsNullOrWhiteSpace(existing.Nickname) &&
-                !string.IsNullOrWhiteSpace(participant.Nickname))
+            if (!string.Equals(existing.Uid, normalizedExisting.Uid, StringComparison.Ordinal) ||
+                !string.Equals(existing.Nickname, normalizedExisting.Nickname, StringComparison.Ordinal) ||
+                (string.IsNullOrWhiteSpace(normalizedExisting.Nickname) &&
+                 !string.IsNullOrWhiteSpace(normalizedParticipant.Nickname)))
             {
-                hint.Participants[i] = participant;
+                hint.Participants[i] = new QQSystemHintParticipant(
+                    string.IsNullOrWhiteSpace(normalizedExisting.Uid) ? normalizedParticipant.Uid : normalizedExisting.Uid,
+                    string.IsNullOrWhiteSpace(normalizedParticipant.Nickname) ? normalizedExisting.Nickname : normalizedParticipant.Nickname);
             }
 
             return;
         }
 
-        hint.Participants.Add(participant);
+        hint.Participants.Add(normalizedParticipant);
     }
 
     private static void SetSystemHintPropertyIfMissing(
@@ -1737,6 +1776,16 @@ public class QQMessageSegment
     public string? Text { get; set; }
 
     /// <summary>
+    /// 45102. Text element subtype. 2 means an @ mention in QQNT group messages.
+    /// </summary>
+    public int? TextElementType { get; set; }
+
+    /// <summary>
+    /// 45105. Mention target UID for QQNT @ text segments.
+    /// </summary>
+    public string? MentionUid { get; set; }
+
+    /// <summary>
     /// 45402
     /// </summary>
     public string? ImageFileName { get; set; }
@@ -1889,6 +1938,10 @@ public class QQMessageSegment
     public bool IsImage => Type is MessageSegmentType.Image;
     public bool IsVoice => Type == MessageSegmentType.Record;
     public bool IsVideo => Type == MessageSegmentType.Video;
+    public bool IsMention => Type == MessageSegmentType.Text &&
+                             TextElementType == 2 &&
+                             !string.IsNullOrWhiteSpace(Text) &&
+                             Text.StartsWith('@');
     public string? VoiceFileName => IsVoice ? ImageFileName : null;
     public byte[]? VoiceMd5 => IsVoice ? ImageMd5 : null;
     public string? VideoFileName => IsVideo ? ImageFileName : null;

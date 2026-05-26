@@ -440,7 +440,8 @@ public sealed record MessageCopyPart(
     string? FilePath = null,
     IReadOnlyList<string>? AssetPaths = null,
     int? QQFaceId = null,
-    bool IsBlockImage = false)
+    bool IsBlockImage = false,
+    AvaQQMessageSegment? Segment = null)
 {
     public IReadOnlyList<string> AssetPaths { get; init; } = AssetPaths ?? [];
     public bool IsEmpty => Kind is not (MessageCopyPartKind.Image or MessageCopyPartKind.File) && string.IsNullOrEmpty(Text);
@@ -448,9 +449,10 @@ public sealed record MessageCopyPart(
     public static MessageCopyPart CreateText(
         string text,
         AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal,
-        string? linkUrl = null)
+        string? linkUrl = null,
+        AvaQQMessageSegment? segment = null)
     {
-        return new MessageCopyPart(MessageCopyPartKind.Text, text, tone, linkUrl);
+        return new MessageCopyPart(MessageCopyPartKind.Text, text, tone, linkUrl, Segment: segment);
     }
 
     public static MessageCopyPart CreateImage(

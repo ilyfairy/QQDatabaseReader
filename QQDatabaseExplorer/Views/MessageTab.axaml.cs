@@ -1365,9 +1365,10 @@ public partial class MessageTab : UserControl
         var selectedPayload = IsContextRequestInsideSelection(textBlock, e)
             ? MessageInlineRenderer.GetSelectedPayload(textBlock)
             : MessageCopyPayload.Empty;
+        var mentionUin = TryGetMentionUinFromContextRequest(textBlock, message, e);
         if (selectedPayload.HasContent)
         {
-            OpenCopyContextMenu(menuOwner, selectedPayload, message.ProtobufBase64);
+            OpenCopyContextMenu(menuOwner, selectedPayload, message.ProtobufBase64, mentionUin);
             return;
         }
 
@@ -1395,7 +1396,7 @@ public partial class MessageTab : UserControl
             return;
         }
 
-        OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64);
+        OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64, mentionUin);
     }
 
     private void OpenMiniAppContextMenu(
@@ -1671,7 +1672,11 @@ public partial class MessageTab : UserControl
         return menuItem;
     }
 
-    private void OpenCopyContextMenu(Control owner, MessageCopyPayload copyPayload, string? protobufBase64)
+    private void OpenCopyContextMenu(
+        Control owner,
+        MessageCopyPayload copyPayload,
+        string? protobufBase64,
+        string? mentionUin = null)
     {
         var contextMenu = new ContextMenu();
         var copyMenuItem = new MenuItem
@@ -1680,6 +1685,19 @@ public partial class MessageTab : UserControl
             IsEnabled = copyPayload.HasContent,
         };
         copyMenuItem.Click += async (_, _) => await CopyPayloadToClipboard(copyPayload);
+
+        var copyMentionUinMenuItem = new MenuItem
+        {
+            Header = "复制被艾特QQ号",
+            IsEnabled = IsNumericId(mentionUin),
+        };
+        copyMentionUinMenuItem.Click += async (_, _) =>
+        {
+            if (IsNumericId(mentionUin))
+            {
+                await CopyTextToClipboard(mentionUin!);
+            }
+        };
 
         var copyProtobufMenuItem = new MenuItem
         {
@@ -1707,7 +1725,9 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[] { copyMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem };
+        contextMenu.ItemsSource = IsNumericId(mentionUin)
+            ? new Control[] { copyMenuItem, copyMentionUinMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem }
+            : [copyMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem];
 
         OpenContextMenu(owner, contextMenu);
     }
@@ -1836,6 +1856,22 @@ public partial class MessageTab : UserControl
         var lastSelection = Math.Max(textBlock.SelectionStart, textBlock.SelectionEnd);
 
         return hit.TextPosition >= firstSelection && hit.TextPosition <= lastSelection;
+    }
+
+    private string? TryGetMentionUinFromContextRequest(
+        MessageSelectableTextBlock textBlock,
+        AvaQQMessage message,
+        ContextRequestedEventArgs e)
+    {
+        if (!e.TryGetPosition(textBlock, out var position))
+            return null;
+
+        var segment = MessageInlineRenderer.GetTextSegmentAt(textBlock, position);
+        if (segment is not { IsMention: true })
+            return null;
+
+        var uin = _viewModel.ResolveMentionUin(message.GroupId, segment.MentionUid);
+        return IsNumericId(uin) ? uin : null;
     }
 
     private static AvaQQMessageSegment? TryGetImageSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)

@@ -63,7 +63,7 @@ public static class MessageInlineRenderer
     private const double ReplyPreviewMaxHeight = 70;
 
     public static readonly FontFamily TextFontFamily = new("Inter, Microsoft YaHei UI, Segoe UI Emoji, fonts:QQDatabaseExplorerEmoji#Noto Color Emoji");
-    public static readonly FontFamily EmojiFontFamily = new("fonts:QQDatabaseExplorerEmoji#Noto Color Emoji, Segoe UI Emoji, Inter, Microsoft YaHei UI");
+    public static readonly FontFamily EmojiFontFamily = new("Segoe UI Emoji, fonts:QQDatabaseExplorerEmoji#Noto Color Emoji, Inter, Microsoft YaHei UI");
 
     public static readonly IBrush UnsupportedTextBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     public static readonly IBrush UrlTextBrush = new SolidColorBrush(Color.FromRgb(22, 119, 255));
@@ -416,6 +416,12 @@ public static class MessageInlineRenderer
         return textBlock.Document.GetLinkUrlAt(hit.TextPosition);
     }
 
+    public static AvaQQMessageSegment? GetTextSegmentAt(MessageSelectableTextBlock textBlock, Point position)
+    {
+        var hit = textBlock.HitTestText(position);
+        return textBlock.Document.GetTextSegmentAt(hit.TextPosition);
+    }
+
     public static AvaQQMessageSegment? GetImageSegmentAt(MessageSelectableTextBlock textBlock, Point position)
     {
         return textBlock.GetMediaSegmentAt(position, imageOnly: true);
@@ -625,7 +631,7 @@ public static class MessageInlineRenderer
             return;
 
         var copyStart = textPosition;
-        var part = MessageCopyPart.CreateText(text, segment.Tone, segment.LinkUrl);
+        var part = MessageCopyPart.CreateText(text, segment.Tone, segment.LinkUrl, segment);
         var foreground = GetTextBrush(segment);
         var isLink = segment.LinkUrl is not null;
 
@@ -854,6 +860,9 @@ public static class MessageInlineRenderer
     private static IBrush? GetTextBrush(AvaQQMessageSegment segment)
     {
         if (!string.IsNullOrWhiteSpace(segment.LinkUrl))
+            return UrlTextBrush;
+
+        if (segment.Tone == AvaQQMessageSegmentTone.Mention)
             return UrlTextBrush;
 
         return segment.Tone == AvaQQMessageSegmentTone.Warning ||
@@ -1747,6 +1756,20 @@ public sealed class MessageRenderDocument
 
             if (textPosition >= span.Start && textPosition < span.Start + span.Length)
                 return span.Part.LinkUrl;
+        }
+
+        return null;
+    }
+
+    public AvaQQMessageSegment? GetTextSegmentAt(int textPosition)
+    {
+        foreach (var span in CopySpans)
+        {
+            if (span.Part.Segment is not { Type: AvaQQMessageSegmentType.Text } segment)
+                continue;
+
+            if (textPosition >= span.Start && textPosition < span.Start + span.Length)
+                return segment;
         }
 
         return null;

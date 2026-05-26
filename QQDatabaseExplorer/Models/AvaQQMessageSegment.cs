@@ -9,6 +9,8 @@ public partial class AvaQQMessageSegment : ObservableObject
     public AvaQQMessageSegmentTone Tone { get; set; }
     public string Text { get; set; } = string.Empty;
     public string? LinkUrl { get; init; }
+    public bool IsMention { get; init; }
+    public string? MentionUid { get; init; }
     public int? FaceId { get; init; }
     public string? FaceName { get; init; }
     public string? FaceAssetPath { get; init; }
@@ -71,7 +73,9 @@ public partial class AvaQQMessageSegment : ObservableObject
     public static AvaQQMessageSegment CreateText(
         string text,
         AvaQQMessageSegmentTone tone = AvaQQMessageSegmentTone.Normal,
-        string? linkUrl = null)
+        string? linkUrl = null,
+        bool isMention = false,
+        string? mentionUid = null)
     {
         return new AvaQQMessageSegment
         {
@@ -79,6 +83,8 @@ public partial class AvaQQMessageSegment : ObservableObject
             Tone = tone,
             Text = text,
             LinkUrl = linkUrl,
+            IsMention = isMention,
+            MentionUid = mentionUid,
         };
     }
 
@@ -255,4 +261,5 @@ public enum AvaQQMessageSegmentTone
 {
     Normal,
     Warning,
+    Mention,
 }

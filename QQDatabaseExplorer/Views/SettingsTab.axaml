@@ -26,23 +26,45 @@
                 BorderBrush="#12000000"
                 BorderThickness="1"
                 CornerRadius="8">
-                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                    <TextBlock
-                        FontSize="14"
-                        FontWeight="SemiBold"
-                        Text="始终显示消息时间" />
-                    <ToggleSwitch
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        IsChecked="{Binding AlwaysShowMessageTime, Mode=TwoWay}" />
-                    <TextBlock
-                        Grid.Row="1"
-                        Grid.ColumnSpan="2"
-                        Margin="0,6,72,0"
-                        Foreground="#666"
-                        Text="在聊天消息的昵称右侧一直显示日期时间。关闭后仍按当前逻辑悬停一秒显示。"
-                        TextWrapping="Wrap" />
-                </Grid>
+                <StackPanel Spacing="16">
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                        <TextBlock
+                            FontSize="14"
+                            FontWeight="SemiBold"
+                            Text="始终显示消息时间" />
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            IsChecked="{Binding AlwaysShowMessageTime, Mode=TwoWay}" />
+                        <TextBlock
+                            Grid.Row="1"
+                            Grid.ColumnSpan="2"
+                            Margin="0,6,72,0"
+                            Foreground="#666"
+                            Text="在聊天消息的昵称右侧一直显示日期时间。关闭后仍按当前逻辑悬停一秒显示。"
+                            TextWrapping="Wrap" />
+                    </Grid>
+
+                    <Border Height="1" Background="#0F000000" />
+
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                        <TextBlock
+                            FontSize="14"
+                            FontWeight="SemiBold"
+                            Text="高亮 @人" />
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            IsChecked="{Binding HighlightMentions, Mode=TwoWay}" />
+                        <TextBlock
+                            Grid.Row="1"
+                            Grid.ColumnSpan="2"
+                            Margin="0,6,72,0"
+                            Foreground="#666"
+                            Text="打开后将消息里的 @人 显示为蓝色。"
+                            TextWrapping="Wrap" />
+                    </Grid>
+                </StackPanel>
             </Border>
         </StackPanel>
     </Grid>

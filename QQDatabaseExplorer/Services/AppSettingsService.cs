@@ -62,4 +62,18 @@ public class AppSettingsService
             SettingsChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    public bool HighlightMentions
+    {
+        get => Settings.HighlightMentions;
+        set
+        {
+            if (Settings.HighlightMentions == value)
+                return;
+
+            Settings.HighlightMentions = value;
+            Save();
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 }
