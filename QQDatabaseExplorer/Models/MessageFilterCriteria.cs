@@ -100,5 +100,5 @@ public sealed record MessageFilterDialogRequest(
     IReadOnlyList<MessageSenderFilterOption> SenderCandidates)
 {
     public bool IsGroupConversation =>
-        ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup;
+        ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup or AvaConversationType.Icalingua;
 }

@@ -7,6 +7,7 @@ public sealed class AvaReplyMessage
     public long MessageId { get; init; }
     public long InternalMessageId { get; init; }
     public long MessageRandom { get; init; }
+    public string RawMessageId { get; init; } = string.Empty;
     public long MessageSeq { get; init; }
     public long AlternateMessageSeq { get; init; }
     public uint SenderId { get; init; }

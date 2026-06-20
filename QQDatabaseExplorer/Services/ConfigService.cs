@@ -6,14 +6,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Models;
-using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.Services;
 
 public class ConfigService
 {
     private readonly QQDatabaseService _qqDatabaseService;
-    private readonly IDialogService _dialogService;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -36,10 +34,9 @@ public class ConfigService
             "QQDatabaseExplorer",
             "config.json");
 
-    public ConfigService(QQDatabaseService qqDatabaseService, IDialogService dialogService)
+    public ConfigService(QQDatabaseService qqDatabaseService)
     {
         _qqDatabaseService = qqDatabaseService;
-        _dialogService = dialogService;
     }
 
     /// <summary>
@@ -76,12 +73,12 @@ public class ConfigService
     }
 
     /// <summary>
-    /// 从指定路径加载配置并打开数据库
+    /// 从指定路径读取配置。数据库应用由 DatabaseConfigApplicationService 负责。
     /// </summary>
-    public async Task LoadFromFileAsync(string filePath)
+    public async Task<AppConfig?> LoadFromFileAsync(string filePath)
     {
         if (!File.Exists(filePath))
-            return;
+            return null;
 
         string json;
         try
@@ -90,7 +87,7 @@ public class ConfigService
         }
         catch
         {
-            return;
+            return null;
         }
 
         AppConfig config;
@@ -101,83 +98,22 @@ public class ConfigService
         }
         catch
         {
-            return;
+            return null;
         }
 
         ResolveConfigPathsForLoad(config, filePath);
-        await ApplyConfigAsync(config);
+        return config;
     }
 
     /// <summary>
-    /// 从默认路径加载配置并打开数据库
+    /// 从默认路径读取配置。
     /// </summary>
-    public async Task<bool> LoadFromDefaultAsync()
+    public async Task<AppConfig?> LoadFromDefaultAsync()
     {
         if (!File.Exists(DefaultConfigFilePath))
-            return false;
+            return null;
 
-        await LoadFromFileAsync(DefaultConfigFilePath);
-        return true;
-    }
-
-    /// <summary>
-    /// 将配置应用到 QQDatabaseService，重新打开数据库
-    /// </summary>
-    private async Task ApplyConfigAsync(AppConfig config)
-    {
-        var preparedDatabases = new List<PreparedDatabaseConfig>();
-        try
-        {
-            foreach (var databaseConfig in config.Databases)
-            {
-                EnsureAndroidQQNTPassword(databaseConfig);
-                await PrepareDatabaseConfigAsync(databaseConfig, preparedDatabases);
-            }
-
-            _qqDatabaseService.ClearDatabases();
-
-            foreach (var preparedDatabase in preparedDatabases)
-            {
-                await _qqDatabaseService.ApplyPreparedDatabaseConfigAsync(preparedDatabase);
-            }
-        }
-        finally
-        {
-            foreach (var preparedDatabase in preparedDatabases)
-            {
-                preparedDatabase.Dispose();
-            }
-        }
-    }
-
-    private async Task PrepareDatabaseConfigAsync(
-        DatabaseConfig config,
-        ICollection<PreparedDatabaseConfig> preparedDatabases)
-    {
-        try
-        {
-            preparedDatabases.Add(await _qqDatabaseService.PrepareDatabaseConfigAsync(config));
-        }
-        catch (Exception ex)
-        {
-            await _dialogService.ShowMessageBox(
-                $"打开 {config.Type} 数据库配置失败:\n{ex.Message}",
-                "错误");
-        }
-    }
-
-    private static void EnsureAndroidQQNTPassword(DatabaseConfig config)
-    {
-        if (config.Type is not DatabasePlatformType.AndroidQQNT ||
-            config.AndroidQQNT is not { } android ||
-            !string.IsNullOrWhiteSpace(android.MessageDbPassword) ||
-            string.IsNullOrWhiteSpace(android.NtUid) ||
-            string.IsNullOrWhiteSpace(android.Rand))
-        {
-            return;
-        }
-
-        android.MessageDbPassword = RawDatabase.GetQQKey(android.NtUid, android.Rand);
+        return await LoadFromFileAsync(DefaultConfigFilePath);
     }
 
     private static AppConfig CreateConfigForSave(AppConfig config, string filePath)
@@ -231,6 +167,17 @@ public class ConfigService
                         ProfileInfoDbPassword = config.AndroidQQNT.ProfileInfoDbPassword,
                     },
             },
+            DatabasePlatformType.Icalingua => new DatabaseConfig
+            {
+                Type = DatabasePlatformType.Icalingua,
+                Icalingua = config.Icalingua is null
+                    ? null
+                    : new IcalinguaDatabaseConfig
+                    {
+                        DatabasePath = CreatePortablePath(config.Icalingua.DatabasePath, configDirectory),
+                        DataPath = CreatePortablePath(config.Icalingua.DataPath, configDirectory),
+                    },
+            },
             _ => new DatabaseConfig
             {
                 Type = DatabasePlatformType.QQNT,
@@ -279,6 +226,12 @@ public class ConfigService
             pcqq.MessageDbPath = ResolveConfigPath(pcqq.MessageDbPath, configDirectory);
             pcqq.InfoDbPath = ResolveConfigPath(pcqq.InfoDbPath, configDirectory);
             pcqq.DataPath = ResolveConfigPath(pcqq.DataPath, configDirectory);
+        }
+
+        if (config.Icalingua is { } icalingua)
+        {
+            icalingua.DatabasePath = ResolveConfigPath(icalingua.DatabasePath, configDirectory);
+            icalingua.DataPath = ResolveConfigPath(icalingua.DataPath, configDirectory);
         }
     }
 

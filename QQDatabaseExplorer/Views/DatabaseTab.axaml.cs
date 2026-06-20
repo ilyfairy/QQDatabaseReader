@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using System.Collections.Generic;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Utilities;
 using QQDatabaseExplorer.ViewModels;
 
 namespace QQDatabaseExplorer.Views;
@@ -45,7 +47,7 @@ public partial class DatabaseTab : UserControl
                 },
             },
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
         e.Handled = true;
     }
 
@@ -57,40 +59,32 @@ public partial class DatabaseTab : UserControl
             return;
         }
 
-        var contextMenu = new ContextMenu
+        var menuItems = new List<Control>();
+        if (CanExportDatabase(item))
         {
-            ItemsSource = new Control[]
+            menuItems.Add(new MenuItem
             {
-                new MenuItem
-                {
-                    Header = "导出成无加密数据库(同时可以修复损坏的数据)",
-                    Command = _viewModel.ExportDatabaseCommand,
-                    CommandParameter = item,
-                    IsEnabled = item.Database is not null,
-                },
-                new MenuItem
-                {
-                    Header = "移除",
-                    Command = _viewModel.RemoveDatabaseCommand,
-                    CommandParameter = item,
-                    IsEnabled = item.Database is not null,
-                },
-            },
-        };
-        OpenContextMenu(owner, contextMenu);
+                Header = "导出成无加密数据库(同时可以修复损坏的数据)",
+                Command = _viewModel.ExportDatabaseCommand,
+                CommandParameter = item,
+            });
+        }
+
+        menuItems.Add(new MenuItem
+        {
+            Header = "移除",
+            Command = _viewModel.RemoveDatabaseCommand,
+            CommandParameter = item,
+            IsEnabled = item.Database is not null,
+        });
+
+        var contextMenu = new ContextMenu { ItemsSource = menuItems };
+        ContextMenuHelper.Open(owner, contextMenu);
         e.Handled = true;
     }
 
-    private static void OpenContextMenu(Control owner, ContextMenu contextMenu)
+    private static bool CanExportDatabase(LoadedDatabaseItem item)
     {
-        var previousContextMenu = owner.ContextMenu;
-        contextMenu.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(owner.ContextMenu, contextMenu))
-                owner.ContextMenu = previousContextMenu;
-        };
-
-        owner.ContextMenu = contextMenu;
-        contextMenu.Open(owner);
+        return item.CanExport && item.Kind != LoadedDatabaseItemKind.IcalinguaMessageDb;
     }
 }

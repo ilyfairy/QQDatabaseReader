@@ -32,4 +32,9 @@ public enum QQDatabaseType
     /// PCQQ Msg3.0.db
     /// </summary>
     PCQQMessage,
+
+    /// <summary>
+    /// Icalingua-plus-plus eqq*.db
+    /// </summary>
+    IcalinguaMessage,
 }

@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Utilities;
 using Ursa.Controls;
 
 namespace QQDatabaseExplorer.Views;
@@ -165,7 +166,7 @@ public partial class ForwardedMessageDialog : UrsaWindow
             ? new Control[] { copyMenuItem }
             : [copyMenuItem, copyLinkMenuItem];
 
-        OpenContextMenu(owner, new ContextMenu { ItemsSource = items });
+        ContextMenuHelper.Open(owner, new ContextMenu { ItemsSource = items });
     }
 
     private static MessageSelectableTextBlock? FindSourceSelectableTextBlock(ContextRequestedEventArgs e)
@@ -191,21 +192,6 @@ public partial class ForwardedMessageDialog : UrsaWindow
         var lastSelection = Math.Max(textBlock.SelectionStart, textBlock.SelectionEnd);
 
         return hit.TextPosition >= firstSelection && hit.TextPosition <= lastSelection;
-    }
-
-    private static void OpenContextMenu(Control owner, ContextMenu contextMenu)
-    {
-        var previousContextMenu = owner.ContextMenu;
-        contextMenu.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(owner.ContextMenu, contextMenu))
-            {
-                owner.ContextMenu = previousContextMenu;
-            }
-        };
-
-        owner.ContextMenu = contextMenu;
-        contextMenu.Open(owner);
     }
 
     private async System.Threading.Tasks.Task OpenUriAsync(string url)

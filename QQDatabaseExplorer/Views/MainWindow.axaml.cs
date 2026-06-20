@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using Avalonia.Controls;
 using QQDatabaseExplorer.Models;
@@ -15,6 +15,7 @@ public partial class MainWindow : UrsaWindow
 {
     private readonly IDialogService _dialogService;
     private readonly ConfigService _configService;
+    private readonly DatabaseConfigApplicationService _databaseConfigApplicationService;
     private readonly QQDatabaseService _qqDatabaseService;
     private readonly MainViewModel _mainViewModel;
 
@@ -23,12 +24,14 @@ public partial class MainWindow : UrsaWindow
         MainView mainView,
         IDialogService dialogService,
         ConfigService configService,
+        DatabaseConfigApplicationService databaseConfigApplicationService,
         QQDatabaseService qqDatabaseService)
     {
         DataContext = mainViewModel;
         Content = mainView;
         _dialogService = dialogService;
         _configService = configService;
+        _databaseConfigApplicationService = databaseConfigApplicationService;
         _qqDatabaseService = qqDatabaseService;
         _mainViewModel = mainViewModel;
 
@@ -48,6 +51,11 @@ public partial class MainWindow : UrsaWindow
     private async void OpenAndroidQQNTMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.AndroidQQNT);
+    }
+
+    private async void OpenIcalinguaMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.Icalingua);
     }
 
     private async void SaveConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -109,20 +117,24 @@ public partial class MainWindow : UrsaWindow
 
         try
         {
-            _mainViewModel.LoadingText = "正在打开数据库配置...";
-            _mainViewModel.IsLoadingConfig = true;
-            await Task.Yield();
-            await _configService.LoadFromFileAsync(filePath);
+            var config = await _configService.LoadFromFileAsync(filePath);
+            if (config is null)
+                return;
+
+            var errors = await _databaseConfigApplicationService.ApplyAsync(config);
+            if (errors.Count > 0)
+                await _dialogService.ShowMessageBox(CreateConfigApplyErrorMessage(errors), "错误");
         }
         catch (Exception ex)
         {
             await _dialogService.ShowMessageBox($"打开数据库配置失败:\n{ex.Message}", "错误");
         }
-        finally
-        {
-            _mainViewModel.IsLoadingConfig = false;
-            _mainViewModel.LoadingText = string.Empty;
-        }
+    }
+
+    private static string CreateConfigApplyErrorMessage(IReadOnlyList<DatabaseConfigApplyError> errors)
+    {
+        return "部分数据库配置打开失败:\n" +
+               string.Join("\n", errors.Select(static error => $"{error.Type}: {error.Message}"));
     }
 
     private void CloseConfigMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

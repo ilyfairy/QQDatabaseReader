@@ -34,6 +34,10 @@ public partial class AvaQQMessageSegment : ObservableObject
     public int? VideoDurationMilliseconds { get; init; }
     public bool IsVideoAvailable { get; set; }
     public bool IsVideoCoverAvailable { get; set; }
+    public string? FileLocalPath { get; set; }
+    public string? FileName { get; init; }
+    public long? FileSize { get; init; }
+    public bool IsFileAvailable { get; set; }
     public ForwardedMessageCard? ForwardedMessage { get; init; }
     public SharedContactCard? SharedContact { get; init; }
     public MiniAppCard? MiniApp { get; init; }
@@ -56,6 +60,9 @@ public partial class AvaQQMessageSegment : ObservableObject
 
             if (Type == AvaQQMessageSegmentType.Video)
                 return string.IsNullOrEmpty(Text) ? "[视频]" : Text;
+
+            if (Type == AvaQQMessageSegmentType.File)
+                return string.IsNullOrEmpty(Text) ? "[文件]" : Text;
 
             if (Type == AvaQQMessageSegmentType.ForwardedMessage)
                 return ForwardedMessage?.CopyText ?? "[聊天记录]";
@@ -197,6 +204,25 @@ public partial class AvaQQMessageSegment : ObservableObject
         };
     }
 
+    public static AvaQQMessageSegment CreateFile(
+        string? localPath,
+        string? fileName,
+        long? fileSize,
+        bool isAvailable)
+    {
+        var displayName = string.IsNullOrWhiteSpace(fileName) ? "文件" : fileName;
+        return new AvaQQMessageSegment
+        {
+            Type = AvaQQMessageSegmentType.File,
+            Tone = isAvailable ? AvaQQMessageSegmentTone.Normal : AvaQQMessageSegmentTone.Warning,
+            Text = isAvailable ? $"[文件] {displayName}" : $"[文件未找到] {displayName}",
+            FileLocalPath = localPath,
+            FileName = fileName,
+            FileSize = fileSize,
+            IsFileAvailable = isAvailable,
+        };
+    }
+
     public static AvaQQMessageSegment CreateForwardedMessage(ForwardedMessageCard card)
     {
         return new AvaQQMessageSegment
@@ -251,6 +277,7 @@ public enum AvaQQMessageSegmentType
     Image,
     Voice,
     Video,
+    File,
     ForwardedMessage,
     SharedContact,
     MiniApp,

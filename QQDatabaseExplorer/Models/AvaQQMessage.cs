@@ -125,6 +125,17 @@ public partial class AvaQQMessage : ObservableObject
 
     public bool HasSystemHintFace => !string.IsNullOrWhiteSpace(SystemHintFaceAssetPath);
 
+    public bool HasStructuredSystemHint =>
+        HasSystemHintUserSourceName ||
+        HasSystemHintPlainSourceName ||
+        HasSystemHintActionImage ||
+        HasSystemHintAction ||
+        HasSystemHintTargetName ||
+        HasSystemHintFace ||
+        HasSystemHintSuffix;
+
+    public bool HasUnstructuredSystemHint => IsSystemHint && !HasStructuredSystemHint;
+
     public bool CanJumpToSystemHintTarget => SystemHintTargetMessageSeq > 0;
 
     public bool HasReactions => Reactions.Count > 0;

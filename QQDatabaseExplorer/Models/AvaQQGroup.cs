@@ -27,6 +27,12 @@ public partial class AvaQQGroup : ObservableObject
     public partial bool PCQQHasInfo { get; set; }
 
     [ObservableProperty]
+    public partial long IcalinguaRoomId { get; set; }
+
+    [ObservableProperty]
+    public partial string? IcalinguaDownloadPath { get; set; }
+
+    [ObservableProperty]
     public partial bool IsSelected { get; set; }
 
     [ObservableProperty]
@@ -38,6 +44,7 @@ public partial class AvaQQGroup : ObservableObject
         AvaConversationType.Private => $"private:{PrivateConversationId}",
         AvaConversationType.PCQQGroup => $"pcqq-group:{GroupId}",
         AvaConversationType.PCQQPrivate => $"pcqq-private:{PrivateUin}",
+        AvaConversationType.Icalingua => $"icalingua:{IcalinguaRoomId}",
         _ => $"{ConversationType}:{GroupId}:{PrivateConversationId}",
     };
 
@@ -49,7 +56,9 @@ public partial class AvaQQGroup : ObservableObject
                 ? PrivateUin != 0 ? PrivateUin.ToString() : PrivateUid
                 : ConversationType == AvaConversationType.PCQQPrivate
                     ? PrivateUin != 0 ? PrivateUin.ToString() : null
-                    : GroupId != 0 ? GroupId.ToString() : null;
+                    : ConversationType == AvaConversationType.Icalingua
+                        ? IcalinguaRoomId != 0 ? IcalinguaRoomId.ToString() : null
+                        : GroupId != 0 ? GroupId.ToString() : null;
             return GroupName | fallback ?? string.Empty;
         }
     }
@@ -63,6 +72,12 @@ public partial class AvaQQGroup : ObservableObject
         AvaConversationType.Group => GroupId == 0 ? null : $"https://p.qlogo.cn/gh/{GroupId}/{GroupId}/640/",
         AvaConversationType.PCQQGroup => !PCQQHasInfo || GroupId == 0 ? null : $"https://p.qlogo.cn/gh/{GroupId}/{GroupId}/640/",
         AvaConversationType.Private or AvaConversationType.PCQQPrivate => PrivateUin == 0 ? null : $"http://q1.qlogo.cn/g?b=qq&nk={PrivateUin}&s=100",
+        AvaConversationType.Icalingua => IcalinguaRoomId switch
+        {
+            < 0 => $"https://p.qlogo.cn/gh/{-IcalinguaRoomId}/{-IcalinguaRoomId}/0",
+            > 0 => $"https://q1.qlogo.cn/g?b=qq&nk={IcalinguaRoomId}&s=140",
+            _ => null,
+        },
         _ => null,
     };
 
@@ -140,6 +155,14 @@ public partial class AvaQQGroup : ObservableObject
         OnPropertyChanged(nameof(AvatarUrl));
     }
 
+    partial void OnIcalinguaRoomIdChanged(long value)
+    {
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(ListDisplayName));
+        OnPropertyChanged(nameof(AvatarUrl));
+        OnPropertyChanged(nameof(ConversationKey));
+    }
+
     partial void OnGroupNameChanged(string? value)
     {
         OnPropertyChanged(nameof(DisplayName));
@@ -163,4 +186,5 @@ public enum AvaConversationType
     Private,
     PCQQGroup,
     PCQQPrivate,
+    Icalingua,
 }

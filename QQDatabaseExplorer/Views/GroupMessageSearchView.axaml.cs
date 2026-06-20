@@ -9,6 +9,7 @@ using System.ComponentModel;
 using System.Linq;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Utilities;
 using QQDatabaseExplorer.ViewModels;
 
 namespace QQDatabaseExplorer.Views;
@@ -124,14 +125,14 @@ public partial class GroupMessageSearchView : UserControl
         var locateMenuItem = new MenuItem
         {
             Header = "定位到聊天消息",
-            IsEnabled = result.GroupId != 0 && result.MessageSeq > 0,
+            IsEnabled = result.CanLocate,
         };
         locateMenuItem.Click += async (_, _) => await _viewModel.OpenResultInMessageTabAsync(result);
 
         var locateAndClearFilterMenuItem = new MenuItem
         {
             Header = "定位到聊天消息并清除筛选",
-            IsEnabled = result.GroupId != 0 && result.MessageSeq > 0,
+            IsEnabled = result.CanLocate,
         };
         locateAndClearFilterMenuItem.Click += async (_, _) =>
             await _viewModel.OpenResultInMessageTabAndClearFilterAsync(result);
@@ -145,7 +146,7 @@ public partial class GroupMessageSearchView : UserControl
             },
         };
 
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private static AvaGroupMessageSearchResult? FindSearchResult(object? source)
@@ -169,18 +170,4 @@ public partial class GroupMessageSearchView : UserControl
             .FirstOrDefault();
     }
 
-    private static void OpenContextMenu(Control owner, ContextMenu contextMenu)
-    {
-        var previousContextMenu = owner.ContextMenu;
-        contextMenu.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(owner.ContextMenu, contextMenu))
-            {
-                owner.ContextMenu = previousContextMenu;
-            }
-        };
-
-        owner.ContextMenu = contextMenu;
-        contextMenu.Open(owner);
-    }
 }

@@ -273,7 +273,11 @@
                                         ContextRequested="MessageBubble_ContextRequested"
                                         IsVisible="{Binding IsSystemHint}"
                                         Tapped="SystemHint_Tapped">
-                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Grid>
+                                        <StackPanel
+                                            Orientation="Horizontal"
+                                            Spacing="4"
+                                            IsVisible="{Binding HasStructuredSystemHint}">
                                             <TextBlock
                                                 VerticalAlignment="Center"
                                                 FontSize="10"
@@ -338,6 +342,19 @@
                                                 IsVisible="{Binding HasSystemHintSuffix}"
                                                 Text="{Binding SystemHintSuffix}" />
                                         </StackPanel>
+                                        <controls:MessageSelectableTextBlock
+                                            MaxWidth="560"
+                                            VerticalAlignment="Center"
+                                            ContextFlyout="{x:Null}"
+                                            CopyingToClipboard="MessageText_CopyingToClipboard"
+                                            ContextRequested="MessageText_ContextRequested"
+                                            FontSize="10"
+                                            Foreground="#666"
+                                            IsVisible="{Binding HasUnstructuredSystemHint}"
+                                            TextAlignment="Center"
+                                            TextWrapping="Wrap"
+                                            controls:MessageInlineRenderer.Segments="{Binding Segments}" />
+                                        </Grid>
                                     </Border>
 
                                     <Grid
@@ -492,6 +509,21 @@
                         </ItemsControl.DataTemplates>
                     </ItemsControl>
                 </ScrollViewer>
+
+                <Border
+                    Grid.Row="0"
+                    Classes="MessagePagingIndicator"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding IsLoadingInitialMessages}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ProgressBar Classes="MessagePagingProgress" />
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            Foreground="#666"
+                            Text="加载消息..." />
+                    </StackPanel>
+                </Border>
 
                 <Border
                     Grid.Row="0"

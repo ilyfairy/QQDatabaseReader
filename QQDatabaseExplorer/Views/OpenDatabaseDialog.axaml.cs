@@ -63,6 +63,26 @@ public partial class OpenDatabaseDialog : Window
         }
     }
 
+    private async void PickIcalinguaDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder)
+            return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择 Icalingua 数据目录",
+            AllowMultiple = false,
+        });
+
+        var folderPath = folders.Count > 0
+            ? folders[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            ViewModel.IcalinguaDataPath = folderPath;
+        }
+    }
+
     private async void PickNtMessageDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (await PickDatabaseFileAsync("选择 nt_msg.db") is { } filePath)
@@ -111,6 +131,12 @@ public partial class OpenDatabaseDialog : Window
         {
             ViewModel.UsePickedPCQQInfoDbPath(filePath);
         }
+    }
+
+    private async void PickIcalinguaDatabaseButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (await PickDatabaseFileAsync("选择 Icalingua 数据库") is { } filePath)
+            ViewModel.IcalinguaDatabasePath = filePath;
     }
 
     private async Task<string?> PickDatabaseFileAsync(string title)

@@ -11,15 +11,20 @@ public partial class DatabaseTabViewModel : ViewModelBase
 {
     private readonly QQDatabaseService _qqDatabaseService;
     private readonly IDialogService _dialogService;
+    private readonly DatabaseConfigApplicationService _databaseConfigApplicationService;
 
     public ViewModelToken ViewModelToken { get; } = new();
 
     public ObservableCollection<LoadedDatabaseGroup> DatabaseGroups => _qqDatabaseService.DatabaseGroups;
 
-    public DatabaseTabViewModel(QQDatabaseService qqDatabaseService, IDialogService dialogService)
+    public DatabaseTabViewModel(
+        QQDatabaseService qqDatabaseService,
+        IDialogService dialogService,
+        DatabaseConfigApplicationService databaseConfigApplicationService)
     {
         _qqDatabaseService = qqDatabaseService;
         _dialogService = dialogService;
+        _databaseConfigApplicationService = databaseConfigApplicationService;
     }
 
     [RelayCommand]
@@ -33,7 +38,14 @@ public partial class DatabaseTabViewModel : ViewModelBase
         if (updatedConfig is null)
             return;
 
-        _qqDatabaseService.ReplaceDatabaseGroup(group, updatedConfig);
+        try
+        {
+            await _databaseConfigApplicationService.ApplyAsync(updatedConfig);
+        }
+        catch (System.Exception ex)
+        {
+            await _dialogService.ShowMessageBox($"打开 {updatedConfig.Type} 数据库失败:\n{ex.Message}", "错误", ViewModelToken);
+        }
     }
 
     [RelayCommand]
@@ -51,7 +63,7 @@ public partial class DatabaseTabViewModel : ViewModelBase
     [RelayCommand]
     public async Task ExportDatabase(LoadedDatabaseItem item)
     {
-        if (item.Database is { } database)
+        if (item.CanExport && item.Database is { } database)
             await _dialogService.ShowExportDatabaseDialog(database, ViewModelToken);
     }
 }

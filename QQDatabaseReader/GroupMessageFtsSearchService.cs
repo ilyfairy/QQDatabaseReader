@@ -59,8 +59,8 @@ public sealed class GroupMessageFtsSearchService
             }
 
             var matchQuery = CreateMatchQuery(request.Query);
-            if (request.GroupId is { } groupId)
-                return CountGroupMatches(connection, matchQuery, groupId);
+            if (request.HasConversationFilter)
+                return CountConversationMatches(connection, matchQuery, request.GroupId, request.PeerUin, request.PrivateConversationIds);
 
             using var command = connection.CreateCommand();
             command.CommandText = CreateCountSql();
@@ -132,7 +132,7 @@ public sealed class GroupMessageFtsSearchService
             return LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
         }
 
-        if (request.GroupId is null)
+        if (!request.HasConversationFilter)
         {
             var rowIds = ReadMatchRowIds(connection, matchQuery, request.BeforeRowId, limit.Value);
             return LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
@@ -150,7 +150,7 @@ public sealed class GroupMessageFtsSearchService
             var rows = LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
             foreach (var row in rows)
             {
-                if (!IsGroupMatch(row, request.GroupId.Value))
+                if (!IsConversationMatch(row, request))
                     continue;
 
                 results.Add(row);
@@ -181,11 +181,7 @@ public sealed class GroupMessageFtsSearchService
             AddParameter(command, "$limit", limit.Value);
         }
 
-        if (request.GroupId is { } groupId)
-        {
-            AddParameter(command, "$groupId", ToSqliteUInt32BitPattern(groupId));
-            AddParameter(command, "$groupIdText", groupId.ToString());
-        }
+        AddConversationFilterParameters(command, request);
 
         if (request.BeforeRowId is { } beforeRowId)
         {
@@ -360,6 +356,8 @@ public sealed class GroupMessageFtsSearchService
                 RowId = ReadInt64(reader, 0),
                 PeerUid = ReadString(reader, 1),
                 GroupId = ReadUInt32BitPattern(reader, 2),
+                PrivateConversationId = ReadInt64(reader, 2),
+                ChatType = (ChatType)ReadInt32(reader, 3),
             };
             rowMap[row.RowId] = row;
         }
@@ -379,10 +377,12 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static long CountGroupMatches(
+    private static long CountConversationMatches(
         DbConnection connection,
         string matchQuery,
-        uint groupId)
+        uint? groupId,
+        uint? peerUin,
+        IReadOnlyList<long>? privateConversationIds)
     {
         long count = 0;
         long? beforeRowId = null;
@@ -394,7 +394,7 @@ public sealed class GroupMessageFtsSearchService
 
             foreach (var row in LoadMatchScanRowsByRowIds(connection, rowIds, includeUnreadableRows: false))
             {
-                if (IsGroupMatch(row, groupId))
+                if (IsConversationMatch(row, groupId, peerUin, privateConversationIds))
                     count++;
             }
 
@@ -406,16 +406,43 @@ public sealed class GroupMessageFtsSearchService
         return count;
     }
 
-    private static bool IsGroupMatch(GroupMessageFtsSearchResult result, uint groupId)
+    private static bool IsConversationMatch(GroupMessageFtsSearchResult result, GroupMessageFtsSearchRequest request)
     {
-        return result.GroupId == groupId ||
-            string.Equals(result.PeerUid, groupId.ToString(), StringComparison.Ordinal);
+        return IsConversationMatch(result.ChatType, result.GroupId, result.PrivateConversationId, result.PeerUid, request.GroupId, request.PeerUin, request.PrivateConversationIds);
     }
 
-    private static bool IsGroupMatch(GroupMessageFtsMatchScanRow result, uint groupId)
+    private static bool IsConversationMatch(GroupMessageFtsMatchScanRow result, uint? groupId, uint? peerUin, IReadOnlyList<long>? privateConversationIds)
     {
-        return result.GroupId == groupId ||
-            string.Equals(result.PeerUid, groupId.ToString(), StringComparison.Ordinal);
+        return IsConversationMatch(result.ChatType, result.GroupId, result.PrivateConversationId, result.PeerUid, groupId, peerUin, privateConversationIds);
+    }
+
+    private static bool IsConversationMatch(
+        ChatType chatType,
+        uint groupId,
+        long privateConversationId,
+        string? peerUid,
+        uint? requestedGroupId,
+        uint? requestedPeerUin,
+        IReadOnlyList<long>? requestedPrivateConversationIds)
+    {
+        if (requestedGroupId is { } groupFilter &&
+            chatType == ChatType.GroupMessage &&
+            (groupId == groupFilter || string.Equals(peerUid, groupFilter.ToString(), StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (chatType != ChatType.PrivateMessage)
+            return false;
+
+        if (requestedPrivateConversationIds is { Count: > 0 } conversationIds &&
+            conversationIds.Contains(privateConversationId))
+        {
+            return true;
+        }
+
+        return requestedPeerUin is { } peerFilter &&
+            string.Equals(peerUid, peerFilter.ToString(), StringComparison.Ordinal);
     }
 
     private static GroupMessageFtsSearchResult ReadSearchResult(DbDataReader reader, int? rankOrdinal)
@@ -441,6 +468,7 @@ public sealed class GroupMessageFtsSearchService
             ChatType = (ChatType)ReadInt32(reader, 4),
             PeerUid = ReadString(reader, 5),
             GroupId = ReadUInt32BitPattern(reader, 6),
+            PrivateConversationId = ReadInt64(reader, 6),
             SenderUid = ReadString(reader, 7),
             TextFields = previewTexts.Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value!).ToArray(),
             PreviewText = GroupMessageFtsText.Combine(previewTexts.ToArray()),
@@ -517,6 +545,7 @@ WHERE rowid IN ({CreateRowIdParameterList(count)})
     {
         return $"""
 SELECT rowid, [40021], [40027]
+       , [40010]
 FROM group_msg_fts
 WHERE rowid IN ({CreateRowIdParameterList(count)})
 """;
@@ -560,10 +589,9 @@ WHERE group_msg_fts_fts MATCH $query
 
 """);
 
-        if (request.GroupId is not null)
-        {
-            sql.AppendLine("AND ([40027] = $groupId OR [40021] = $groupIdText)");
-        }
+        var conversationFilter = CreateRankConversationFilterSql(request);
+        if (!string.IsNullOrWhiteSpace(conversationFilter))
+            sql.AppendLine("AND " + conversationFilter);
 
         if (request.BeforeRowId is not null)
         {
@@ -577,6 +605,34 @@ WHERE group_msg_fts_fts MATCH $query
         }
 
         return sql.ToString();
+    }
+
+    private static string CreateRankConversationFilterSql(GroupMessageFtsSearchRequest request)
+    {
+        var filters = new List<string>();
+        if (request.GroupId is not null)
+        {
+            filters.Add("([40010] = $groupChatType AND ([40027] = $groupId OR [40021] = $groupIdText))");
+        }
+
+        if (request.PeerUin is not null)
+        {
+            filters.Add("([40010] = $privateChatType AND [40021] = $peerUinText)");
+        }
+
+        if (request.PrivateConversationIds is { Count: > 0 } conversationIds)
+        {
+            var parameters = Enumerable.Range(0, conversationIds.Count)
+                .Select(static index => "$privateConversationId" + index);
+            filters.Add($"([40010] = $privateChatType AND [40027] IN ({string.Join(", ", parameters)}))");
+        }
+
+        return filters.Count switch
+        {
+            0 => string.Empty,
+            1 => filters[0],
+            _ => "(" + string.Join(" OR ", filters) + ")",
+        };
     }
 
     private static string CreateCountSql()
@@ -607,6 +663,37 @@ WHERE group_msg_fts_fts MATCH $query
         parameter.ParameterName = name;
         parameter.Value = value;
         command.Parameters.Add(parameter);
+    }
+
+    private static void AddConversationFilterParameters(DbCommand command, GroupMessageFtsSearchRequest request)
+    {
+        if (!request.HasConversationFilter)
+            return;
+
+        if (request.GroupId is { } groupId)
+        {
+            AddParameter(command, "$groupChatType", (int)ChatType.GroupMessage);
+            AddParameter(command, "$groupId", ToSqliteUInt32BitPattern(groupId));
+            AddParameter(command, "$groupIdText", groupId.ToString());
+        }
+
+        if (request.PeerUin is not null || request.PrivateConversationIds is { Count: > 0 })
+        {
+            AddParameter(command, "$privateChatType", (int)ChatType.PrivateMessage);
+        }
+
+        if (request.PeerUin is { } peerUin)
+        {
+            AddParameter(command, "$peerUinText", peerUin.ToString());
+        }
+
+        if (request.PrivateConversationIds is not { Count: > 0 } conversationIds)
+            return;
+
+        for (var index = 0; index < conversationIds.Count; index++)
+        {
+            AddParameter(command, "$privateConversationId" + index, conversationIds[index]);
+        }
     }
 
     private static int ToSqliteUInt32BitPattern(uint value)
@@ -645,11 +732,21 @@ public sealed record GroupMessageFtsSearchRequest(
     uint? GroupId = null,
     int? Limit = null,
     GroupMessageFtsSearchOrder Order = GroupMessageFtsSearchOrder.Relevance,
-    long? BeforeRowId = null);
+    long? BeforeRowId = null,
+    IReadOnlyList<long>? PrivateConversationIds = null,
+    uint? PeerUin = null)
+{
+    public bool HasConversationFilter => GroupId is not null || PeerUin is not null || PrivateConversationIds is { Count: > 0 };
+}
 
 public sealed record GroupMessageFtsCountRequest(
     string Query,
-    uint? GroupId = null);
+    uint? GroupId = null,
+    IReadOnlyList<long>? PrivateConversationIds = null,
+    uint? PeerUin = null)
+{
+    public bool HasConversationFilter => GroupId is not null || PeerUin is not null || PrivateConversationIds is { Count: > 0 };
+}
 
 public sealed record GroupMessageFtsMatchScanRequest(
     string Query,
@@ -681,6 +778,7 @@ public sealed class GroupMessageFtsSearchResult
     public ChatType ChatType { get; init; }
     public string? PeerUid { get; init; }
     public uint GroupId { get; init; }
+    public long PrivateConversationId { get; init; }
     public string? SenderUid { get; init; }
     public IReadOnlyList<string> TextFields { get; init; } = [];
     public string PreviewText { get; init; } = string.Empty;
@@ -691,7 +789,9 @@ public sealed class GroupMessageFtsSearchResult
 public sealed class GroupMessageFtsMatchScanRow
 {
     public long RowId { get; init; }
+    public ChatType ChatType { get; init; }
     public string? PeerUid { get; init; }
     public uint GroupId { get; init; }
+    public long PrivateConversationId { get; init; }
     public bool IsUnreadable { get; init; }
 }

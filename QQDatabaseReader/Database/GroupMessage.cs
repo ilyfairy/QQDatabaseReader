@@ -176,23 +176,7 @@ public class GroupMessage
 
     public string GetText()
     {
-        if (Content is null)
-        {
-            return QQMessageDisplayText.TryGetFallbackText(MessageType, SubMessageType, out var fallbackText)
-                ? fallbackText
-                : string.Empty;
-        }
-
-        try
-        {
-            return QQMessageReader.ParseMessage(Content).GetText(MessageType, SubMessageType);
-        }
-        catch (Exception)
-        {
-            return QQMessageDisplayText.TryGetFallbackText(MessageType, SubMessageType, out var fallbackText)
-                ? fallbackText
-                : string.Empty;
-        }
+        return QQMessageDisplayText.CreateText(Content, MessageType, SubMessageType);
     }
 }
 

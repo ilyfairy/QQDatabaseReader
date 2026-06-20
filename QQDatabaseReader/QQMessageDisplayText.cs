@@ -4,18 +4,48 @@ namespace QQDatabaseReader;
 
 public static class QQMessageDisplayText
 {
+    public static string CreateText(byte[]? content, MessageType messageType, SubMessageType subMessageType)
+    {
+        if (content is null || content.Length == 0)
+            return CreateKnownFallbackText(messageType, subMessageType);
+
+        try
+        {
+            return CreateText(QQMessageReader.ParseMessage(content), messageType, subMessageType);
+        }
+        catch
+        {
+            try
+            {
+                return CreateText([QQMessageReader.ParseMessageSegment(content)], messageType, subMessageType);
+            }
+            catch
+            {
+                return CreateKnownFallbackText(messageType, subMessageType);
+            }
+        }
+    }
+
+    public static string CreateText(IReadOnlyList<QQMessageSegment> segments, MessageType messageType, SubMessageType subMessageType)
+    {
+        if (segments.Count == 0)
+            return string.Empty;
+
+        return CreateText(new QQMessageContent(segments), messageType, subMessageType);
+    }
+
     public static string CreateText(QQMessageContent content, MessageType messageType, SubMessageType subMessageType)
     {
         if (TryGetPriorityText(messageType, subMessageType, out var priorityText))
             return priorityText;
 
-        var text = string.Concat(content.Segments.Select(segment => CreateSegmentText(segment, messageType, subMessageType)));
+        var text = string.Concat(content.Segments
+            .Where(segment => segment.Type != MessageSegmentType.Reply)
+            .Select(segment => CreateSegmentText(segment, messageType, subMessageType)));
         if (!string.IsNullOrWhiteSpace(text))
             return text;
 
-        return TryGetFallbackText(messageType, subMessageType, out var fallbackText)
-            ? fallbackText
-            : string.Empty;
+        return CreateKnownFallbackText(messageType, subMessageType);
     }
 
     public static string CreateSegmentText(QQMessageSegment segment, MessageType messageType, SubMessageType subMessageType)
@@ -86,5 +116,12 @@ public static class QQMessageDisplayText
         };
 
         return !string.IsNullOrWhiteSpace(text);
+    }
+
+    private static string CreateKnownFallbackText(MessageType messageType, SubMessageType subMessageType)
+    {
+        return TryGetFallbackText(messageType, subMessageType, out var fallbackText)
+            ? fallbackText
+            : string.Empty;
     }
 }

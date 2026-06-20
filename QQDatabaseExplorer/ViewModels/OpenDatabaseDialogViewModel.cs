@@ -18,8 +18,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     private const string NtProfileInfoDbFileName = "profile_info.db";
     private const string PCQQMessageDbFileName = "Msg3.0.db";
     private const string PCQQInfoDbFileName = "Info.db";
+    private const string IcalinguaDatabasePrefix = "eqq";
 
-    private readonly QQDatabaseService _qqDatabaseService;
     private readonly IDialogService _dialogService;
 
     [ObservableProperty]
@@ -68,6 +68,12 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public partial string PCQQDataPath { get; set; } = string.Empty;
 
     [ObservableProperty]
+    public partial string IcalinguaDatabasePath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string IcalinguaDataPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
     public partial string NtUid { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -80,6 +86,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public bool IsNtPlatform => PlatformType is DatabasePlatformType.QQNT or DatabasePlatformType.AndroidQQNT;
 
     public bool IsPCQQ => PlatformType is DatabasePlatformType.PCQQ;
+
+    public bool IsIcalingua => PlatformType is DatabasePlatformType.Icalingua;
 
     public bool CanFindDatabaseKey => PlatformType is DatabasePlatformType.QQNT or DatabasePlatformType.PCQQ;
 
@@ -98,17 +106,15 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         { DatabasePlatformType.PCQQ, "PCQQ" },
         { DatabasePlatformType.QQNT, "QQNT" },
         { DatabasePlatformType.AndroidQQNT, "AndroidQQNT" },
+        { DatabasePlatformType.Icalingua, "Icalingua" },
     };
 
     public ViewModelToken ViewModelToken { get; } = new();
 
     public DatabaseConfig? ResultConfig { get; private set; }
 
-    private bool _deferLoadToCaller;
-
-    public OpenDatabaseDialogViewModel(QQDatabaseService qqDatabaseService, IDialogService dialogService)
+    public OpenDatabaseDialogViewModel(IDialogService dialogService)
     {
-        _qqDatabaseService = qqDatabaseService;
         _dialogService = dialogService;
     }
 
@@ -119,6 +125,14 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         {
             PlatformType = DatabasePlatformType.PCQQ;
             PCQQMessageDbPath = databaseFilePath;
+            return;
+        }
+
+        if (fileName.StartsWith(IcalinguaDatabasePrefix, StringComparison.OrdinalIgnoreCase) &&
+            fileName.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+        {
+            PlatformType = DatabasePlatformType.Icalingua;
+            IcalinguaDatabasePath = databaseFilePath;
             return;
         }
 
@@ -152,7 +166,6 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     public void SetInitialConfig(DatabaseConfig config)
     {
-        _deferLoadToCaller = true;
         PlatformType = config.Type;
         switch (config.Type)
         {
@@ -171,6 +184,10 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             case DatabasePlatformType.QQNT when config.QQNT is { } qqnt:
                 SetQQNTFields(qqnt);
                 break;
+            case DatabasePlatformType.Icalingua when config.Icalingua is { } icalingua:
+                IcalinguaDatabasePath = icalingua.DatabasePath ?? string.Empty;
+                IcalinguaDataPath = icalingua.DataPath ?? string.Empty;
+                break;
         }
     }
 
@@ -180,6 +197,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsAndroidQQNT));
         OnPropertyChanged(nameof(IsNtPlatform));
         OnPropertyChanged(nameof(IsPCQQ));
+        OnPropertyChanged(nameof(IsIcalingua));
         OnPropertyChanged(nameof(CanFindDatabaseKey));
         OnPropertyChanged(nameof(NtDataPathLabel));
         OnPropertyChanged(nameof(NtDataPathToolTip));
@@ -248,8 +266,13 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 }
 
                 ResultConfig = CreatePCQQConfig();
-                if (!_deferLoadToCaller)
-                    _qqDatabaseService.LoadDatabaseConfig(ResultConfig);
+            }
+            else if (IsIcalingua)
+            {
+                if (!await ValidateRequiredFileAsync(IcalinguaDatabasePath, "请输入 Icalingua 数据库路径", "Icalingua 数据库文件不存在"))
+                    return;
+
+                ResultConfig = CreateIcalinguaConfig();
             }
             else
             {
@@ -260,8 +283,6 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                     return;
 
                 ResultConfig = CreateQQNTConfig();
-                if (!_deferLoadToCaller)
-                    _qqDatabaseService.LoadDatabaseConfig(ResultConfig);
             }
         }
         catch (Exception ex)
@@ -526,6 +547,19 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 ProfileInfoDbPassword = config.ProfileInfoDbPassword,
                 NtUid = EmptyToNull(NtUid),
                 Rand = EmptyToNull(Rand),
+            },
+        };
+    }
+
+    private DatabaseConfig CreateIcalinguaConfig()
+    {
+        return new DatabaseConfig
+        {
+            Type = DatabasePlatformType.Icalingua,
+            Icalingua = new IcalinguaDatabaseConfig
+            {
+                DatabasePath = EmptyToNull(IcalinguaDatabasePath),
+                DataPath = EmptyToNull(IcalinguaDataPath),
             },
         };
     }

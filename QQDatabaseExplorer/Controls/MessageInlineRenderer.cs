@@ -31,6 +31,10 @@ public static class MessageInlineRenderer
     private const double VoiceCardMinWidth = 66;
     private const double VoiceCardMaxWidth = 104;
     private const double MessageCardWidth = 270;
+    private const double FileCardHeight = 54;
+    private static readonly Thickness FileCardPadding = new(12, 9, 12, 9);
+    private const double FileIconSize = 36;
+    private const double FileColumnSpacing = 10;
     private static readonly Thickness ForwardedCardPadding = new(12, 10, 12, 9);
     private static readonly Thickness SharedContactCardPadding = new(12, 9, 12, 8);
     private const double ForwardedCardTitleHeight = 22;
@@ -86,6 +90,11 @@ public static class MessageInlineRenderer
     public static readonly AttachedProperty<AvaQQMessageSegment?> VideoSegmentProperty =
         AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
             "VideoSegment",
+            typeof(MessageInlineRenderer));
+
+    public static readonly AttachedProperty<AvaQQMessageSegment?> FileSegmentProperty =
+        AvaloniaProperty.RegisterAttached<Control, AvaQQMessageSegment?>(
+            "FileSegment",
             typeof(MessageInlineRenderer));
 
     public static readonly AttachedProperty<AvaQQMessageSegment?> ForwardedMessageSegmentProperty =
@@ -146,6 +155,16 @@ public static class MessageInlineRenderer
         control.SetValue(VideoSegmentProperty, value);
     }
 
+    public static AvaQQMessageSegment? GetFileSegment(Control control)
+    {
+        return control.GetValue(FileSegmentProperty);
+    }
+
+    public static void SetFileSegment(Control control, AvaQQMessageSegment? value)
+    {
+        control.SetValue(FileSegmentProperty, value);
+    }
+
     public static AvaQQMessageSegment? GetForwardedMessageSegment(Control control)
     {
         return control.GetValue(ForwardedMessageSegmentProperty);
@@ -203,6 +222,13 @@ public static class MessageInlineRenderer
             }
 
             if (segment.Type == AvaQQMessageSegmentType.Video)
+            {
+                compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText, segment.Tone));
+                remainingTextLength -= segment.DisplayText.Length;
+                continue;
+            }
+
+            if (segment.Type == AvaQQMessageSegmentType.File)
             {
                 compactSegments.Add(AvaQQMessageSegment.CreateText(segment.DisplayText, segment.Tone));
                 remainingTextLength -= segment.DisplayText.Length;
@@ -336,6 +362,18 @@ public static class MessageInlineRenderer
                 continue;
             }
 
+            if (segment.Type == AvaQQMessageSegmentType.File)
+            {
+                if (textPosition > 0)
+                {
+                    AddLineBreak(runs, copySpans, logicalText, ref textPosition);
+                }
+
+                AddFile(runs, copySpans, mediaSpans, logicalText, segment, ref textPosition);
+                needsLineBreak = true;
+                continue;
+            }
+
             if (segment.Type == AvaQQMessageSegmentType.ForwardedMessage &&
                 segment.ForwardedMessage is not null)
             {
@@ -440,6 +478,11 @@ public static class MessageInlineRenderer
     public static AvaQQMessageSegment? GetVideoSegmentAt(MessageSelectableTextBlock textBlock, Point position)
     {
         return textBlock.GetMediaSegmentAt(position, MessageMediaKind.Video);
+    }
+
+    public static AvaQQMessageSegment? GetFileSegmentAt(MessageSelectableTextBlock textBlock, Point position)
+    {
+        return textBlock.GetMediaSegmentAt(position, MessageMediaKind.File);
     }
 
     public static AvaQQMessageSegment? GetImageSegmentByBounds(Visual root, Point position)
@@ -547,6 +590,26 @@ public static class MessageInlineRenderer
         foreach (var control in root.GetVisualDescendants().OfType<Control>())
         {
             var segment = GetVideoSegment(control);
+            if (segment is null)
+                continue;
+
+            var topLeft = control.TranslatePoint(new Point(0, 0), root);
+            if (topLeft is null)
+                continue;
+
+            var bounds = new Rect(topLeft.Value, control.Bounds.Size);
+            if (bounds.Contains(position))
+                return segment;
+        }
+
+        return null;
+    }
+
+    public static AvaQQMessageSegment? GetFileSegmentByBounds(Visual root, Point position)
+    {
+        foreach (var control in root.GetVisualDescendants().OfType<Control>())
+        {
+            var segment = GetFileSegment(control);
             if (segment is null)
                 continue;
 
@@ -809,6 +872,27 @@ public static class MessageInlineRenderer
         textPosition++;
     }
 
+    private static void AddFile(
+        List<MessageRenderRun> runs,
+        List<MessageCopySpan> copySpans,
+        List<MessageMediaSpan> mediaSpans,
+        StringBuilder logicalText,
+        AvaQQMessageSegment segment,
+        ref int textPosition)
+    {
+        var copyPart = MessageCopyPart.CreateFile(
+            segment.DisplayText,
+            segment.IsFileAvailable ? segment.FileLocalPath : null,
+            segment.Tone);
+        var media = MessageMediaRun.File(textPosition, segment, copyPart, MessageCardWidth, FileCardHeight);
+
+        runs.Add(MessageRenderRun.CreateMedia(media));
+        copySpans.Add(MessageCopySpan.Placeholder(textPosition, copyPart));
+        mediaSpans.Add(new MessageMediaSpan(textPosition, 1, media));
+        logicalText.Append(PlaceholderChar);
+        textPosition++;
+    }
+
     private static double GetVoiceCardWidth(AvaQQMessageSegment segment)
     {
         var text = segment.IsVoiceAvailable
@@ -895,6 +979,7 @@ public static class MessageInlineRenderer
             MessageMediaKind.Image => CreateImageControl(media),
             MessageMediaKind.Voice => CreateVoiceControl(media),
             MessageMediaKind.Video => CreateVideoControl(media),
+            MessageMediaKind.File => CreateFileControl(media),
             MessageMediaKind.ForwardedMessage => CreateForwardedMessageControl(media),
             MessageMediaKind.SharedContact => CreateSharedContactControl(media),
             MessageMediaKind.MiniApp => CreateMiniAppControl(media),
@@ -965,6 +1050,128 @@ public static class MessageInlineRenderer
         RenderOptions.SetBitmapInterpolationMode(control, BitmapInterpolationMode.HighQuality);
         SetVideoSegment(control, media.Segment);
         return control;
+    }
+
+    private static Control CreateFileControl(MessageMediaRun media)
+    {
+        var segment = media.Segment;
+        var contentWidth = Math.Max(1, media.Width - FileCardPadding.Left - FileCardPadding.Right);
+        var textWidth = Math.Max(1, contentWidth - FileIconSize - FileColumnSpacing);
+        var fileName = string.IsNullOrWhiteSpace(segment?.FileName)
+            ? "文件"
+            : segment!.FileName!;
+        var subtitle = segment?.IsFileAvailable == true
+            ? FormatFileSize(segment.FileSize)
+            : "文件未找到";
+
+        var icon = new Border
+        {
+            Width = FileIconSize,
+            Height = FileIconSize,
+            CornerRadius = new CornerRadius(5),
+            Background = new SolidColorBrush(Color.FromRgb(232, 239, 255)),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Child = new TextBlock
+            {
+                Text = "FILE",
+                FontSize = 9,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(64, 112, 214)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            },
+        };
+
+        var title = new TextBlock
+        {
+            Text = fileName,
+            Width = textWidth,
+            Height = 19,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.FromRgb(25, 25, 25)),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            IsHitTestVisible = false,
+        };
+
+        var subtitleBlock = new TextBlock
+        {
+            Text = subtitle,
+            Width = textWidth,
+            Height = 16,
+            FontSize = 11,
+            Foreground = segment?.IsFileAvailable == true
+                ? new SolidColorBrush(Color.FromRgb(117, 117, 117))
+                : UnsupportedTextBrush,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            IsHitTestVisible = false,
+        };
+
+        var textPanel = new StackPanel
+        {
+            Spacing = 1,
+            Width = textWidth,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Children =
+            {
+                title,
+                subtitleBlock,
+            },
+        };
+
+        var control = new Border
+        {
+            Width = media.Width,
+            Height = media.Height,
+            Margin = new Thickness(0),
+            Padding = FileCardPadding,
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(6),
+            ClipToBounds = true,
+            DataContext = segment,
+            Child = new Grid
+            {
+                Width = contentWidth,
+                ColumnDefinitions = new ColumnDefinitions
+                {
+                    new(FileIconSize, GridUnitType.Pixel),
+                    new(FileColumnSpacing, GridUnitType.Pixel),
+                    new(1, GridUnitType.Star),
+                },
+                Children =
+                {
+                    icon,
+                    textPanel,
+                },
+            },
+        };
+        Grid.SetColumn(textPanel, 2);
+
+        if (segment is not null)
+            SetFileSegment(control, segment);
+
+        return control;
+    }
+
+    private static string FormatFileSize(long? size)
+    {
+        if (size is not > 0)
+            return "未知大小";
+
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        var value = (double)size.Value;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0
+            ? $"{size.Value} {units[unitIndex]}"
+            : $"{value:0.#} {units[unitIndex]}";
     }
 
     private static Control CreateVideoPlayOverlay()
@@ -1882,6 +2089,16 @@ public sealed record MessageMediaRun(
         return new MessageMediaRun(MessageMediaKind.Video, start, segment.VideoCoverLocalPath, segment, copyPart, width, height, Math.Round(height / 2, 2), isDisplayable);
     }
 
+    public static MessageMediaRun File(
+        int start,
+        AvaQQMessageSegment segment,
+        MessageCopyPart copyPart,
+        double width,
+        double height)
+    {
+        return new MessageMediaRun(MessageMediaKind.File, start, null, segment, copyPart, width, height, height, true);
+    }
+
     public static MessageMediaRun ForwardedMessage(
         int start,
         AvaQQMessageSegment segment,
@@ -1930,6 +2147,7 @@ public enum MessageMediaKind
     Image,
     Voice,
     Video,
+    File,
     ForwardedMessage,
     SharedContact,
     MiniApp,

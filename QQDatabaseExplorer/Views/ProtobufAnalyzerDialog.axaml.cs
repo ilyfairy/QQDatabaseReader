@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.Utilities;
 using QQDatabaseExplorer.ViewModels;
 
 namespace QQDatabaseExplorer.Views;
@@ -76,22 +77,8 @@ public partial class ProtobufAnalyzerDialog : Window
             ItemsSource = new Control[] { copyValueMenuItem },
         };
 
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
         e.Handled = true;
-    }
-
-    private static void OpenContextMenu(Control owner, ContextMenu contextMenu)
-    {
-        var previousContextMenu = owner.ContextMenu;
-
-        contextMenu.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(owner.ContextMenu, contextMenu))
-                owner.ContextMenu = previousContextMenu;
-        };
-
-        owner.ContextMenu = contextMenu;
-        contextMenu.Open(owner);
     }
 
     private void OnOpened(object? sender, EventArgs e)

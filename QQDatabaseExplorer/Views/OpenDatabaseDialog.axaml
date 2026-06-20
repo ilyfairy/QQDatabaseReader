@@ -153,6 +153,30 @@
                             <TextBox Text="{Binding PCQQDataPath}" />
                         </DockPanel>
                     </StackPanel>
+
+                    <StackPanel
+                        Orientation="Vertical"
+                        Spacing="8"
+                        IsVisible="{Binding IsIcalingua}">
+                        <DockPanel ToolTip.Tip="[Icalingua] eqq*.db">
+                            <TextBlock Width="152" Text="数据库:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickIcalinguaDatabaseButton_Click" />
+                            <TextBox Text="{Binding IcalinguaDatabasePath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[Icalingua] 数据目录，用于后续读取本地媒体文件">
+                            <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickIcalinguaDataPathButton_Click" />
+                            <TextBox Text="{Binding IcalinguaDataPath}" />
+                        </DockPanel>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
             <DockPanel Grid.Row="1" Margin="0,12,0,0">

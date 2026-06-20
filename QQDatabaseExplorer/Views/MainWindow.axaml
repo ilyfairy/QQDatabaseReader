@@ -33,6 +33,7 @@
                     <MenuItem Header="打开QQNT数据库" Click="OpenMenuItem_Click" />
                     <MenuItem Header="打开PCQQ数据库" Click="OpenPCQQMenuItem_Click" />
                     <MenuItem Header="打开AndroidQQNT数据库" Click="OpenAndroidQQNTMenuItem_Click" />
+                    <MenuItem Header="打开Icalingua数据库" Click="OpenIcalinguaMenuItem_Click" />
                     <Separator />
                     <MenuItem Header="打开数据库配置" Click="LoadConfigMenuItem_Click" />
                     <MenuItem Header="保存数据库配置" Click="SaveConfigMenuItem_Click" />

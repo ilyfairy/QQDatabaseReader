@@ -1025,24 +1025,21 @@ public partial class MessageTab : UserControl
 
         e.Handled = true;
 
+        var copyId = GetConversationCopyId(group);
         var copyIdMenuItem = new MenuItem
         {
-            Header = group.ConversationType == AvaConversationType.Private ? "复制 QQ号" : "复制群号",
-            IsEnabled = group.ConversationType == AvaConversationType.Private
-                ? group.PrivateUin != 0
-                : group.GroupId != 0,
+            Header = IsPrivateConversation(group.ConversationType) ? "复制 QQ号" : "复制群号",
+            IsEnabled = !string.IsNullOrWhiteSpace(copyId),
         };
         copyIdMenuItem.Click += async (_, _) =>
         {
-            var id = group.ConversationType == AvaConversationType.Private
-                ? group.PrivateUin.ToString()
-                : group.GroupId.ToString();
-            await CopyTextToClipboard(id);
+            if (!string.IsNullOrWhiteSpace(copyId))
+                await CopyTextToClipboard(copyId);
         };
 
         var copyNameMenuItem = new MenuItem
         {
-            Header = group.ConversationType == AvaConversationType.Private ? "复制昵称" : "复制群名",
+            Header = IsPrivateConversation(group.ConversationType) ? "复制昵称" : "复制群名",
             IsEnabled = !string.IsNullOrWhiteSpace(group.GroupName),
         };
         copyNameMenuItem.Click += async (_, _) =>
@@ -1057,7 +1054,26 @@ public partial class MessageTab : UserControl
         {
             ItemsSource = new Control[] { copyIdMenuItem, copyNameMenuItem },
         };
-        OpenContextMenu(control, contextMenu);
+        ContextMenuHelper.Open(control, contextMenu);
+    }
+
+    private static bool IsPrivateConversation(AvaConversationType conversationType)
+    {
+        return conversationType is AvaConversationType.Private or AvaConversationType.PCQQPrivate;
+    }
+
+    private static string GetConversationCopyId(AvaQQGroup group)
+    {
+        return group.ConversationType switch
+        {
+            AvaConversationType.Private or AvaConversationType.PCQQPrivate =>
+                group.PrivateUin == 0 ? string.Empty : group.PrivateUin.ToString(),
+            AvaConversationType.Icalingua when group.IcalinguaRoomId < 0 =>
+                (-group.IcalinguaRoomId).ToString(),
+            AvaConversationType.Icalingua when group.IcalinguaRoomId > 0 =>
+                group.IcalinguaRoomId.ToString(),
+            _ => group.GroupId == 0 ? string.Empty : group.GroupId.ToString(),
+        };
     }
 
     private void MessageAvatar_ContextRequested(object? sender, ContextRequestedEventArgs e)
@@ -1091,7 +1107,7 @@ public partial class MessageTab : UserControl
         {
             ItemsSource = new Control[] { copyQqIdMenuItem, copyGroupNickNameMenuItem },
         };
-        OpenContextMenu(control, contextMenu);
+        ContextMenuHelper.Open(control, contextMenu);
     }
 
     private void MessageBubble_ContextRequested(object? sender, ContextRequestedEventArgs e)
@@ -1130,6 +1146,13 @@ public partial class MessageTab : UserControl
         {
             e.Handled = true;
             OpenVideoContextMenu(control, sourceVideoSegment, message.ProtobufBase64, message);
+            return;
+        }
+
+        if (TryGetFileSegmentFromContextRequest(control, e) is { } sourceFileSegment)
+        {
+            e.Handled = true;
+            OpenFileContextMenu(control, sourceFileSegment, message.ProtobufBase64, message);
             return;
         }
 
@@ -1234,6 +1257,16 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetFileSegmentFromTappedEvent(control, e) is { } fileSegment &&
+            fileSegment.IsFileAvailable &&
+            !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
+            File.Exists(fileSegment.FileLocalPath))
+        {
+            e.Handled = true;
+            ShellFileLocator.ShowFileInFolder(fileSegment.FileLocalPath);
+            return;
+        }
+
         return;
     }
 
@@ -1310,6 +1343,17 @@ public partial class MessageTab : UserControl
         {
             e.Handled = true;
             await OpenVideoFileAsync(videoSegment);
+            return;
+        }
+
+        var fileSegment = TryGetFileSegmentFromTappedEvent(textBlock, e) ??
+                          MessageInlineRenderer.GetFileSegmentAt(textBlock, e.GetPosition(textBlock));
+        if (fileSegment?.IsFileAvailable == true &&
+            !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
+            File.Exists(fileSegment.FileLocalPath))
+        {
+            e.Handled = true;
+            ShellFileLocator.ShowFileInFolder(fileSegment.FileLocalPath);
             return;
         }
 
@@ -1390,6 +1434,12 @@ public partial class MessageTab : UserControl
             return;
         }
 
+        if (TryGetFileSegmentFromContextRequest(textBlock, e) is { } fileSegment)
+        {
+            OpenFileContextMenu(menuOwner, fileSegment, message.ProtobufBase64, message);
+            return;
+        }
+
         if (TryGetMiniAppSegmentFromContextRequest(textBlock, e) is { } miniAppSegment)
         {
             OpenMiniAppContextMenu(menuOwner, miniAppSegment, message.ProtobufBase64, message);
@@ -1461,7 +1511,7 @@ public partial class MessageTab : UserControl
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private void OpenImageContextMenu(
@@ -1530,7 +1580,7 @@ public partial class MessageTab : UserControl
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private void OpenVoiceContextMenu(
@@ -1584,7 +1634,7 @@ public partial class MessageTab : UserControl
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private void OpenVideoContextMenu(
@@ -1658,7 +1708,71 @@ public partial class MessageTab : UserControl
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
+    }
+
+    private void OpenFileContextMenu(
+        Control owner,
+        AvaQQMessageSegment fileSegment,
+        string? protobufBase64,
+        AvaQQMessage message)
+    {
+        var contextMenu = new ContextMenu();
+        var messagePayload = MessageCopyPayload.FromMessage(message);
+        var copyMessageMenuItem = new MenuItem
+        {
+            Header = "复制",
+            IsEnabled = messagePayload.HasContent,
+        };
+        copyMessageMenuItem.Click += async (_, _) => await CopyPayloadToClipboard(messagePayload);
+
+        var copyFileMenuItem = new MenuItem
+        {
+            Header = "复制文件",
+            IsEnabled = fileSegment.IsFileAvailable &&
+                        !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
+                        File.Exists(fileSegment.FileLocalPath),
+        };
+        copyFileMenuItem.Click += async (_, _) => await CopyFileToClipboard(fileSegment.FileLocalPath);
+
+        var locateFileMenuItem = CreateLocateFileMenuItem(fileSegment.FileLocalPath);
+
+        var copyProtobufMenuItem = new MenuItem
+        {
+            Header = "复制 Protobuf Base64",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        copyProtobufMenuItem.Click += async (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                await CopyTextToClipboard(protobufBase64);
+            }
+        };
+
+        var analyzeProtobufMenuItem = new MenuItem
+        {
+            Header = "分析 Protobuf",
+            IsEnabled = !string.IsNullOrEmpty(protobufBase64),
+        };
+        analyzeProtobufMenuItem.Click += (_, _) =>
+        {
+            if (!string.IsNullOrEmpty(protobufBase64))
+            {
+                ShowProtobufAnalyzer(protobufBase64);
+            }
+        };
+
+        contextMenu.ItemsSource = new Control[]
+        {
+            copyMessageMenuItem,
+            copyFileMenuItem,
+            locateFileMenuItem,
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        };
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private static MenuItem CreateLocateFileMenuItem(string? localPath)
@@ -1729,7 +1843,7 @@ public partial class MessageTab : UserControl
             ? new Control[] { copyMenuItem, copyMentionUinMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem }
             : [copyMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem];
 
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private void OpenSystemHintNameContextMenu(
@@ -1795,7 +1909,7 @@ public partial class MessageTab : UserControl
                 analyzeProtobufMenuItem,
             },
         };
-        OpenContextMenu(owner, contextMenu);
+        ContextMenuHelper.Open(owner, contextMenu);
     }
 
     private static bool IsNumericId(string? value)
@@ -1904,6 +2018,16 @@ public partial class MessageTab : UserControl
             : null;
     }
 
+    private static AvaQQMessageSegment? TryGetFileSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)
+    {
+        if (TryGetFileSegmentFromEventSource(e.Source) is { } fileSegment)
+            return fileSegment;
+
+        return e.TryGetPosition(textBlock, out var position)
+            ? MessageInlineRenderer.GetFileSegmentAt(textBlock, position)
+            : null;
+    }
+
     private static AvaQQMessageSegment? TryGetMiniAppSegmentFromContextRequest(MessageSelectableTextBlock textBlock, ContextRequestedEventArgs e)
     {
         if (TryGetMiniAppSegmentFromEventSource(e.Source) is { } miniAppSegment)
@@ -1941,6 +2065,16 @@ public partial class MessageTab : UserControl
 
         return e.TryGetPosition(root, out var position)
             ? MessageInlineRenderer.GetVideoSegmentByBounds(root, position)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetFileSegmentFromContextRequest(Control root, ContextRequestedEventArgs e)
+    {
+        if (TryGetFileSegmentFromEventSource(e.Source) is { } fileSegment)
+            return fileSegment;
+
+        return e.TryGetPosition(root, out var position)
+            ? MessageInlineRenderer.GetFileSegmentByBounds(root, position)
             : null;
     }
 
@@ -1984,6 +2118,12 @@ public partial class MessageTab : UserControl
                MessageInlineRenderer.GetVideoSegmentByBounds(root, e.GetPosition(root));
     }
 
+    private static AvaQQMessageSegment? TryGetFileSegmentFromTappedEvent(Control root, TappedEventArgs e)
+    {
+        return TryGetFileSegmentFromEventSource(e.Source) ??
+               MessageInlineRenderer.GetFileSegmentByBounds(root, e.GetPosition(root));
+    }
+
     private static AvaQQMessageSegment? TryGetImageSegmentFromEventSource(object? source)
     {
         return source is Visual visual
@@ -2010,6 +2150,16 @@ public partial class MessageTab : UserControl
             ? visual.GetSelfAndVisualAncestors()
                 .OfType<Control>()
                 .Select(MessageInlineRenderer.GetVideoSegment)
+                .FirstOrDefault(segment => segment is not null)
+            : null;
+    }
+
+    private static AvaQQMessageSegment? TryGetFileSegmentFromEventSource(object? source)
+    {
+        return source is Visual visual
+            ? visual.GetSelfAndVisualAncestors()
+                .OfType<Control>()
+                .Select(MessageInlineRenderer.GetFileSegment)
                 .FirstOrDefault(segment => segment is not null)
             : null;
     }
@@ -2045,20 +2195,6 @@ public partial class MessageTab : UserControl
             : null;
     }
 
-    private static void OpenContextMenu(Control owner, ContextMenu contextMenu)
-    {
-        var previousContextMenu = owner.ContextMenu;
-        contextMenu.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(owner.ContextMenu, contextMenu))
-            {
-                owner.ContextMenu = previousContextMenu;
-            }
-        };
-
-        owner.ContextMenu = contextMenu;
-        contextMenu.Open(owner);
-    }
 
     private async Task CopyTextToClipboard(string text)
     {

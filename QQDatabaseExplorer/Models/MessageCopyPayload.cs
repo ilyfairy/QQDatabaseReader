@@ -156,6 +156,22 @@ public sealed class MessageCopyPayload
                 continue;
             }
 
+            if (segment.Type == AvaQQMessageSegmentType.File)
+            {
+                if (hasContent)
+                {
+                    parts.Add(MessageCopyPart.CreateText("\n"));
+                }
+
+                parts.Add(MessageCopyPart.CreateFile(
+                    segment.DisplayText,
+                    segment.IsFileAvailable ? segment.FileLocalPath : null,
+                    segment.Tone));
+                hasContent = true;
+                needsLineBreak = true;
+                continue;
+            }
+
             if (segment.Type == AvaQQMessageSegmentType.ForwardedMessage)
             {
                 if (hasContent)

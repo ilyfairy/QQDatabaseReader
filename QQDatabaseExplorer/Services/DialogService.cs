@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.ViewModels;
 using QQDatabaseExplorer.Views;
+using QQDatabaseReader;
 using QQDatabaseReader.Database;
 using Ursa.Controls;
 
@@ -15,11 +16,16 @@ namespace QQDatabaseExplorer.Services;
 public class DialogService : IDialogService
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly DatabaseConfigApplicationService _databaseConfigApplicationService;
     private readonly ViewModelTokenService _viewModelTokenService;
 
-    public DialogService(IServiceProvider serviceProvider, ViewModelTokenService viewModelTokenService)
+    public DialogService(
+        IServiceProvider serviceProvider,
+        DatabaseConfigApplicationService databaseConfigApplicationService,
+        ViewModelTokenService viewModelTokenService)
     {
         _serviceProvider = serviceProvider;
+        _databaseConfigApplicationService = databaseConfigApplicationService;
         _viewModelTokenService = viewModelTokenService;
     }
 
@@ -54,6 +60,8 @@ public class DialogService : IDialogService
 
         var dialog = scope.ServiceProvider.GetRequiredService<OpenDatabaseDialog>();
         await ShowDialog(dialog, ownerToken);
+        if (viewModel.ResultConfig is { } config)
+            await ApplyDatabaseConfigAsync(config, ownerToken);
     }
 
     public async Task<DatabaseConfig?> ShowEditDatabaseDialog(
@@ -69,8 +77,23 @@ public class DialogService : IDialogService
         return viewModel.ResultConfig;
     }
 
+    private async Task ApplyDatabaseConfigAsync(DatabaseConfig config, ViewModelToken? ownerToken)
+    {
+        try
+        {
+            await _databaseConfigApplicationService.ApplyAsync(config);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessageBox($"打开 {config.Type} 数据库失败:\n{ex.Message}", "错误", ownerToken);
+        }
+    }
+
     public async Task ShowExportDatabaseDialog(IQQDatabase database, ViewModelToken? ownerToken = null)
     {
+        if (database.DatabaseType == QQDatabaseType.IcalinguaMessage)
+            return;
+
         using var scope = _serviceProvider.CreateScope();
         var viewModel = scope.ServiceProvider.GetRequiredService<ExportDatabaseDialogViewModel>();
         viewModel.Database = database;
