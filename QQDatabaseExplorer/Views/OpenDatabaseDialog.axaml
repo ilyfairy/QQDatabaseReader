@@ -29,7 +29,7 @@
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsNtPlatform}">
-                        <DockPanel ToolTip.Tip="[QQNT] nt_msg.db">
+                        <DockPanel ToolTip.Tip="nt_msg.db">
                             <TextBlock Width="152" Text="nt_msg.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -39,11 +39,11 @@
                                 Click="PickNtMessageDbButton_Click" />
                             <TextBox Text="{Binding NtMessageDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] nt_msg.db 密钥">
+                        <DockPanel ToolTip.Tip="nt_msg.db 密钥">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding Key}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] group_info.db">
+                        <DockPanel ToolTip.Tip="group_info.db">
                             <TextBlock Width="152" Text="group_info.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -53,11 +53,11 @@
                                 Click="PickNtGroupInfoDbButton_Click" />
                             <TextBox Text="{Binding NtGroupInfoDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] group_info.db 密钥">
+                        <DockPanel ToolTip.Tip="group_info.db 密钥">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding GroupInfoDbKey}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] profile_info.db">
+                        <DockPanel ToolTip.Tip="profile_info.db">
                             <TextBlock Width="152" Text="profile_info.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -67,11 +67,11 @@
                                 Click="PickNtProfileInfoDbButton_Click" />
                             <TextBox Text="{Binding NtProfileInfoDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] profile_info.db 密钥">
+                        <DockPanel ToolTip.Tip="profile_info.db 密钥">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding ProfileInfoDbKey}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] group_msg_fts.db">
+                        <DockPanel ToolTip.Tip="group_msg_fts.db">
                             <TextBlock Width="152" Text="group_msg_fts.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -81,7 +81,7 @@
                                 Click="PickNtGroupMessageFtsDbButton_Click" />
                             <TextBox Text="{Binding NtGroupMessageFtsDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[QQNT] group_msg_fts.db 密钥">
+                        <DockPanel ToolTip.Tip="group_msg_fts.db 密钥">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding GroupMessageFtsDbKey}" />
                         </DockPanel>
@@ -103,11 +103,11 @@
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsAndroidQQNT}">
-                        <DockPanel ToolTip.Tip="[AndroidQQNT] NtUid">
+                        <DockPanel ToolTip.Tip="NtUid">
                             <TextBlock Width="152" Text="NtUid:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding NtUid}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[AndroidQQNT] 可以自动从数据库头部获取">
+                        <DockPanel ToolTip.Tip="可以自动从数据库头部获取">
                             <TextBlock Width="152" Text="Rand:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding Rand}" />
                         </DockPanel>
@@ -117,7 +117,7 @@
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsAndroidMobileQQ}">
-                        <DockPanel ToolTip.Tip="[AndroidQQ] com.tencent.mobileqq 数据目录">
+                        <DockPanel ToolTip.Tip="com.tencent.mobileqq 数据目录">
                             <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -126,11 +126,11 @@
                                 Click="PickAndroidMobileQQRootPathButton_Click" />
                             <TextBox Text="{Binding AndroidMobileQQRootPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[AndroidQQ] 当前账号 QQ">
+                        <DockPanel ToolTip.Tip="当前账号 QQ">
                             <TextBlock Width="152" Text="账号QQ:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding AndroidMobileQQSelfUin}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[AndroidQQ] MobileQQ 目录，用于后续读取本地媒体文件">
+                        <DockPanel ToolTip.Tip="MobileQQ 目录，用于后续读取本地媒体文件">
                             <TextBlock Width="152" Text="MobileQQ:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -145,7 +145,7 @@
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsPCQQ}">
-                        <DockPanel ToolTip.Tip="[PCQQ] Msg3.0.db">
+                        <DockPanel ToolTip.Tip="Msg3.0.db">
                             <TextBlock Width="152" Text="Msg3.0.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -154,11 +154,11 @@
                                 Click="PickPCQQMessageDbButton_Click" />
                             <TextBox Text="{Binding PCQQMessageDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[PCQQ] Msg3.0.db 密钥">
+                        <DockPanel ToolTip.Tip="Msg3.0.db 密钥">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding Key}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[PCQQ] Info.db，用于读取真实群号和群名">
+                        <DockPanel ToolTip.Tip="Info.db，用于读取真实群号和群名">
                             <TextBlock Width="152" Text="Info.db:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -167,11 +167,11 @@
                                 Click="PickPCQQInfoDbButton_Click" />
                             <TextBox Text="{Binding PCQQInfoDbPath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[PCQQ] Info.db 密钥，和 Msg3.0.db 密钥不同">
+                        <DockPanel ToolTip.Tip="Info.db 密钥，和 Msg3.0.db 密钥不同">
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding PCQQInfoDbKey}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[PCQQ] 当前 QQ 号数据目录，用于读取 Image 等本地媒体文件">
+                        <DockPanel ToolTip.Tip="当前 QQ 号数据目录，用于读取 Image 等本地媒体文件">
                             <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -186,7 +186,7 @@
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsIcalingua}">
-                        <DockPanel ToolTip.Tip="[Icalingua] eqq*.db">
+                        <DockPanel ToolTip.Tip="eqq*.db">
                             <TextBlock Width="152" Text="数据库:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"
@@ -195,7 +195,7 @@
                                 Click="PickIcalinguaDatabaseButton_Click" />
                             <TextBox Text="{Binding IcalinguaDatabasePath}" />
                         </DockPanel>
-                        <DockPanel ToolTip.Tip="[Icalingua] 数据目录，用于后续读取本地媒体文件">
+                        <DockPanel ToolTip.Tip="数据目录，用于后续读取本地媒体文件">
                             <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
                             <Button
                                 DockPanel.Dock="Right"

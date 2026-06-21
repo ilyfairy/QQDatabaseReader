@@ -105,8 +105,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public string NtDataPathLabel => IsAndroidQQNT ? "MobileQQ:" : "nt_data:";
 
     public string NtDataPathToolTip => IsAndroidQQNT
-        ? "[AndroidQQNT] MobileQQ 目录，用于读取本地图片"
-        : "[QQNT] nt_data 目录，用于读取本地图片和图片表情";
+        ? "MobileQQ 目录，用于读取本地图片"
+        : "nt_data 目录，用于读取本地图片和图片表情";
 
     public string FindDatabaseKeyButtonText => IsPCQQ
         ? "登录PCQQ自动获取Key"
