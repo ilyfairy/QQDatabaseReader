@@ -27,6 +27,12 @@ public partial class AvaQQGroup : ObservableObject
     public partial bool PCQQHasInfo { get; set; }
 
     [ObservableProperty]
+    public partial string? AndroidMobileQQTableName { get; set; }
+
+    [ObservableProperty]
+    public partial string? AndroidMobileQQPeerUin { get; set; }
+
+    [ObservableProperty]
     public partial long IcalinguaRoomId { get; set; }
 
     [ObservableProperty]
@@ -44,6 +50,8 @@ public partial class AvaQQGroup : ObservableObject
         AvaConversationType.Private => $"private:{PrivateConversationId}",
         AvaConversationType.PCQQGroup => $"pcqq-group:{GroupId}",
         AvaConversationType.PCQQPrivate => $"pcqq-private:{PrivateUin}",
+        AvaConversationType.AndroidMobileQQGroup => $"android-mobileqq-group:{AndroidMobileQQPeerUin}",
+        AvaConversationType.AndroidMobileQQPrivate => $"android-mobileqq-private:{AndroidMobileQQPeerUin}",
         AvaConversationType.Icalingua => $"icalingua:{IcalinguaRoomId}",
         _ => $"{ConversationType}:{GroupId}:{PrivateConversationId}",
     };
@@ -56,9 +64,11 @@ public partial class AvaQQGroup : ObservableObject
                 ? PrivateUin != 0 ? PrivateUin.ToString() : PrivateUid
                 : ConversationType == AvaConversationType.PCQQPrivate
                     ? PrivateUin != 0 ? PrivateUin.ToString() : null
-                    : ConversationType == AvaConversationType.Icalingua
-                        ? IcalinguaRoomId != 0 ? IcalinguaRoomId.ToString() : null
-                        : GroupId != 0 ? GroupId.ToString() : null;
+                    : ConversationType is AvaConversationType.AndroidMobileQQPrivate or AvaConversationType.AndroidMobileQQGroup
+                        ? AndroidMobileQQPeerUin
+                        : ConversationType == AvaConversationType.Icalingua
+                            ? IcalinguaRoomId != 0 ? IcalinguaRoomId.ToString() : null
+                            : GroupId != 0 ? GroupId.ToString() : null;
             return GroupName | fallback ?? string.Empty;
         }
     }
@@ -71,7 +81,9 @@ public partial class AvaQQGroup : ObservableObject
     {
         AvaConversationType.Group => GroupId == 0 ? null : $"https://p.qlogo.cn/gh/{GroupId}/{GroupId}/640/",
         AvaConversationType.PCQQGroup => !PCQQHasInfo || GroupId == 0 ? null : $"https://p.qlogo.cn/gh/{GroupId}/{GroupId}/640/",
+        AvaConversationType.AndroidMobileQQGroup => string.IsNullOrWhiteSpace(AndroidMobileQQPeerUin) ? null : $"https://p.qlogo.cn/gh/{AndroidMobileQQPeerUin}/{AndroidMobileQQPeerUin}/640/",
         AvaConversationType.Private or AvaConversationType.PCQQPrivate => PrivateUin == 0 ? null : $"http://q1.qlogo.cn/g?b=qq&nk={PrivateUin}&s=100",
+        AvaConversationType.AndroidMobileQQPrivate => string.IsNullOrWhiteSpace(AndroidMobileQQPeerUin) ? null : $"http://q1.qlogo.cn/g?b=qq&nk={AndroidMobileQQPeerUin}&s=100",
         AvaConversationType.Icalingua => IcalinguaRoomId switch
         {
             < 0 => $"https://p.qlogo.cn/gh/{-IcalinguaRoomId}/{-IcalinguaRoomId}/0",
@@ -155,6 +167,19 @@ public partial class AvaQQGroup : ObservableObject
         OnPropertyChanged(nameof(AvatarUrl));
     }
 
+    partial void OnAndroidMobileQQTableNameChanged(string? value)
+    {
+        OnPropertyChanged(nameof(ConversationKey));
+    }
+
+    partial void OnAndroidMobileQQPeerUinChanged(string? value)
+    {
+        OnPropertyChanged(nameof(DisplayName));
+        OnPropertyChanged(nameof(ListDisplayName));
+        OnPropertyChanged(nameof(AvatarUrl));
+        OnPropertyChanged(nameof(ConversationKey));
+    }
+
     partial void OnIcalinguaRoomIdChanged(long value)
     {
         OnPropertyChanged(nameof(DisplayName));
@@ -186,5 +211,7 @@ public enum AvaConversationType
     Private,
     PCQQGroup,
     PCQQPrivate,
+    AndroidMobileQQGroup,
+    AndroidMobileQQPrivate,
     Icalingua,
 }

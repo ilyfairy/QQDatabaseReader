@@ -63,6 +63,46 @@ public partial class OpenDatabaseDialog : Window
         }
     }
 
+    private async void PickAndroidMobileQQRootPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder)
+            return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择 Android QQ 数据目录",
+            AllowMultiple = false,
+        });
+
+        var folderPath = folders.Count > 0
+            ? folders[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            ViewModel.AndroidMobileQQRootPath = folderPath;
+        }
+    }
+
+    private async void PickAndroidMobileQQMediaPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanPickFolder)
+            return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择 MobileQQ 目录",
+            AllowMultiple = false,
+        });
+
+        var folderPath = folders.Count > 0
+            ? folders[0].TryGetLocalPath()
+            : null;
+        if (!string.IsNullOrWhiteSpace(folderPath))
+        {
+            ViewModel.AndroidMobileQQMediaPath = folderPath;
+        }
+    }
+
     private async void PickIcalinguaDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (!StorageProvider.CanPickFolder)

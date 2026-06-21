@@ -43,6 +43,7 @@ public partial class MessageTabViewModel
         _latestMessagePreviewFactory = displayComposition.LatestMessagePreviewFactory;
         _qqNtDisplayMessageFactory = displayComposition.QqNtDisplayMessageFactory;
         _pcqqDisplayMessageFactory = displayComposition.PCQQDisplayMessageFactory;
+        _androidMobileQQDisplayMessageFactory = displayComposition.AndroidMobileQQDisplayMessageFactory;
         _icalinguaDisplayMessageFactory = displayComposition.IcalinguaDisplayMessageFactory;
         _mentionUinResolver = displayComposition.MentionUinResolver;
         _databaseChangeCoordinator = CreateDatabaseChangeCoordinator(
@@ -114,6 +115,9 @@ public partial class MessageTabViewModel
             highlightMentions,
             () => databaseService.PCQQDataPath,
             uin => databaseService.PCQQMessageDatabase?.ResolveContactName(uin));
+        var androidMobileQQDisplayMessageFactory = new AndroidMobileQQDisplayMessageFactory(
+            alwaysShowMessageTime,
+            highlightMentions);
         var icalinguaDisplayMessageFactory = IcalinguaDisplayMessageFactory.Create(
             alwaysShowMessageTime,
             highlightMentions,
@@ -137,6 +141,7 @@ public partial class MessageTabViewModel
             qqNtDisplayFactories.LatestMessagePreviewFactory,
             qqNtDisplayFactories.DisplayMessageFactory,
             pcqqDisplayMessageFactory,
+            androidMobileQQDisplayMessageFactory,
             icalinguaDisplayMessageFactory,
             mentionUinResolver);
     }
@@ -231,6 +236,7 @@ internal sealed record MessageDisplayComposition(
     LatestMessagePreviewFactory LatestMessagePreviewFactory,
     QqNtDisplayMessageFactory QqNtDisplayMessageFactory,
     PCQQDisplayMessageFactory PCQQDisplayMessageFactory,
+    AndroidMobileQQDisplayMessageFactory AndroidMobileQQDisplayMessageFactory,
     IcalinguaDisplayMessageFactory IcalinguaDisplayMessageFactory,
     MentionUinResolver MentionUinResolver);
 

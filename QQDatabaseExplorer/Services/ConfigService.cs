@@ -167,6 +167,18 @@ public class ConfigService
                         ProfileInfoDbPassword = config.AndroidQQNT.ProfileInfoDbPassword,
                     },
             },
+            DatabasePlatformType.AndroidMobileQQ => new DatabaseConfig
+            {
+                Type = DatabasePlatformType.AndroidMobileQQ,
+                AndroidMobileQQ = config.AndroidMobileQQ is null
+                    ? null
+                    : new AndroidMobileQQDatabaseConfig
+                    {
+                        RootPath = CreatePortablePath(config.AndroidMobileQQ.RootPath, configDirectory),
+                        SelfUin = config.AndroidMobileQQ.SelfUin,
+                        MobileQQPath = CreatePortablePath(config.AndroidMobileQQ.MobileQQPath, configDirectory),
+                    },
+            },
             DatabasePlatformType.Icalingua => new DatabaseConfig
             {
                 Type = DatabasePlatformType.Icalingua,
@@ -226,6 +238,12 @@ public class ConfigService
             pcqq.MessageDbPath = ResolveConfigPath(pcqq.MessageDbPath, configDirectory);
             pcqq.InfoDbPath = ResolveConfigPath(pcqq.InfoDbPath, configDirectory);
             pcqq.DataPath = ResolveConfigPath(pcqq.DataPath, configDirectory);
+        }
+
+        if (config.AndroidMobileQQ is { } androidMobileQQ)
+        {
+            androidMobileQQ.RootPath = ResolveConfigPath(androidMobileQQ.RootPath, configDirectory);
+            androidMobileQQ.MobileQQPath = ResolveConfigPath(androidMobileQQ.MobileQQPath, configDirectory);
         }
 
         if (config.Icalingua is { } icalingua)

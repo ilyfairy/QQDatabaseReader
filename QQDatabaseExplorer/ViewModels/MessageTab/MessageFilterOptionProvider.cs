@@ -14,6 +14,7 @@ internal sealed class MessageFilterOptionProvider
         _sources =
         [
             new PCQQMessageFilterOptionSource(databaseService),
+            new AndroidMobileQQMessageFilterOptionSource(databaseService),
             new IcalinguaMessageFilterOptionSource(databaseService),
             new NtMessageFilterOptionSource(databaseService),
         ];

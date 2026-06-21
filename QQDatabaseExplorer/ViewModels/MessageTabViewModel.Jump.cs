@@ -308,6 +308,73 @@ public partial class MessageTabViewModel
         await JumpToIcalinguaMessageAsync(roomId, messageId, messageSeq, groupName, clearMessageFilter: true);
     }
 
+    public async Task JumpToPCQQMessageAsync(
+        AvaConversationType conversationType,
+        uint groupId,
+        uint privateUin,
+        string? tableName,
+        long messageId,
+        long messageSeq,
+        string? conversationName,
+        bool clearMessageFilter)
+    {
+        if (string.IsNullOrWhiteSpace(tableName) || messageId == 0 || messageSeq <= 0)
+            return;
+
+        AvaQQGroup conversation;
+        if (conversationType == AvaConversationType.PCQQGroup)
+        {
+            if (groupId == 0)
+                return;
+
+            conversation = _conversationApplier.GetOrCreatePCQQGroup(groupId);
+        }
+        else if (conversationType == AvaConversationType.PCQQPrivate)
+        {
+            if (privateUin == 0)
+                return;
+
+            conversation = _conversationApplier.GetOrCreatePCQQPrivateConversation(privateUin);
+        }
+        else
+        {
+            return;
+        }
+
+        conversation.PCQQTableName = tableName;
+        if (!string.IsNullOrWhiteSpace(conversationName) && string.IsNullOrWhiteSpace(conversation.GroupName))
+            conversation.GroupName = conversationName;
+
+        await JumpToConversationMessageAsync(conversation, messageId, messageSeq, clearMessageFilter);
+    }
+
+    public async Task JumpToAndroidMobileQQMessageAsync(
+        AvaConversationType conversationType,
+        string? peerUin,
+        string? tableName,
+        long messageId,
+        long messageSeq,
+        string? conversationName,
+        bool clearMessageFilter)
+    {
+        if (string.IsNullOrWhiteSpace(peerUin) ||
+            string.IsNullOrWhiteSpace(tableName) ||
+            messageId == 0 ||
+            messageSeq <= 0 ||
+            conversationType is not (AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate))
+        {
+            return;
+        }
+
+        var conversation = _conversationApplier.GetOrCreateAndroidMobileQQConversation(conversationType, peerUin);
+        conversation.AndroidMobileQQTableName = tableName;
+        conversation.AndroidMobileQQPeerUin = peerUin;
+        if (!string.IsNullOrWhiteSpace(conversationName) && string.IsNullOrWhiteSpace(conversation.GroupName))
+            conversation.GroupName = conversationName;
+
+        await JumpToConversationMessageAsync(conversation, messageId, messageSeq, clearMessageFilter);
+    }
+
     private async Task JumpToIcalinguaMessageAsync(
         long roomId,
         long messageId,

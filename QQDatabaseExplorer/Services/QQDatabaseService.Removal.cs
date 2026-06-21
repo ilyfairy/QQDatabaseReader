@@ -15,6 +15,9 @@ public partial class QQDatabaseService
             case DatabasePlatformType.PCQQ:
                 RemovePCQQDatabase();
                 break;
+            case DatabasePlatformType.AndroidMobileQQ:
+                RemoveAndroidMobileQQDatabase();
+                break;
             case DatabasePlatformType.Icalingua:
                 RemoveIcalinguaDatabase();
                 break;
@@ -30,15 +33,19 @@ public partial class QQDatabaseService
         var databases = new List<IQQDatabase>();
         if (PCQQMessageDatabase is not null)
             databases.Add(PCQQMessageDatabase);
+        if (AndroidMobileQQMessageDatabase is not null)
+            databases.Add(AndroidMobileQQMessageDatabase);
         databases.AddRange(_icalinguaDatabases.DatabasesForRemoval);
         databases.AddRange(_qqNtDatabases.DatabasesForRemoval);
 
         _qqNtDatabases = QQNtDatabaseRuntimeGroup.Empty;
         _pcqqDatabase = PCQQDatabaseRuntimeGroup.Empty;
+        _androidMobileQQDatabase = AndroidMobileQQDatabaseRuntimeGroup.Empty;
         _icalinguaDatabases = IcalinguaDatabaseRuntimeGroup.Empty;
         _ntPlatformType = DatabasePlatformType.QQNT;
         _currentQQNTConfig = null;
         _currentPCQQConfig = null;
+        _currentAndroidMobileQQConfig = null;
 
         foreach (var database in databases)
         {
@@ -64,6 +71,7 @@ public partial class QQDatabaseService
     {
         return TryRemoveQQNtDatabase(qqDatabase, out removedDatabase) ||
             TryRemovePCQQDatabase(qqDatabase, out removedDatabase) ||
+            TryRemoveAndroidMobileQQDatabase(qqDatabase, out removedDatabase) ||
             TryRemoveIcalinguaDatabase(qqDatabase, out removedDatabase);
     }
 
@@ -139,6 +147,21 @@ public partial class QQDatabaseService
         return false;
     }
 
+    private bool TryRemoveAndroidMobileQQDatabase(IQQDatabase qqDatabase, out IQQDatabase? removedDatabase)
+    {
+        removedDatabase = qqDatabase;
+
+        if (qqDatabase.Equals(AndroidMobileQQMessageDatabase))
+        {
+            _androidMobileQQDatabase = AndroidMobileQQDatabaseRuntimeGroup.Empty;
+            ClearAndroidMobileQQConfigItem(LoadedDatabaseItemKind.AndroidMobileQQMessageDb);
+            return true;
+        }
+
+        removedDatabase = null;
+        return false;
+    }
+
     public void RemoveDatabaseItem(LoadedDatabaseItem item)
     {
         if (item.Database is { } database)
@@ -155,6 +178,11 @@ public partial class QQDatabaseService
                 break;
             case LoadedDatabaseItemKind.IcalinguaDataPath:
                 ClearIcalinguaConfigItem(item.Kind, item.FilePath);
+                break;
+            case LoadedDatabaseItemKind.AndroidMobileQQRootPath:
+            case LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb:
+            case LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath:
+                ClearAndroidMobileQQConfigItem(item.Kind);
                 break;
             case LoadedDatabaseItemKind.NtDataPath:
             case LoadedDatabaseItemKind.MobileQQPath:
@@ -201,6 +229,23 @@ public partial class QQDatabaseService
 
         var database = PCQQMessageDatabase;
         _pcqqDatabase = PCQQDatabaseRuntimeGroup.Empty;
+        NotifyDatabaseRemoved(database);
+        RebuildDatabaseGroups();
+    }
+
+    private void RemoveAndroidMobileQQDatabase(bool clearConfig = true)
+    {
+        if (clearConfig)
+            _currentAndroidMobileQQConfig = null;
+
+        if (AndroidMobileQQMessageDatabase is null)
+        {
+            RebuildDatabaseGroups();
+            return;
+        }
+
+        var database = AndroidMobileQQMessageDatabase;
+        _androidMobileQQDatabase = AndroidMobileQQDatabaseRuntimeGroup.Empty;
         NotifyDatabaseRemoved(database);
         RebuildDatabaseGroups();
     }

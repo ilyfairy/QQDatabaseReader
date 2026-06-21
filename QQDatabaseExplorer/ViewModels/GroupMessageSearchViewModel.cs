@@ -75,8 +75,8 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         _searchFilterParser = composition.FilterParser;
         _searchProviderFactory = composition.ProviderFactory;
         _searchWorkflow = composition.Workflow;
-        _qqDatabaseService.DatabaseAdded += OnDatabaseChanged;
-        _qqDatabaseService.DatabaseRemoved += OnDatabaseChanged;
+        _qqDatabaseService.DatabaseAdded += OnDatabaseAdded;
+        _qqDatabaseService.DatabaseRemoved += OnDatabaseRemoved;
         RefreshDatabaseState();
     }
 
@@ -110,10 +110,20 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanLoadMore));
     }
 
-    private void OnDatabaseChanged(IQQDatabase database)
+    private void OnDatabaseAdded(IQQDatabase database)
     {
         if (_searchProviderFactory.ShouldRefreshFor(database))
             RefreshDatabaseState();
+    }
+
+    private void OnDatabaseRemoved(IQQDatabase database)
+    {
+        if (!_searchProviderFactory.ShouldRefreshFor(database))
+            return;
+
+        _versionTracker.CancelSearch();
+        ResetSearchSessionState(clearInputs: false);
+        RefreshDatabaseState();
     }
 
     private void RefreshDatabaseState()

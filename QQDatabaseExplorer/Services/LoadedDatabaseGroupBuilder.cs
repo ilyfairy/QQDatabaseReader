@@ -12,12 +12,15 @@ internal sealed record LoadedDatabaseGroupBuildContext(
     DatabasePlatformType NtPlatformType,
     DatabaseConfig? CurrentQQNTConfig,
     DatabaseConfig? CurrentPCQQConfig,
+    DatabaseConfig? CurrentAndroidMobileQQConfig,
     IReadOnlyList<DatabaseConfig> CurrentIcalinguaConfigs,
     DatabaseConfig? LoadedQQNTConfig,
     DatabaseConfig? LoadedPCQQConfig,
+    DatabaseConfig? LoadedAndroidMobileQQConfig,
     DatabaseConfig? LoadedIcalinguaConfig,
     QQNtDatabaseRuntimeGroup QQNtDatabases,
     PCQQDatabaseRuntimeGroup PCQQDatabase,
+    AndroidMobileQQDatabaseRuntimeGroup AndroidMobileQQDatabase,
     IcalinguaDatabaseRuntimeGroup IcalinguaDatabases);
 
 internal static class LoadedDatabaseGroupBuildContextFactory
@@ -26,20 +29,25 @@ internal static class LoadedDatabaseGroupBuildContextFactory
         DatabasePlatformType ntPlatformType,
         DatabaseConfig? currentQQNTConfig,
         DatabaseConfig? currentPCQQConfig,
+        DatabaseConfig? currentAndroidMobileQQConfig,
         IcalinguaDatabaseRuntimeGroup icalinguaDatabases,
         QQNtDatabaseRuntimeGroup qqNtDatabases,
-        PCQQDatabaseRuntimeGroup pcqqDatabase)
+        PCQQDatabaseRuntimeGroup pcqqDatabase,
+        AndroidMobileQQDatabaseRuntimeGroup androidMobileQQDatabase)
     {
         return new LoadedDatabaseGroupBuildContext(
             ntPlatformType,
             currentQQNTConfig,
             currentPCQQConfig,
+            currentAndroidMobileQQConfig,
             icalinguaDatabases.CurrentConfigs,
             qqNtDatabases.CreateConfig(ntPlatformType),
             pcqqDatabase.CreateConfig(),
+            androidMobileQQDatabase.CreateConfig(),
             icalinguaDatabases.LoadedPrimaryConfig,
             qqNtDatabases,
             pcqqDatabase,
+            androidMobileQQDatabase,
             icalinguaDatabases);
     }
 }
@@ -55,6 +63,15 @@ internal static class LoadedDatabaseGroupBuilder
             : CreateLoadedPCQQDisplayItems(context.PCQQDatabase);
         if (pcqqItems.Count > 0)
             groups.Add(new LoadedDatabaseGroup(DatabasePlatformType.PCQQ, pcqqItems, context.CurrentPCQQConfig ?? context.LoadedPCQQConfig));
+
+        var androidMobileQQItems = context.CurrentAndroidMobileQQConfig?.AndroidMobileQQ is { } androidMobileQQConfig
+            ? CreateAndroidMobileQQDisplayItems(androidMobileQQConfig, context.AndroidMobileQQDatabase.MessageDatabase)
+            : CreateLoadedAndroidMobileQQDisplayItems(context.AndroidMobileQQDatabase);
+        if (androidMobileQQItems.Count > 0)
+            groups.Add(new LoadedDatabaseGroup(
+                DatabasePlatformType.AndroidMobileQQ,
+                androidMobileQQItems,
+                context.CurrentAndroidMobileQQConfig ?? context.LoadedAndroidMobileQQConfig));
 
         var icalinguaItems = context.CurrentIcalinguaConfigs.Count > 0
             ? CreateIcalinguaDisplayItems(context.CurrentIcalinguaConfigs, context.IcalinguaDatabases.Databases)
@@ -100,6 +117,29 @@ internal static class LoadedDatabaseGroupBuilder
         return items;
     }
 
+    private static List<LoadedDatabaseItem> CreateAndroidMobileQQDisplayItems(
+        AndroidMobileQQDatabaseConfig config,
+        AndroidMobileQQMessageReader? messageDatabase)
+    {
+        var items = new List<LoadedDatabaseItem>();
+        AddDisplayItem(items, "数据目录", config.RootPath, null, LoadedDatabaseItemKind.AndroidMobileQQRootPath);
+        if (!string.IsNullOrWhiteSpace(config.RootPath) &&
+            !string.IsNullOrWhiteSpace(config.SelfUin))
+        {
+            var messageDbPath = messageDatabase?.DatabaseFilePath ??
+                Path.Combine(ResolveAndroidMobileQQChildDirectory(config.RootPath, "databases", "db"), config.SelfUin + ".db");
+            AddDisplayItem(items, config.SelfUin + ".db", messageDbPath, messageDatabase, LoadedDatabaseItemKind.AndroidMobileQQMessageDb);
+
+            var slowDbPath = messageDatabase?.SlowDatabaseFilePath ??
+                Path.Combine(ResolveAndroidMobileQQChildDirectory(config.RootPath, "databases", "db"), "slowtable_" + config.SelfUin + ".db");
+            if (File.Exists(slowDbPath))
+                AddDisplayItem(items, Path.GetFileName(slowDbPath), slowDbPath, null, LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb);
+        }
+
+        AddDisplayItem(items, "MobileQQ", config.MobileQQPath, null, LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath);
+        return items;
+    }
+
     private static List<LoadedDatabaseItem> CreateLoadedIcalinguaDisplayItems(IcalinguaMessageDatabaseSet? databases)
     {
         var items = new List<LoadedDatabaseItem>();
@@ -126,6 +166,24 @@ internal static class LoadedDatabaseGroupBuilder
             items.Add(new LoadedDatabaseItem("Info.db", infoDb.InfoDbPath, null, LoadedDatabaseItemKind.PCQQInfoDb));
         if (!string.IsNullOrWhiteSpace(database.DataPath))
             items.Add(new LoadedDatabaseItem("数据目录", database.DataPath, null, LoadedDatabaseItemKind.PCQQDataPath));
+        return items;
+    }
+
+    private static List<LoadedDatabaseItem> CreateLoadedAndroidMobileQQDisplayItems(AndroidMobileQQDatabaseRuntimeGroup database)
+    {
+        var items = new List<LoadedDatabaseItem>();
+        var messageDatabase = database.MessageDatabase;
+        if (messageDatabase is not null)
+        {
+            items.Add(new LoadedDatabaseItem(messageDatabase));
+            items.Add(new LoadedDatabaseItem("数据目录", messageDatabase.RootPath, null, LoadedDatabaseItemKind.AndroidMobileQQRootPath));
+            if (!string.IsNullOrWhiteSpace(messageDatabase.SlowDatabaseFilePath))
+                items.Add(new LoadedDatabaseItem(Path.GetFileName(messageDatabase.SlowDatabaseFilePath), messageDatabase.SlowDatabaseFilePath, null, LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb));
+        }
+
+        if (!string.IsNullOrWhiteSpace(database.MobileQQPath))
+            items.Add(new LoadedDatabaseItem("MobileQQ", database.MobileQQPath, null, LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath));
+
         return items;
     }
 
@@ -186,6 +244,16 @@ internal static class LoadedDatabaseGroupBuilder
             return;
 
         items.Add(new LoadedDatabaseItem(name, path, database, kind));
+    }
+
+    private static string ResolveAndroidMobileQQChildDirectory(string rootPath, string primaryName, string fallbackName)
+    {
+        var primaryPath = Path.Combine(rootPath, primaryName);
+        if (Directory.Exists(primaryPath))
+            return primaryPath;
+
+        var fallbackPath = Path.Combine(rootPath, fallbackName);
+        return Directory.Exists(fallbackPath) ? fallbackPath : primaryPath;
     }
 
     private static IcalinguaMessageReader? FindIcalinguaReader(

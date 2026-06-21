@@ -30,6 +30,9 @@ public partial class QQDatabaseService
             case DatabasePlatformType.PCQQ:
                 await ApplyPreparedPCQQDatabaseAsync(prepared);
                 break;
+            case DatabasePlatformType.AndroidMobileQQ:
+                await ApplyPreparedAndroidMobileQQDatabaseAsync(prepared);
+                break;
             case DatabasePlatformType.Icalingua:
                 await ApplyPreparedIcalinguaDatabaseAsync(prepared);
                 break;
@@ -72,6 +75,22 @@ public partial class QQDatabaseService
             : PCQQDatabaseRuntimeGroup.Create(prepared.PCQQMessageDatabase, prepared.PCQQDataPath);
         if (PCQQMessageDatabase is not null)
             await NotifyDatabaseAddedAsync(PCQQMessageDatabase);
+
+        RebuildDatabaseGroups();
+    }
+
+    private async Task ApplyPreparedAndroidMobileQQDatabaseAsync(PreparedDatabaseConfig prepared)
+    {
+        _currentAndroidMobileQQConfig = prepared.Config;
+        RemoveAndroidMobileQQDatabase(clearConfig: false);
+
+        _androidMobileQQDatabase = prepared.AndroidMobileQQMessageDatabase is null
+            ? AndroidMobileQQDatabaseRuntimeGroup.Empty
+            : AndroidMobileQQDatabaseRuntimeGroup.Create(
+                prepared.AndroidMobileQQMessageDatabase,
+                prepared.AndroidMobileQQMediaPath);
+        if (AndroidMobileQQMessageDatabase is not null)
+            await NotifyDatabaseAddedAsync(AndroidMobileQQMessageDatabase);
 
         RebuildDatabaseGroups();
     }

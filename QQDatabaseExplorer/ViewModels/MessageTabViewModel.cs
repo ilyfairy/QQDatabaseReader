@@ -34,6 +34,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly MessageDatabaseChangeCoordinator _databaseChangeCoordinator;
     private readonly ReplyTargetConversationResolver _replyTargetConversationResolver;
     private readonly PCQQDisplayMessageFactory _pcqqDisplayMessageFactory;
+    private readonly AndroidMobileQQDisplayMessageFactory _androidMobileQQDisplayMessageFactory;
     private readonly IcalinguaDisplayMessageFactory _icalinguaDisplayMessageFactory;
     private readonly MessagePageDisplayBuilder _messagePageDisplayBuilder;
     private readonly MessagePageLoader _messagePageLoader;
@@ -356,6 +357,11 @@ public partial class MessageTabViewModel : ViewModelBase
         if (ConversationTypeClassifier.IsPCQQ(conversation))
         {
             return _pcqqDisplayMessageFactory.Create(item, conversation);
+        }
+
+        if (ConversationTypeClassifier.IsAndroidMobileQQ(conversation))
+        {
+            return _androidMobileQQDisplayMessageFactory.Create(item, conversation);
         }
 
         if (ConversationTypeClassifier.IsIcalingua(conversation))

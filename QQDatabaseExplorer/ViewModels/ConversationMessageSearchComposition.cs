@@ -30,15 +30,20 @@ internal sealed class ConversationMessageSearchProviderFactory
 
     public bool HasSearchDatabase =>
         _databaseService.GroupMessageFtsDatabase is not null ||
-        _databaseService.IcalinguaMessageDatabases is not null;
+        _databaseService.IcalinguaMessageDatabases is not null ||
+        _databaseService.PCQQMessageDatabase is not null ||
+        _databaseService.AndroidMobileQQMessageDatabase is not null;
 
     public string ReadyStatusText => _databaseService.GroupMessageFtsDatabase is not null
         ? "输入关键词，支持中文、拼音、首字母、URL"
-        : "输入关键词，搜索 Icalingua 聊天记录";
+        : "输入关键词，搜索聊天记录";
 
     public bool ShouldRefreshFor(IQQDatabase database)
     {
-        return database.DatabaseType is QQDatabaseType.GroupMessageFts or QQDatabaseType.IcalinguaMessage;
+        return database.DatabaseType is QQDatabaseType.GroupMessageFts
+            or QQDatabaseType.IcalinguaMessage
+            or QQDatabaseType.PCQQMessage
+            or QQDatabaseType.AndroidMobileQQMessage;
     }
 
     public SearchDatabaseKind GetPreferredKind()
@@ -49,6 +54,12 @@ internal sealed class ConversationMessageSearchProviderFactory
         if (_databaseService.IcalinguaMessageDatabases is not null)
             return SearchDatabaseKind.Icalingua;
 
+        if (_databaseService.PCQQMessageDatabase is not null)
+            return SearchDatabaseKind.PCQQ;
+
+        if (_databaseService.AndroidMobileQQMessageDatabase is not null)
+            return SearchDatabaseKind.AndroidMobileQQ;
+
         return SearchDatabaseKind.None;
     }
 
@@ -58,6 +69,8 @@ internal sealed class ConversationMessageSearchProviderFactory
         {
             SearchDatabaseKind.GroupMessageFts => _databaseService.GroupMessageFtsDatabase is not null,
             SearchDatabaseKind.Icalingua => _databaseService.IcalinguaMessageDatabases is not null,
+            SearchDatabaseKind.PCQQ => _databaseService.PCQQMessageDatabase is not null,
+            SearchDatabaseKind.AndroidMobileQQ => _databaseService.AndroidMobileQQMessageDatabase is not null,
             SearchDatabaseKind.None => false,
             _ => false,
         };
@@ -76,6 +89,10 @@ internal sealed class ConversationMessageSearchProviderFactory
                 new QqNtFtsMessageSearchProvider(ftsDatabase, _qqNtSearchMetadataLoader),
             SearchDatabaseKind.Icalingua when _databaseService.IcalinguaMessageDatabases is { } icalinguaDatabase =>
                 new IcalinguaMessageSearchProvider(icalinguaDatabase),
+            SearchDatabaseKind.PCQQ when _databaseService.PCQQMessageDatabase is { } pcqqDatabase =>
+                new PCQQMessageSearchProvider(pcqqDatabase),
+            SearchDatabaseKind.AndroidMobileQQ when _databaseService.AndroidMobileQQMessageDatabase is { } androidMobileQQDatabase =>
+                new AndroidMobileQQMessageSearchProvider(androidMobileQQDatabase),
             _ => throw new InvalidOperationException("当前没有可用的搜索数据库"),
         };
     }

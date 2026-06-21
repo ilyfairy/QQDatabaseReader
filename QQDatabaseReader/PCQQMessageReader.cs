@@ -284,6 +284,46 @@ public sealed class PCQQMessageReader : IQQDatabase
             .FirstOrDefault(message => message.MessageSeq == messageSeq);
     }
 
+    public PCQQMessageSearchPage SearchMessages(
+        string tableName,
+        string query,
+        int pageSize,
+        PCQQMessageSearchCursor? cursor = null)
+    {
+        EnsureConversationTableName(tableName);
+        if (string.IsNullOrWhiteSpace(query) || pageSize <= 0)
+            return new PCQQMessageSearchPage([], null, false);
+
+        var results = new List<PCQQMessageRecord>(pageSize);
+        PCQQMessageSearchCursor? nextCursor = cursor;
+        var hasMore = true;
+        while (results.Count < pageSize && hasMore)
+        {
+            var batch = LoadSearchBatch(tableName, nextCursor, 500);
+            hasMore = batch.Count == 500;
+            if (batch.Count == 0)
+                break;
+
+            var last = batch[^1];
+            nextCursor = new PCQQMessageSearchCursor(last.MessageTime, last.MessageRandom);
+
+            foreach (var message in batch)
+            {
+                if (message.PreviewText.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    results.Add(message);
+                    if (results.Count >= pageSize)
+                        break;
+                }
+            }
+        }
+
+        return new PCQQMessageSearchPage(
+            results,
+            hasMore ? nextCursor : null,
+            hasMore);
+    }
+
     private PCQQLatestMessage? GetLatestMessage(string tableName)
     {
         var messages = QueryMessages(
@@ -298,6 +338,34 @@ public sealed class PCQQMessageReader : IQQDatabase
         return latest is null
             ? null
             : new PCQQLatestMessage(latest.MessageTime, latest.PreviewText, latest.SenderUin, latest.SenderNickname);
+    }
+
+    private IReadOnlyList<PCQQMessageRecord> LoadSearchBatch(
+        string tableName,
+        PCQQMessageSearchCursor? cursor,
+        int batchSize)
+    {
+        var cursorPredicate = cursor is null
+            ? string.Empty
+            : "WHERE Time < $time OR (Time = $time AND Rand < $rand)";
+        return QueryMessages(
+            $"""
+            SELECT Time, Rand, SenderUin, MsgContent, Info
+            FROM {QuoteIdent(tableName)}
+            {cursorPredicate}
+            ORDER BY Time DESC, Rand DESC
+            LIMIT $limit
+            """,
+            command =>
+            {
+                if (cursor is not null)
+                {
+                    AddParameter(command, "$time", cursor.MessageTime);
+                    AddParameter(command, "$rand", cursor.MessageRandom);
+                }
+
+                AddParameter(command, "$limit", batchSize);
+            });
     }
 
     private IReadOnlyList<PCQQMessageRecord> QueryMessages(string sql, Action<IDbCommand> bind)
@@ -491,6 +559,13 @@ public sealed record PCQQMessageRecord(
 public sealed record PCQQMessageDate(
     int DayStartTime,
     int MessageCount);
+
+public sealed record PCQQMessageSearchCursor(long MessageTime, long MessageRandom);
+
+public sealed record PCQQMessageSearchPage(
+    IReadOnlyList<PCQQMessageRecord> Messages,
+    PCQQMessageSearchCursor? NextCursor,
+    bool HasMore);
 
 public enum PCQQConversationType
 {

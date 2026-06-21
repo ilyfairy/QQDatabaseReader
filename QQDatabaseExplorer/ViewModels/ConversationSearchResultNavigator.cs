@@ -23,26 +23,48 @@ internal sealed class ConversationSearchResultNavigator
         if (!result.CanLocate)
             return;
 
-        if (result.IcalinguaRoomId != 0)
+        switch (result.ConversationType)
         {
-            if (clearMessageFilter)
-            {
-                await _messageTabViewModel.JumpToIcalinguaMessageAndClearFilterAsync(
-                    result.IcalinguaRoomId,
-                    result.MessageId,
-                    result.MessageSeq,
-                    result.GroupName);
-            }
-            else
-            {
-                await _messageTabViewModel.JumpToIcalinguaMessageAsync(
-                    result.IcalinguaRoomId,
-                    result.MessageId,
-                    result.MessageSeq,
-                    result.GroupName);
-            }
+            case AvaConversationType.Icalingua:
+                if (clearMessageFilter)
+                {
+                    await _messageTabViewModel.JumpToIcalinguaMessageAndClearFilterAsync(
+                        result.IcalinguaRoomId,
+                        result.MessageId,
+                        result.MessageSeq,
+                        result.GroupName);
+                }
+                else
+                {
+                    await _messageTabViewModel.JumpToIcalinguaMessageAsync(
+                        result.IcalinguaRoomId,
+                        result.MessageId,
+                        result.MessageSeq,
+                        result.GroupName);
+                }
 
-            return;
+                return;
+            case AvaConversationType.PCQQGroup or AvaConversationType.PCQQPrivate:
+                await _messageTabViewModel.JumpToPCQQMessageAsync(
+                    result.ConversationType,
+                    result.GroupId,
+                    result.PeerUin,
+                    result.PCQQTableName,
+                    result.MessageId,
+                    result.MessageSeq,
+                    result.GroupName,
+                    clearMessageFilter);
+                return;
+            case AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate:
+                await _messageTabViewModel.JumpToAndroidMobileQQMessageAsync(
+                    result.ConversationType,
+                    result.AndroidMobileQQPeerUin,
+                    result.AndroidMobileQQTableName,
+                    result.MessageId,
+                    result.MessageSeq,
+                    result.GroupName,
+                    clearMessageFilter);
+                return;
         }
 
         if (result.PrivateConversationId != 0)

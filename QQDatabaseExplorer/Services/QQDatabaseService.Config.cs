@@ -11,6 +11,7 @@ public partial class QQDatabaseService
         return group.Config ?? group.PlatformType switch
         {
             DatabasePlatformType.PCQQ => CreateCurrentPCQQConfig(),
+            DatabasePlatformType.AndroidMobileQQ => CreateCurrentAndroidMobileQQConfig(),
             DatabasePlatformType.Icalingua => CreateCurrentIcalinguaConfigs().FirstOrDefault(),
             DatabasePlatformType.AndroidQQNT => CreateCurrentQQNTConfig(DatabasePlatformType.AndroidQQNT),
             DatabasePlatformType.QQNT => CreateCurrentQQNTConfig(DatabasePlatformType.QQNT),
@@ -27,6 +28,9 @@ public partial class QQDatabaseService
 
         if ((_currentPCQQConfig ?? CreateCurrentPCQQConfig()) is { } pcqqConfig)
             config.Databases.Add(pcqqConfig);
+
+        if ((_currentAndroidMobileQQConfig ?? CreateCurrentAndroidMobileQQConfig()) is { } androidMobileQQConfig)
+            config.Databases.Add(androidMobileQQConfig);
 
         config.Databases.AddRange(_icalinguaDatabases.CurrentOrLoadedConfigs);
 
@@ -96,6 +100,26 @@ public partial class QQDatabaseService
         _icalinguaDatabases.ClearConfigItem(kind, filePath);
     }
 
+    private void ClearAndroidMobileQQConfigItem(LoadedDatabaseItemKind kind)
+    {
+        var androidMobileQQ = _currentAndroidMobileQQConfig?.AndroidMobileQQ;
+        if (androidMobileQQ is null)
+            return;
+
+        switch (kind)
+        {
+            case LoadedDatabaseItemKind.AndroidMobileQQMessageDb:
+            case LoadedDatabaseItemKind.AndroidMobileQQRootPath:
+            case LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb:
+                androidMobileQQ.RootPath = null;
+                androidMobileQQ.SelfUin = null;
+                break;
+            case LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath:
+                androidMobileQQ.MobileQQPath = null;
+                break;
+        }
+    }
+
     private DatabaseConfig? CreateCurrentQQNTConfig(DatabasePlatformType platformType)
     {
         return _qqNtDatabases.CreateConfig(platformType);
@@ -104,6 +128,11 @@ public partial class QQDatabaseService
     private DatabaseConfig? CreateCurrentPCQQConfig()
     {
         return _pcqqDatabase.CreateConfig();
+    }
+
+    private DatabaseConfig? CreateCurrentAndroidMobileQQConfig()
+    {
+        return _androidMobileQQDatabase.CreateConfig();
     }
 
     private List<DatabaseConfig> CreateCurrentIcalinguaConfigs()

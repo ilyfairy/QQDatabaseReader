@@ -108,6 +108,23 @@ internal sealed class MessageConversationListApplier
         return conversation;
     }
 
+    public AvaQQGroup GetOrCreateAndroidMobileQQConversation(AvaConversationType conversationType, string peerUin)
+    {
+        var conversation = _groups.FirstOrDefault(v =>
+            v.ConversationType == conversationType &&
+            string.Equals(v.AndroidMobileQQPeerUin, peerUin, StringComparison.Ordinal));
+        if (conversation is not null)
+            return conversation;
+
+        conversation = new AvaQQGroup
+        {
+            ConversationType = conversationType,
+            AndroidMobileQQPeerUin = peerUin,
+        };
+        _groups.Add(conversation);
+        return conversation;
+    }
+
     public void ApplyGroupInfoItems(IReadOnlyList<GroupInfoLoadItem> rawGroups)
     {
         foreach (var item in _groups
@@ -184,6 +201,22 @@ internal sealed class MessageConversationListApplier
         }
     }
 
+    public void ApplyAndroidMobileQQMessageConversations(IEnumerable<AndroidMobileQQConversation> items)
+    {
+        foreach (var item in items)
+        {
+            var conversationType = item.ConversationType == AndroidMobileQQConversationType.Group
+                ? AvaConversationType.AndroidMobileQQGroup
+                : AvaConversationType.AndroidMobileQQPrivate;
+            if (string.IsNullOrWhiteSpace(item.PeerUin))
+                continue;
+
+            var conversation = GetOrCreateAndroidMobileQQConversation(conversationType, item.PeerUin);
+            ApplyAndroidMobileQQConversation(conversation, item);
+            ApplySelectionState(conversation);
+        }
+    }
+
     public void ClearConversations()
     {
         _groups.Clear();
@@ -256,6 +289,19 @@ internal sealed class MessageConversationListApplier
         conversation.GroupName = FirstNonEmpty(item.DisplayName, item.RoomId.ToString());
         conversation.IcalinguaDownloadPath = item.DownloadPath;
         conversation.LatestMessageText = item.LatestMessageText;
+        conversation.LatestMessageTime = MessageConversationTime.ClampUnixTime(item.LatestMessageTime);
+    }
+
+    private static void ApplyAndroidMobileQQConversation(AvaQQGroup conversation, AndroidMobileQQConversation item)
+    {
+        conversation.AndroidMobileQQTableName = item.TableName;
+        conversation.AndroidMobileQQPeerUin = item.PeerUin;
+        conversation.GroupName = FirstNonEmpty(item.DisplayName, item.PeerUin);
+        conversation.LatestMessageText = LatestMessagePreviewFactory.CreateAndroidMobileQQ(
+            item.ConversationType,
+            item.LatestMessageText,
+            item.LatestMessageSenderUin,
+            item.LatestMessageSenderName);
         conversation.LatestMessageTime = MessageConversationTime.ClampUnixTime(item.LatestMessageTime);
     }
 

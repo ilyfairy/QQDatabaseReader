@@ -26,6 +26,8 @@ public class DatabaseConfig
 
     public AndroidQQNTDatabaseConfig? AndroidQQNT { get; set; }
 
+    public AndroidMobileQQDatabaseConfig? AndroidMobileQQ { get; set; }
+
     public IcalinguaDatabaseConfig? Icalingua { get; set; }
 }
 
@@ -33,6 +35,7 @@ public enum DatabasePlatformType
 {
     PCQQ,
     QQNT,
+    AndroidMobileQQ,
     AndroidQQNT,
     Icalingua,
 }
@@ -78,6 +81,15 @@ public class PCQQDatabaseConfig
     public string? InfoDbKey { get; set; }
 
     public string? DataPath { get; set; }
+}
+
+public class AndroidMobileQQDatabaseConfig
+{
+    public string? RootPath { get; set; }
+
+    public string? SelfUin { get; set; }
+
+    public string? MobileQQPath { get; set; }
 }
 
 public class IcalinguaDatabaseConfig

@@ -16,7 +16,10 @@ internal sealed record SearchPage(
 
 internal sealed record SearchCursor(
     long? QqNtBeforeRowId = null,
-    IcalinguaMessageSearchCursor? IcalinguaCursor = null);
+    IcalinguaMessageSearchCursor? IcalinguaCursor = null,
+    PCQQMessageSearchCursor? PCQQCursor = null,
+    AndroidMobileQQMessageSearchCursor? AndroidMobileQQCursor = null,
+    int ConversationIndex = 0);
 
 internal sealed record ConversationSearchFilter(
     uint? GroupOrPeerId,
@@ -42,6 +45,23 @@ internal static class SearchConversationKey
     {
         return "icalingua:" + roomId;
     }
+
+    public static string PCQQGroup(uint groupId)
+    {
+        return "pcqq-group:" + groupId;
+    }
+
+    public static string PCQQPrivate(uint privateUin)
+    {
+        return "pcqq-private:" + privateUin;
+    }
+
+    public static string AndroidMobileQQ(AvaConversationType conversationType, string peerUin)
+    {
+        return conversationType == AvaConversationType.AndroidMobileQQGroup
+            ? "android-mobileqq-group:" + peerUin
+            : "android-mobileqq-private:" + peerUin;
+    }
 }
 
 internal enum SearchDatabaseKind
@@ -49,6 +69,8 @@ internal enum SearchDatabaseKind
     None,
     GroupMessageFts,
     Icalingua,
+    PCQQ,
+    AndroidMobileQQ,
 }
 
 internal sealed record PrivateConversationInfo(uint PeerUin, string? PeerUid, string? Name);
@@ -141,7 +163,7 @@ internal sealed class ConversationMessageSearchSession
 
 internal sealed class ConversationSearchFilterParser
 {
-    private const string InvalidFilterMessage = "只能填写群号、QQ号或 Icalingua roomId";
+    private const string InvalidFilterMessage = "只能填写群号或QQ号";
     private readonly QqNtSearchMetadataLoader _metadataLoader;
 
     public ConversationSearchFilterParser(QqNtSearchMetadataLoader metadataLoader)
@@ -229,8 +251,6 @@ internal static class ConversationMessageSearchStatusFormatter
 
     private static string GetSearchTargetName(SearchDatabaseKind databaseKind)
     {
-        return databaseKind == SearchDatabaseKind.Icalingua
-            ? "会话"
-            : "会话";
+        return "会话";
     }
 }

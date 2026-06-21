@@ -170,44 +170,37 @@ internal sealed class ConversationMessageSearchResultStore
 
     public static string GetGroupKey(AvaGroupMessageSearchResult result)
     {
-        if (result.GroupId != 0)
-            return SearchConversationKey.Group(result.GroupId);
-
-        if (result.PrivateConversationId != 0)
-            return SearchConversationKey.Private(result.PrivateConversationId);
-
-        if (result.IcalinguaRoomId != 0)
-            return SearchConversationKey.Icalingua(result.IcalinguaRoomId);
-
-        return result.PeerUid ?? string.Empty;
+        return result.ConversationType switch
+        {
+            AvaConversationType.Group when result.GroupId != 0 => SearchConversationKey.Group(result.GroupId),
+            AvaConversationType.Private when result.PrivateConversationId != 0 => SearchConversationKey.Private(result.PrivateConversationId),
+            AvaConversationType.PCQQGroup when result.GroupId != 0 => SearchConversationKey.PCQQGroup(result.GroupId),
+            AvaConversationType.PCQQPrivate when result.PeerUin != 0 => SearchConversationKey.PCQQPrivate(result.PeerUin),
+            AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate =>
+                SearchConversationKey.AndroidMobileQQ(result.ConversationType, result.AndroidMobileQQPeerUin ?? string.Empty),
+            AvaConversationType.Icalingua when result.IcalinguaRoomId != 0 => SearchConversationKey.Icalingua(result.IcalinguaRoomId),
+            _ => result.PeerUid ?? string.Empty,
+        };
     }
 
     public static string GetGroupKey(AvaGroupMessageSearchGroup group)
     {
-        if (group.GroupId != 0)
-            return SearchConversationKey.Group(group.GroupId);
-
-        if (group.PrivateConversationId != 0)
-            return SearchConversationKey.Private(group.PrivateConversationId);
-
-        if (group.IcalinguaRoomId != 0)
-            return SearchConversationKey.Icalingua(group.IcalinguaRoomId);
-
-        return group.PeerUid ?? string.Empty;
+        return group.ConversationType switch
+        {
+            AvaConversationType.Group when group.GroupId != 0 => SearchConversationKey.Group(group.GroupId),
+            AvaConversationType.Private when group.PrivateConversationId != 0 => SearchConversationKey.Private(group.PrivateConversationId),
+            AvaConversationType.PCQQGroup when group.GroupId != 0 => SearchConversationKey.PCQQGroup(group.GroupId),
+            AvaConversationType.PCQQPrivate when group.PeerUin != 0 => SearchConversationKey.PCQQPrivate(group.PeerUin),
+            AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate =>
+                SearchConversationKey.AndroidMobileQQ(group.ConversationType, group.AndroidMobileQQPeerUin ?? string.Empty),
+            AvaConversationType.Icalingua when group.IcalinguaRoomId != 0 => SearchConversationKey.Icalingua(group.IcalinguaRoomId),
+            _ => group.PeerUid ?? string.Empty,
+        };
     }
 
     private static bool IsGroupResult(AvaGroupMessageSearchResult result, AvaGroupMessageSearchGroup group)
     {
-        if (group.GroupId != 0)
-            return result.GroupId == group.GroupId;
-
-        if (group.PrivateConversationId != 0)
-            return result.PrivateConversationId == group.PrivateConversationId;
-
-        if (group.IcalinguaRoomId != 0)
-            return result.IcalinguaRoomId == group.IcalinguaRoomId;
-
-        return string.Equals(result.PeerUid, group.PeerUid, StringComparison.Ordinal);
+        return string.Equals(GetGroupKey(result), GetGroupKey(group), StringComparison.Ordinal);
     }
 
     private static AvaGroupMessageSearchGroup CreateGroup(
@@ -216,10 +209,14 @@ internal sealed class ConversationMessageSearchResultStore
     {
         return new AvaGroupMessageSearchGroup
         {
+            ConversationType = first.ConversationType,
             GroupId = first.GroupId,
             PrivateConversationId = first.PrivateConversationId,
             PeerUin = first.PeerUin,
             IcalinguaRoomId = first.IcalinguaRoomId,
+            PCQQTableName = first.PCQQTableName,
+            AndroidMobileQQTableName = first.AndroidMobileQQTableName,
+            AndroidMobileQQPeerUin = first.AndroidMobileQQPeerUin,
             PeerUid = first.PeerUid,
             GroupName = first.GroupName,
             MatchCount = 1,

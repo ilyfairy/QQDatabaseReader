@@ -26,6 +26,10 @@ public partial class QQDatabaseService
 
     public PCQQMessageReader? PCQQMessageDatabase => _pcqqDatabase.MessageDatabase;
 
+    private AndroidMobileQQDatabaseRuntimeGroup _androidMobileQQDatabase = AndroidMobileQQDatabaseRuntimeGroup.Empty;
+
+    public AndroidMobileQQMessageReader? AndroidMobileQQMessageDatabase => _androidMobileQQDatabase.MessageDatabase;
+
     private IcalinguaDatabaseRuntimeGroup _icalinguaDatabases = IcalinguaDatabaseRuntimeGroup.Empty;
 
     public IcalinguaMessageReader? IcalinguaMessageDatabase => _icalinguaDatabases.PrimaryReader;
@@ -42,6 +46,8 @@ public partial class QQDatabaseService
 
     public string? PCQQDataPath => _pcqqDatabase.DataPath;
 
+    public string? AndroidMobileQQMediaPath => _androidMobileQQDatabase.MobileQQPath;
+
     public string? IcalinguaDataPath => _icalinguaDatabases.PrimaryDataPath;
 
     public ObservableCollection<LoadedDatabaseGroup> DatabaseGroups { get; } = new();
@@ -49,6 +55,7 @@ public partial class QQDatabaseService
     private DatabasePlatformType _ntPlatformType = DatabasePlatformType.QQNT;
     private DatabaseConfig? _currentQQNTConfig;
     private DatabaseConfig? _currentPCQQConfig;
+    private DatabaseConfig? _currentAndroidMobileQQConfig;
 
     private void RebuildDatabaseGroups()
     {
@@ -67,9 +74,11 @@ public partial class QQDatabaseService
             _ntPlatformType,
             _currentQQNTConfig,
             _currentPCQQConfig,
+            _currentAndroidMobileQQConfig,
             _icalinguaDatabases,
             _qqNtDatabases,
-            _pcqqDatabase);
+            _pcqqDatabase,
+            _androidMobileQQDatabase);
     }
 
     private void NotifyDatabaseRemoved(IQQDatabase database)

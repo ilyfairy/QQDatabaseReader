@@ -37,4 +37,9 @@ public enum QQDatabaseType
     /// Icalingua-plus-plus eqq*.db
     /// </summary>
     IcalinguaMessage,
+
+    /// <summary>
+    /// Legacy Android QQ MobileQQ message database
+    /// </summary>
+    AndroidMobileQQMessage,
 }

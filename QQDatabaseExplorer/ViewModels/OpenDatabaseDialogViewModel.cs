@@ -44,6 +44,15 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public partial string MobileQQPath { get; set; } = string.Empty;
 
     [ObservableProperty]
+    public partial string AndroidMobileQQRootPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string AndroidMobileQQSelfUin { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string AndroidMobileQQMediaPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
     public partial string Key { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -83,6 +92,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     public bool IsAndroidQQNT => PlatformType is DatabasePlatformType.AndroidQQNT;
 
+    public bool IsAndroidMobileQQ => PlatformType is DatabasePlatformType.AndroidMobileQQ;
+
     public bool IsNtPlatform => PlatformType is DatabasePlatformType.QQNT or DatabasePlatformType.AndroidQQNT;
 
     public bool IsPCQQ => PlatformType is DatabasePlatformType.PCQQ;
@@ -105,6 +116,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         { DatabasePlatformType.PCQQ, "PCQQ" },
         { DatabasePlatformType.QQNT, "QQNT" },
+        { DatabasePlatformType.AndroidMobileQQ, "AndroidQQ" },
         { DatabasePlatformType.AndroidQQNT, "AndroidQQNT" },
         { DatabasePlatformType.Icalingua, "Icalingua" },
     };
@@ -181,6 +193,11 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 NtUid = android.NtUid ?? string.Empty;
                 Rand = android.Rand ?? string.Empty;
                 break;
+            case DatabasePlatformType.AndroidMobileQQ when config.AndroidMobileQQ is { } androidMobile:
+                AndroidMobileQQRootPath = androidMobile.RootPath ?? string.Empty;
+                AndroidMobileQQSelfUin = androidMobile.SelfUin ?? string.Empty;
+                AndroidMobileQQMediaPath = androidMobile.MobileQQPath ?? string.Empty;
+                break;
             case DatabasePlatformType.QQNT when config.QQNT is { } qqnt:
                 SetQQNTFields(qqnt);
                 break;
@@ -195,6 +212,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(IsQQNT));
         OnPropertyChanged(nameof(IsAndroidQQNT));
+        OnPropertyChanged(nameof(IsAndroidMobileQQ));
         OnPropertyChanged(nameof(IsNtPlatform));
         OnPropertyChanged(nameof(IsPCQQ));
         OnPropertyChanged(nameof(IsIcalingua));
@@ -274,6 +292,30 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
                 ResultConfig = CreateIcalinguaConfig();
             }
+            else if (IsAndroidMobileQQ)
+            {
+                if (!await ValidateRequiredDirectoryAsync(AndroidMobileQQRootPath, "请输入 Android QQ 数据目录", "Android QQ 数据目录不存在"))
+                    return;
+
+                if (string.IsNullOrWhiteSpace(AndroidMobileQQSelfUin))
+                {
+                    await _dialogService.ShowMessageBox("请输入账号 QQ", "错误", ViewModelToken);
+                    return;
+                }
+
+                var messageDbPath = Path.Combine(
+                    ResolveAndroidMobileQQChildDirectory(AndroidMobileQQRootPath, "databases", "db"),
+                    AndroidMobileQQSelfUin + ".db");
+                var keyPath = Path.Combine(
+                    ResolveAndroidMobileQQChildDirectory(AndroidMobileQQRootPath, "files", "f"),
+                    "kc");
+                if (!await ValidateOptionalFileAsync(messageDbPath, $"{AndroidMobileQQSelfUin}.db 文件不存在"))
+                    return;
+                if (!await ValidateOptionalFileAsync(keyPath, "files/kc 文件不存在"))
+                    return;
+
+                ResultConfig = CreateAndroidMobileQQConfig();
+            }
             else
             {
                 if (IsAndroidQQNT)
@@ -340,6 +382,21 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         }
 
         return await ValidateOptionalFileAsync(path, missingMessage);
+    }
+
+    private async Task<bool> ValidateRequiredDirectoryAsync(string path, string emptyMessage, string missingMessage)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            await _dialogService.ShowMessageBox(emptyMessage, "错误", ViewModelToken);
+            return false;
+        }
+
+        if (Directory.Exists(path))
+            return true;
+
+        await _dialogService.ShowMessageBox(missingMessage, "错误", ViewModelToken);
+        return false;
     }
 
     private async Task<bool> ValidateOptionalFileAsync(string path, string missingMessage)
@@ -411,6 +468,16 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         return File.Exists(databaseFilePath) &&
                string.Equals(Path.GetFileName(databaseFilePath), expectedFileName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveAndroidMobileQQChildDirectory(string rootPath, string primaryName, string fallbackName)
+    {
+        var primaryPath = Path.Combine(rootPath, primaryName);
+        if (Directory.Exists(primaryPath))
+            return primaryPath;
+
+        var fallbackPath = Path.Combine(rootPath, fallbackName);
+        return Directory.Exists(fallbackPath) ? fallbackPath : primaryPath;
     }
 
     private static string? TryGetExistingSiblingFile(string currentPath, string directory, string fileName)
@@ -502,6 +569,20 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 InfoDbPath = EmptyToNull(PCQQInfoDbPath),
                 InfoDbKey = EmptyToNull(PCQQInfoDbKey),
                 DataPath = EmptyToNull(PCQQDataPath),
+            },
+        };
+    }
+
+    private DatabaseConfig CreateAndroidMobileQQConfig()
+    {
+        return new DatabaseConfig
+        {
+            Type = DatabasePlatformType.AndroidMobileQQ,
+            AndroidMobileQQ = new AndroidMobileQQDatabaseConfig
+            {
+                RootPath = EmptyToNull(AndroidMobileQQRootPath),
+                SelfUin = EmptyToNull(AndroidMobileQQSelfUin),
+                MobileQQPath = EmptyToNull(AndroidMobileQQMediaPath),
             },
         };
     }

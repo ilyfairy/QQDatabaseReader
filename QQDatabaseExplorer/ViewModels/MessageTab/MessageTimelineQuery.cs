@@ -13,6 +13,7 @@ internal sealed class MessageTimelineQuery
         _providers =
         [
             new PCQQMessageTimelineProvider(() => databaseSource.PCQQMessageDatabase),
+            new AndroidMobileQQMessageTimelineProvider(() => databaseSource.AndroidMobileQQMessageDatabase),
             new IcalinguaMessageTimelineProvider(() => databaseSource.IcalinguaMessageDatabases),
             new NtMessageTimelineProvider(
                 () => databaseSource.MessageDatabase,

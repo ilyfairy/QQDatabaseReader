@@ -53,6 +53,11 @@ public partial class MainWindow : UrsaWindow
         await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.AndroidQQNT);
     }
 
+    private async void OpenAndroidMobileQQMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.AndroidMobileQQ);
+    }
+
     private async void OpenIcalinguaMenuItem_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         await _dialogService.ShowOpenDatabaseDialog(platformType: DatabasePlatformType.Icalingua);

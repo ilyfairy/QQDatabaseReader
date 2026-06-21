@@ -116,6 +116,34 @@
                     <StackPanel
                         Orientation="Vertical"
                         Spacing="8"
+                        IsVisible="{Binding IsAndroidMobileQQ}">
+                        <DockPanel ToolTip.Tip="[AndroidQQ] com.tencent.mobileqq 数据目录">
+                            <TextBlock Width="152" Text="数据目录:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickAndroidMobileQQRootPathButton_Click" />
+                            <TextBox Text="{Binding AndroidMobileQQRootPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[AndroidQQ] 当前账号 QQ">
+                            <TextBlock Width="152" Text="账号QQ:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding AndroidMobileQQSelfUin}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="[AndroidQQ] MobileQQ 目录，用于后续读取本地媒体文件">
+                            <TextBlock Width="152" Text="MobileQQ:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickAndroidMobileQQMediaPathButton_Click" />
+                            <TextBox Text="{Binding AndroidMobileQQMediaPath}" />
+                        </DockPanel>
+                    </StackPanel>
+
+                    <StackPanel
+                        Orientation="Vertical"
+                        Spacing="8"
                         IsVisible="{Binding IsPCQQ}">
                         <DockPanel ToolTip.Tip="[PCQQ] Msg3.0.db">
                             <TextBlock Width="152" Text="Msg3.0.db:" VerticalAlignment="Center" />

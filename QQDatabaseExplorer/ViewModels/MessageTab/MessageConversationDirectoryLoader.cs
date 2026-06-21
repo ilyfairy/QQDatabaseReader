@@ -50,6 +50,11 @@ internal sealed class MessageConversationDirectoryLoader
         return messageDatabase.GetConversations();
     }
 
+    public IReadOnlyList<AndroidMobileQQConversation> LoadAndroidMobileQQMessageConversations(AndroidMobileQQMessageReader messageDatabase)
+    {
+        return messageDatabase.GetConversations();
+    }
+
     public IReadOnlyList<IcalinguaConversation> LoadIcalinguaMessageConversations()
     {
         return _getIcalinguaMessageDatabases()?.GetConversations() ?? [];

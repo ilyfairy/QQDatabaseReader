@@ -84,6 +84,21 @@ internal sealed class LatestMessagePreviewFactory
         return AddSenderName(messageText, senderName);
     }
 
+    public static string CreateAndroidMobileQQ(
+        AndroidMobileQQConversationType conversationType,
+        string messageText,
+        string senderUin,
+        string? senderName)
+    {
+        if (string.IsNullOrWhiteSpace(messageText) ||
+            conversationType == AndroidMobileQQConversationType.Private)
+        {
+            return messageText;
+        }
+
+        return AddSenderName(messageText, FirstNonEmpty(senderName, senderUin));
+    }
+
     public string CreatePreviewText(MessageRecord message)
     {
         return CreateRawPreviewText(message);

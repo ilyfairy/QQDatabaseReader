@@ -17,6 +17,8 @@ internal static class PreparedDatabaseConfigLoader
         {
             DatabasePlatformType.PCQQ when config.PCQQ is { } pcqq =>
                 PreparePCQQ(pcqq),
+            DatabasePlatformType.AndroidMobileQQ when config.AndroidMobileQQ is { } androidMobile =>
+                PrepareAndroidMobileQQ(androidMobile),
             DatabasePlatformType.Icalingua when config.Icalingua is { } icalingua =>
                 PrepareIcalingua(icalingua),
             DatabasePlatformType.AndroidQQNT when config.AndroidQQNT is { } android =>
@@ -77,6 +79,8 @@ internal static class PreparedDatabaseConfigLoader
                 null,
                 null,
                 null,
+                null,
+                null,
                 null);
         }
         catch
@@ -112,7 +116,39 @@ internal static class PreparedDatabaseConfigLoader
                 null,
                 messageDatabase,
                 null,
+                null,
                 config.DataPath,
+                null,
+                null);
+        }
+        catch
+        {
+            messageDatabase?.Dispose();
+            throw;
+        }
+    }
+
+    private static PreparedDatabaseConfig PrepareAndroidMobileQQ(AndroidMobileQQDatabaseConfig config)
+    {
+        AndroidMobileQQMessageReader? messageDatabase = null;
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(config.RootPath) &&
+                !string.IsNullOrWhiteSpace(config.SelfUin))
+            {
+                messageDatabase = CreateAndroidMobileQQMessageDatabase(config.RootPath, config.SelfUin);
+            }
+
+            return new PreparedDatabaseConfig(
+                DatabasePlatformType.AndroidMobileQQ,
+                CreateAndroidMobileQQDatabaseConfig(config),
+                null,
+                null,
+                messageDatabase,
+                null,
+                null,
+                config.MobileQQPath,
                 null);
         }
         catch
@@ -138,7 +174,9 @@ internal static class PreparedDatabaseConfigLoader
                 CreateIcalinguaDatabaseConfig(config),
                 null,
                 null,
+                null,
                 messageDatabase,
+                null,
                 null,
                 config.DataPath);
         }
@@ -201,6 +239,13 @@ internal static class PreparedDatabaseConfigLoader
         string? infoDbKey)
     {
         var database = new PCQQMessageReader(databasePath, key, infoDbPath, infoDbKey);
+        database.Initialize();
+        return database;
+    }
+
+    private static AndroidMobileQQMessageReader CreateAndroidMobileQQMessageDatabase(string rootPath, string selfUin)
+    {
+        var database = new AndroidMobileQQMessageReader(rootPath, selfUin);
         database.Initialize();
         return database;
     }
@@ -268,6 +313,20 @@ internal static class PreparedDatabaseConfigLoader
                 InfoDbPath = config.InfoDbPath,
                 InfoDbKey = config.InfoDbKey,
                 DataPath = config.DataPath,
+            },
+        };
+    }
+
+    internal static DatabaseConfig CreateAndroidMobileQQDatabaseConfig(AndroidMobileQQDatabaseConfig config)
+    {
+        return new DatabaseConfig
+        {
+            Type = DatabasePlatformType.AndroidMobileQQ,
+            AndroidMobileQQ = new AndroidMobileQQDatabaseConfig
+            {
+                RootPath = config.RootPath,
+                SelfUin = config.SelfUin,
+                MobileQQPath = config.MobileQQPath,
             },
         };
     }

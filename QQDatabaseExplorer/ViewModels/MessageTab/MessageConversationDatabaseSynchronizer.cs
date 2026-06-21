@@ -102,6 +102,26 @@ internal sealed class IcalinguaConversationCatalogSource(
     }
 }
 
+internal sealed class AndroidMobileQQConversationCatalogSource(
+    MessageConversationDirectoryLoader directoryLoader,
+    MessageConversationListApplier conversationApplier) : IConversationCatalogSource
+{
+    public bool CanApply(IQQDatabase database)
+    {
+        return database is AndroidMobileQQMessageReader;
+    }
+
+    public async Task ApplyAsync(IQQDatabase database)
+    {
+        if (database is not AndroidMobileQQMessageReader messageDatabase)
+            return;
+
+        var conversations = await Task.Run(() =>
+            directoryLoader.LoadAndroidMobileQQMessageConversations(messageDatabase));
+        conversationApplier.ApplyAndroidMobileQQMessageConversations(conversations);
+    }
+}
+
 internal sealed class QQNtMessageConversationRemovalHandler(
     MessageConversationListApplier conversationApplier) : IConversationDatabaseRemovalHandler
 {
@@ -164,6 +184,24 @@ internal sealed class IcalinguaConversationRemovalHandler(
     }
 }
 
+internal sealed class AndroidMobileQQConversationRemovalHandler(
+    MessageConversationListApplier conversationApplier) : IConversationDatabaseRemovalHandler
+{
+    public bool CanRemove(IQQDatabase database)
+    {
+        return database is AndroidMobileQQMessageReader;
+    }
+
+    public ConversationDatabaseRemovalResult Remove(
+        IQQDatabase database,
+        ConversationDatabaseRemovalContext context)
+    {
+        conversationApplier.RemoveConversations(static conversation =>
+            conversation.ConversationType is AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate);
+        return ConversationDatabaseRemovalResults.ClearMessageDatabase;
+    }
+}
+
 internal sealed class QQNtGroupInfoConversationRemovalHandler(
     MessageConversationListApplier conversationApplier) : IConversationDatabaseRemovalHandler
 {
@@ -220,12 +258,14 @@ internal sealed class MessageConversationDatabaseSynchronizer
             new AndroidQQNtConversationCatalogSource(_directoryLoader, _conversationApplier),
             new QQNtGroupInfoConversationCatalogSource(_directoryLoader, _conversationApplier),
             new PCQQConversationCatalogSource(_directoryLoader, _conversationApplier),
+            new AndroidMobileQQConversationCatalogSource(_directoryLoader, _conversationApplier),
             new IcalinguaConversationCatalogSource(_directoryLoader, _conversationApplier),
         ];
         _removalHandlers =
         [
             new QQNtMessageConversationRemovalHandler(_conversationApplier),
             new PCQQConversationRemovalHandler(_conversationApplier),
+            new AndroidMobileQQConversationRemovalHandler(_conversationApplier),
             new IcalinguaConversationRemovalHandler(_conversationApplier),
             new QQNtGroupInfoConversationRemovalHandler(_conversationApplier),
         ];

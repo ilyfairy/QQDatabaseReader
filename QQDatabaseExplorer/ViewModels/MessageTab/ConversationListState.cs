@@ -48,6 +48,8 @@ internal sealed class ConversationListState
                 group.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 (group.ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup &&
                  group.GroupId.ToString().Contains(query, StringComparison.OrdinalIgnoreCase)) ||
+                (group.ConversationType is AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate &&
+                 (group.AndroidMobileQQPeerUin?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false)) ||
                 (group.ConversationType == AvaConversationType.Icalingua &&
                  group.IcalinguaRoomId.ToString().Contains(query, StringComparison.OrdinalIgnoreCase)) ||
                 (group.ConversationType is AvaConversationType.Private or AvaConversationType.PCQQPrivate &&
@@ -185,6 +187,9 @@ internal sealed class ConversationListState
             AvaConversationType.Private => group.PrivateConversationId != 0,
             AvaConversationType.PCQQGroup => group.GroupId != 0 && !string.IsNullOrWhiteSpace(group.PCQQTableName),
             AvaConversationType.PCQQPrivate => group.PrivateUin != 0 && !string.IsNullOrWhiteSpace(group.PCQQTableName),
+            AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate =>
+                !string.IsNullOrWhiteSpace(group.AndroidMobileQQPeerUin) &&
+                !string.IsNullOrWhiteSpace(group.AndroidMobileQQTableName),
             AvaConversationType.Icalingua => group.IcalinguaRoomId != 0,
             _ => false,
         };

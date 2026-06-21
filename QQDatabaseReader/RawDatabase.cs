@@ -11,6 +11,7 @@ public class RawDatabase : IDisposable
     public string DatabaseFilePath { get; }
     public bool UseVFS { get; }
     public bool UsePCQQVFS { get; }
+    public bool UseImmutableReadOnly { get; }
     public byte[]? PCQQKey { get; }
     public string? CipherPassword { get; }
     public int? CipherPageSize { get; }
@@ -30,7 +31,7 @@ public class RawDatabase : IDisposable
         QQNTFileOffsetVfs.Register();
     }
 
-    public RawDatabase(string dbFilePath, bool useVFS = false)
+    public RawDatabase(string dbFilePath, bool useVFS = false, bool useImmutableReadOnly = false)
     {
         if (!File.Exists(dbFilePath))
         {
@@ -39,6 +40,7 @@ public class RawDatabase : IDisposable
 
         DatabaseFilePath = dbFilePath;
         UseVFS = useVFS;
+        UseImmutableReadOnly = useImmutableReadOnly;
     }
 
     private RawDatabase(string databaseFilePath, byte[] pcqqKey)
@@ -90,7 +92,12 @@ public class RawDatabase : IDisposable
             vfsName = QQNTFileOffsetVfs.VfsName;
         }
 
-        int rc = raw.sqlite3_open_v2(DatabaseFilePath, out _db, raw.SQLITE_OPEN_READONLY, vfsName);
+        var openFilePath = UseImmutableReadOnly
+            ? CreateImmutableReadOnlyUri(DatabaseFilePath)
+            : DatabaseFilePath;
+        var openFlags = raw.SQLITE_OPEN_READONLY |
+                        (UseImmutableReadOnly ? raw.SQLITE_OPEN_URI : 0);
+        int rc = raw.sqlite3_open_v2(openFilePath, out _db, openFlags, vfsName);
         if (rc != raw.SQLITE_OK)
         {
             var errorMsg = raw.sqlite3_errmsg(Database).utf8_to_string();
@@ -149,6 +156,12 @@ public class RawDatabase : IDisposable
             return null;
         var headerPayload = buffer[(qqntIndex + qqntdbHeader.Length)..];
         return TryReadQQNTHeaderRand(headerPayload) ?? ScanRandToken(headerPayload);
+    }
+
+    private static string CreateImmutableReadOnlyUri(string databaseFilePath)
+    {
+        var uri = new Uri(Path.GetFullPath(databaseFilePath)).AbsoluteUri;
+        return uri + (uri.Contains('?') ? "&" : "?") + "mode=ro&immutable=1";
     }
 
     private static string? TryReadQQNTHeaderRand(ReadOnlySpan<byte> headerPayload)

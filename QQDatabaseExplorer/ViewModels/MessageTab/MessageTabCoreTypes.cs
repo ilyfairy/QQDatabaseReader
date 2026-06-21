@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Services;
@@ -131,6 +132,36 @@ internal static class MessageRecordFactory
             null,
             0,
             message.SenderId);
+    }
+
+    public static MessageRecord FromAndroidMobileQQ(AndroidMobileQQMessageRecord message, AvaQQGroup conversation)
+    {
+        var senderId = ParseUin(message.SenderUin);
+        return new MessageRecord(
+            message.RowId,
+            message.RowId,
+            message.MessageTime,
+            MessageType.Text,
+            SubMessageType.Text,
+            message.IsSend,
+            message.SenderUin,
+            message.PeerUin,
+            conversation.ConversationType == AvaConversationType.AndroidMobileQQGroup ? ParseUin(message.PeerUin) : 0,
+            conversation.ConversationType == AvaConversationType.AndroidMobileQQPrivate ? message.RowId : 0,
+            conversation.ConversationType == AvaConversationType.AndroidMobileQQPrivate ? ParseUin(message.PeerUin) : 0,
+            MessageConversationTime.ClampUnixTime(message.MessageTime),
+            message.SenderName,
+            message.SenderName,
+            AndroidMobileQQMessagePayload.ToContentBytes(message),
+            null,
+            null,
+            0,
+            senderId);
+    }
+
+    private static uint ParseUin(string? value)
+    {
+        return uint.TryParse(value, out var uin) ? uin : 0;
     }
 }
 
@@ -278,6 +309,39 @@ internal sealed record QqNtDisplayMessageAssembly(
     string SenderName,
     string? CachedAvatarLocalPath);
 
+internal sealed record AndroidMobileQQMessagePayload(
+    string DisplayText,
+    int MsgType,
+    IReadOnlyList<AndroidMobileQQMessagePart> Parts)
+{
+    public static byte[] ToContentBytes(AndroidMobileQQMessageRecord message)
+    {
+        var payload = new AndroidMobileQQMessagePayload(
+            message.PreviewText,
+            message.MsgType,
+            message.Content.Parts);
+        return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(payload);
+    }
+
+    public static AndroidMobileQQMessagePayload? FromContent(byte[]? content)
+    {
+        if (content is null || content.Length == 0)
+            return null;
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<AndroidMobileQQMessagePayload>(content);
+        }
+        catch
+        {
+            var text = Encoding.UTF8.GetString(content);
+            return string.IsNullOrWhiteSpace(text)
+                ? null
+                : new AndroidMobileQQMessagePayload(text, 0, []);
+        }
+    }
+}
+
 // MessageTab 内部的轻量工具和平台判断，保持在同一文件里避免小文件过多。
 internal static class MessageFilterOptionText
 {
@@ -323,6 +387,16 @@ internal static class ConversationTypeClassifier
     {
         return conversation.ConversationType == AvaConversationType.Icalingua;
     }
+
+    public static bool IsAndroidMobileQQ(AvaQQGroup conversation)
+    {
+        return conversation.ConversationType is AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate;
+    }
+
+    public static bool IsAndroidMobileQQ(AvaConversationType conversationType)
+    {
+        return conversationType is AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate;
+    }
 }
 
 internal static class ConversationCatalogValueHelpers
@@ -367,6 +441,8 @@ internal interface IMessageDatabaseSource
 
     PCQQMessageReader? PCQQMessageDatabase { get; }
 
+    AndroidMobileQQMessageReader? AndroidMobileQQMessageDatabase { get; }
+
     IcalinguaMessageDatabaseSet? IcalinguaMessageDatabases { get; }
 
     bool HasNtMessageDatabase { get; }
@@ -379,6 +455,8 @@ internal sealed class QQDatabaseServiceMessageDatabaseSource(QQDatabaseService d
     public QQAndroidMessageReader? AndroidMessageDatabase => databaseService.AndroidMessageDatabase;
 
     public PCQQMessageReader? PCQQMessageDatabase => databaseService.PCQQMessageDatabase;
+
+    public AndroidMobileQQMessageReader? AndroidMobileQQMessageDatabase => databaseService.AndroidMobileQQMessageDatabase;
 
     public IcalinguaMessageDatabaseSet? IcalinguaMessageDatabases => databaseService.IcalinguaMessageDatabases;
 
@@ -402,6 +480,9 @@ internal sealed class MessageDatabaseAvailability
     {
         if (ConversationTypeClassifier.IsPCQQ(conversation))
             return _databaseService.PCQQMessageDatabase is not null;
+
+        if (ConversationTypeClassifier.IsAndroidMobileQQ(conversation))
+            return _databaseService.AndroidMobileQQMessageDatabase is not null;
 
         if (ConversationTypeClassifier.IsIcalingua(conversation))
             return _databaseService.IcalinguaMessageDatabases is not null;

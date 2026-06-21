@@ -76,16 +76,20 @@ internal sealed class PreparedDatabaseConfig : IDisposable
         DatabaseConfig? config,
         PreparedNtDatabaseGroup? ntDatabaseGroup,
         PCQQMessageReader? pcqqMessageDatabase,
+        AndroidMobileQQMessageReader? androidMobileQQMessageDatabase,
         IcalinguaMessageReader? icalinguaMessageDatabase,
         string? pcqqDataPath,
+        string? androidMobileQQMediaPath,
         string? icalinguaDataPath)
     {
         PlatformType = platformType;
         Config = config;
         NtDatabaseGroup = ntDatabaseGroup;
         PCQQMessageDatabase = pcqqMessageDatabase;
+        AndroidMobileQQMessageDatabase = androidMobileQQMessageDatabase;
         IcalinguaMessageDatabase = icalinguaMessageDatabase;
         PCQQDataPath = pcqqDataPath;
+        AndroidMobileQQMediaPath = androidMobileQQMediaPath;
         IcalinguaDataPath = icalinguaDataPath;
     }
 
@@ -107,18 +111,22 @@ internal sealed class PreparedDatabaseConfig : IDisposable
 
     public PCQQMessageReader? PCQQMessageDatabase { get; }
 
+    public AndroidMobileQQMessageReader? AndroidMobileQQMessageDatabase { get; }
+
     public IcalinguaMessageReader? IcalinguaMessageDatabase { get; }
 
     public string? NtDataPath => NtDatabaseGroup?.NtDataPath;
 
-    public string? AndroidMobileQQPath => NtDatabaseGroup?.AndroidMobileQQPath;
+    public string? AndroidQQNtMobileQQPath => NtDatabaseGroup?.AndroidMobileQQPath;
 
     public string? PCQQDataPath { get; }
+
+    public string? AndroidMobileQQMediaPath { get; }
 
     public string? IcalinguaDataPath { get; }
 
     public static PreparedDatabaseConfig Empty(DatabasePlatformType platformType) =>
-        new(platformType, null, null, null, null, null, null);
+        new(platformType, null, null, null, null, null, null, null, null);
 
     public void Detach()
     {
@@ -132,6 +140,7 @@ internal sealed class PreparedDatabaseConfig : IDisposable
 
         NtDatabaseGroup?.Dispose();
         PCQQMessageDatabase?.Dispose();
+        AndroidMobileQQMessageDatabase?.Dispose();
         IcalinguaMessageDatabase?.Dispose();
     }
 }

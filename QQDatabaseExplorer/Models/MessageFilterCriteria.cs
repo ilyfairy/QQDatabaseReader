@@ -100,5 +100,8 @@ public sealed record MessageFilterDialogRequest(
     IReadOnlyList<MessageSenderFilterOption> SenderCandidates)
 {
     public bool IsGroupConversation =>
-        ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup or AvaConversationType.Icalingua;
+        ConversationType is AvaConversationType.Group
+            or AvaConversationType.PCQQGroup
+            or AvaConversationType.AndroidMobileQQGroup
+            or AvaConversationType.Icalingua;
 }

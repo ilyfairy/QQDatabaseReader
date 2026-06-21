@@ -74,6 +74,7 @@ internal sealed class IcalinguaMessageSearchProvider : IConversationMessageSearc
         conversations.TryGetValue(result.RoomId, out var conversation);
         return new AvaGroupMessageSearchResult
         {
+            ConversationType = AvaConversationType.Icalingua,
             MessageId = result.MessageId,
             MessageSeq = result.MessageSeq,
             MessageTime = result.MessageTime,
