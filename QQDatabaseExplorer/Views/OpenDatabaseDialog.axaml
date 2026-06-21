@@ -14,6 +14,7 @@
     <Border Padding="12">
         <Grid RowDefinitions="* Auto">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <Border Padding="0,0,18,0">
                 <StackPanel Orientation="Vertical" Spacing="10">
                     <DockPanel>
                         <TextBlock Width="152" Text="类型:" VerticalAlignment="Center" />
@@ -97,13 +98,24 @@
                                 <TextBox Text="{Binding MobileQQPath}" IsVisible="{Binding IsAndroidQQNT}" />
                             </Grid>
                         </DockPanel>
+                        <DockPanel
+                            ToolTip.Tip="chatpic 目录，用于读取 Android QQ 本地图片"
+                            IsVisible="{Binding IsAndroidQQNT}">
+                            <TextBlock Width="152" Text="chatpic:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickAndroidQQNtChatPicPathButton_Click" />
+                            <TextBox Text="{Binding ChatPicPath}" />
+                        </DockPanel>
                     </StackPanel>
 
                     <StackPanel
                         Orientation="Vertical"
                         Spacing="8"
                         IsVisible="{Binding IsAndroidQQNT}">
-                        <DockPanel ToolTip.Tip="NtUid">
+                        <DockPanel ToolTip.Tip="{Binding NtUidToolTip}">
                             <TextBlock Width="152" Text="NtUid:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding NtUid}" />
                         </DockPanel>
@@ -138,6 +150,15 @@
                                 Content="选择"
                                 Click="PickAndroidMobileQQMediaPathButton_Click" />
                             <TextBox Text="{Binding AndroidMobileQQMediaPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="chatpic 目录，用于读取本地图片">
+                            <TextBlock Width="152" Text="chatpic:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Click="PickAndroidMobileQQChatPicPathButton_Click" />
+                            <TextBox Text="{Binding AndroidMobileQQChatPicPath}" />
                         </DockPanel>
                     </StackPanel>
 
@@ -206,6 +227,7 @@
                         </DockPanel>
                     </StackPanel>
                 </StackPanel>
+                </Border>
             </ScrollViewer>
             <DockPanel Grid.Row="1" Margin="0,12,0,0">
                 <Button

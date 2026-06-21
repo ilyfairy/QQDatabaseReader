@@ -5,17 +5,20 @@ namespace QQDatabaseExplorer.Services;
 
 internal sealed record AndroidMobileQQDatabaseRuntimeGroup(
     AndroidMobileQQMessageReader? MessageDatabase,
-    string? MobileQQPath)
+    string? MobileQQPath,
+    string? ChatPicPath)
 {
-    public static AndroidMobileQQDatabaseRuntimeGroup Empty { get; } = new(null, null);
+    public static AndroidMobileQQDatabaseRuntimeGroup Empty { get; } = new(null, null, null);
 
     public static AndroidMobileQQDatabaseRuntimeGroup Create(
         AndroidMobileQQMessageReader messageDatabase,
-        string? mobileQQPath)
+        string? mobileQQPath,
+        string? chatPicPath)
     {
         return new AndroidMobileQQDatabaseRuntimeGroup(
             messageDatabase,
-            NormalizeOptionalPath(mobileQQPath));
+            NormalizeOptionalPath(mobileQQPath),
+            NormalizeOptionalPath(chatPicPath));
     }
 
     public DatabaseConfig? CreateConfig()
@@ -31,6 +34,7 @@ internal sealed record AndroidMobileQQDatabaseRuntimeGroup(
                 RootPath = messageDatabase.RootPath,
                 SelfUin = messageDatabase.SelfUin,
                 MobileQQPath = MobileQQPath,
+                ChatPicPath = ChatPicPath,
             },
         };
     }

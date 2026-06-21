@@ -88,7 +88,8 @@ public partial class QQDatabaseService
             ? AndroidMobileQQDatabaseRuntimeGroup.Empty
             : AndroidMobileQQDatabaseRuntimeGroup.Create(
                 prepared.AndroidMobileQQMessageDatabase,
-                prepared.AndroidMobileQQMediaPath);
+                prepared.AndroidMobileQQMediaPath,
+                prepared.AndroidMobileQQChatPicPath);
         if (AndroidMobileQQMessageDatabase is not null)
             await NotifyDatabaseAddedAsync(AndroidMobileQQMessageDatabase);
 

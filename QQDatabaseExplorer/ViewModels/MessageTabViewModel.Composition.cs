@@ -117,7 +117,9 @@ public partial class MessageTabViewModel
             uin => databaseService.PCQQMessageDatabase?.ResolveContactName(uin));
         var androidMobileQQDisplayMessageFactory = new AndroidMobileQQDisplayMessageFactory(
             alwaysShowMessageTime,
-            highlightMentions);
+            highlightMentions,
+            () => databaseService.AndroidMobileQQMediaPath,
+            () => databaseService.AndroidMobileQQChatPicPath);
         var icalinguaDisplayMessageFactory = IcalinguaDisplayMessageFactory.Create(
             alwaysShowMessageTime,
             highlightMentions,

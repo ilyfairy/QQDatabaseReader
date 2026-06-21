@@ -129,14 +129,10 @@ internal static class LoadedDatabaseGroupBuilder
             var messageDbPath = messageDatabase?.DatabaseFilePath ??
                 Path.Combine(ResolveAndroidMobileQQChildDirectory(config.RootPath, "databases", "db"), config.SelfUin + ".db");
             AddDisplayItem(items, config.SelfUin + ".db", messageDbPath, messageDatabase, LoadedDatabaseItemKind.AndroidMobileQQMessageDb);
-
-            var slowDbPath = messageDatabase?.SlowDatabaseFilePath ??
-                Path.Combine(ResolveAndroidMobileQQChildDirectory(config.RootPath, "databases", "db"), "slowtable_" + config.SelfUin + ".db");
-            if (File.Exists(slowDbPath))
-                AddDisplayItem(items, Path.GetFileName(slowDbPath), slowDbPath, null, LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb);
         }
 
         AddDisplayItem(items, "MobileQQ", config.MobileQQPath, null, LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath);
+        AddDisplayItem(items, "chatpic", config.ChatPicPath, null, LoadedDatabaseItemKind.AndroidMobileQQChatPicPath);
         return items;
     }
 
@@ -177,12 +173,12 @@ internal static class LoadedDatabaseGroupBuilder
         {
             items.Add(new LoadedDatabaseItem(messageDatabase));
             items.Add(new LoadedDatabaseItem("数据目录", messageDatabase.RootPath, null, LoadedDatabaseItemKind.AndroidMobileQQRootPath));
-            if (!string.IsNullOrWhiteSpace(messageDatabase.SlowDatabaseFilePath))
-                items.Add(new LoadedDatabaseItem(Path.GetFileName(messageDatabase.SlowDatabaseFilePath), messageDatabase.SlowDatabaseFilePath, null, LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb));
         }
 
         if (!string.IsNullOrWhiteSpace(database.MobileQQPath))
             items.Add(new LoadedDatabaseItem("MobileQQ", database.MobileQQPath, null, LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath));
+        if (!string.IsNullOrWhiteSpace(database.ChatPicPath))
+            items.Add(new LoadedDatabaseItem("chatpic", database.ChatPicPath, null, LoadedDatabaseItemKind.AndroidMobileQQChatPicPath));
 
         return items;
     }
@@ -205,9 +201,14 @@ internal static class LoadedDatabaseGroupBuilder
         AddDisplayItem(items, "group_msg_fts.db", qqnt.GroupMessageFtsDbPath, qqNtDatabases.GroupMessageFtsDatabase, LoadedDatabaseItemKind.GroupMessageFtsDb);
 
         if (config.Type is DatabasePlatformType.AndroidQQNT && config.AndroidQQNT is { } android)
+        {
             AddDisplayItem(items, "MobileQQ", android.MobileQQPath, null, LoadedDatabaseItemKind.MobileQQPath);
+            AddDisplayItem(items, "chatpic", android.ChatPicPath, null, LoadedDatabaseItemKind.AndroidQQNtChatPicPath);
+        }
         else
+        {
             AddDisplayItem(items, "nt_data", qqnt.NtDataPath, null, LoadedDatabaseItemKind.NtDataPath);
+        }
 
         return items;
     }
@@ -228,6 +229,8 @@ internal static class LoadedDatabaseGroupBuilder
             items.Add(new LoadedDatabaseItem(database.GroupMessageFtsDatabase));
         if (!string.IsNullOrWhiteSpace(database.AndroidMobileQQPath))
             items.Add(new LoadedDatabaseItem("MobileQQ", database.AndroidMobileQQPath, null, LoadedDatabaseItemKind.MobileQQPath));
+        if (!string.IsNullOrWhiteSpace(database.AndroidChatPicPath))
+            items.Add(new LoadedDatabaseItem("chatpic", database.AndroidChatPicPath, null, LoadedDatabaseItemKind.AndroidQQNtChatPicPath));
         else if (!string.IsNullOrWhiteSpace(database.NtDataPath))
             items.Add(new LoadedDatabaseItem("nt_data", database.NtDataPath, null, LoadedDatabaseItemKind.NtDataPath));
         return items;

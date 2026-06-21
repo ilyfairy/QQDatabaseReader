@@ -44,9 +44,13 @@ public partial class QQDatabaseService
 
     public string? AndroidMobileQQPath => _qqNtDatabases.AndroidMobileQQPath;
 
+    public string? AndroidQQNtChatPicPath => _qqNtDatabases.AndroidChatPicPath;
+
     public string? PCQQDataPath => _pcqqDatabase.DataPath;
 
     public string? AndroidMobileQQMediaPath => _androidMobileQQDatabase.MobileQQPath;
+
+    public string? AndroidMobileQQChatPicPath => _androidMobileQQDatabase.ChatPicPath;
 
     public string? IcalinguaDataPath => _icalinguaDatabases.PrimaryDataPath;
 

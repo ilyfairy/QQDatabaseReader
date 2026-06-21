@@ -182,10 +182,12 @@ public partial class QQDatabaseService
             case LoadedDatabaseItemKind.AndroidMobileQQRootPath:
             case LoadedDatabaseItemKind.AndroidMobileQQSlowTableDb:
             case LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath:
+            case LoadedDatabaseItemKind.AndroidMobileQQChatPicPath:
                 ClearAndroidMobileQQConfigItem(item.Kind);
                 break;
             case LoadedDatabaseItemKind.NtDataPath:
             case LoadedDatabaseItemKind.MobileQQPath:
+            case LoadedDatabaseItemKind.AndroidQQNtChatPicPath:
             case LoadedDatabaseItemKind.NtMessageDb:
             case LoadedDatabaseItemKind.GroupInfoDb:
             case LoadedDatabaseItemKind.ProfileInfoDb:

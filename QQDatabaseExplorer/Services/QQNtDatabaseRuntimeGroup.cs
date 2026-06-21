@@ -13,9 +13,12 @@ internal sealed record QQNtDatabaseRuntimeGroup(
     QQAndroidMessageReader? AndroidMessageDatabase,
     QQGroupMessageFtsReader? GroupMessageFtsDatabase,
     string? NtDataPath,
-    string? AndroidMobileQQPath)
+    string? AndroidMobileQQPath,
+    string? AndroidChatPicPath,
+    string? AndroidNtUid,
+    string? AndroidRand)
 {
-    public static QQNtDatabaseRuntimeGroup Empty { get; } = new(null, null, null, null, null, null, null);
+    public static QQNtDatabaseRuntimeGroup Empty { get; } = new(null, null, null, null, null, null, null, null, null, null);
 
     public bool HasDatabases =>
         MessageDatabase is not null ||
@@ -52,7 +55,10 @@ internal sealed record QQNtDatabaseRuntimeGroup(
                 prepared.AndroidMessageDatabase,
                 prepared.GroupMessageFtsDatabase,
                 prepared.NtDataPath,
-                prepared.AndroidMobileQQPath);
+                prepared.AndroidMobileQQPath,
+                prepared.AndroidChatPicPath,
+                prepared.AndroidNtUid,
+                prepared.AndroidRand);
     }
 
     public QQNtDatabaseRuntimeGroup WithGroupInfoDatabase(QQGroupInfoReader database)
@@ -81,12 +87,14 @@ internal sealed record QQNtDatabaseRuntimeGroup(
 
     public QQNtDatabaseRuntimeGroup WithAndroidMessageDatabase(
         QQAndroidMessageReader database,
-        string? mobileQQPath)
+        string? mobileQQPath,
+        string? chatPicPath)
     {
         return this with
         {
             AndroidMessageDatabase = database,
             AndroidMobileQQPath = NormalizeOptionalPath(mobileQQPath),
+            AndroidChatPicPath = NormalizeOptionalPath(chatPicPath),
         };
     }
 
@@ -120,6 +128,9 @@ internal sealed record QQNtDatabaseRuntimeGroup(
         {
             AndroidMessageDatabase = null,
             AndroidMobileQQPath = null,
+            AndroidChatPicPath = null,
+            AndroidNtUid = null,
+            AndroidRand = null,
         };
     }
 
@@ -149,6 +160,9 @@ internal sealed record QQNtDatabaseRuntimeGroup(
                 AndroidQQNT = new AndroidQQNTDatabaseConfig
                 {
                     MobileQQPath = AndroidMobileQQPath,
+                    ChatPicPath = AndroidChatPicPath,
+                    NtUid = AndroidNtUid,
+                    Rand = AndroidRand,
                     MessageDbPath = qqnt.MessageDbPath,
                     MessageDbPassword = qqnt.MessageDbPassword,
                     GroupInfoDbPath = qqnt.GroupInfoDbPath,

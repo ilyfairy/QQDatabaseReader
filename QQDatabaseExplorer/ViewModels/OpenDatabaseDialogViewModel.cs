@@ -44,6 +44,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public partial string MobileQQPath { get; set; } = string.Empty;
 
     [ObservableProperty]
+    public partial string ChatPicPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
     public partial string AndroidMobileQQRootPath { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -51,6 +54,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string AndroidMobileQQMediaPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string AndroidMobileQQChatPicPath { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial string Key { get; set; } = string.Empty;
@@ -105,8 +111,12 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public string NtDataPathLabel => IsAndroidQQNT ? "MobileQQ:" : "nt_data:";
 
     public string NtDataPathToolTip => IsAndroidQQNT
-        ? "MobileQQ 目录，用于读取本地图片"
+        ? "MobileQQ 目录，用于读取本地媒体文件"
         : "nt_data 目录，用于读取本地图片和图片表情";
+
+    public string NtUidToolTip =>
+        "nt_uid 在 /data/data/com.tencent.mobileqq/files/uid 中\n" +
+        "文件名格式类似 QQ号###u_xxx，### 后面的 u_xxx 就是 nt_uid";
 
     public string FindDatabaseKeyButtonText => IsPCQQ
         ? "登录PCQQ自动获取Key"
@@ -197,6 +207,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 AndroidMobileQQRootPath = androidMobile.RootPath ?? string.Empty;
                 AndroidMobileQQSelfUin = androidMobile.SelfUin ?? string.Empty;
                 AndroidMobileQQMediaPath = androidMobile.MobileQQPath ?? string.Empty;
+                AndroidMobileQQChatPicPath = androidMobile.ChatPicPath ?? string.Empty;
                 break;
             case DatabasePlatformType.QQNT when config.QQNT is { } qqnt:
                 SetQQNTFields(qqnt);
@@ -256,6 +267,28 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         PCQQInfoDbPath = databaseFilePath;
         TryCompletePCQQDatabasePaths(databaseFilePath, PCQQInfoDbFileName);
+    }
+
+    public void UsePickedAndroidQQNtMobileQQPath(string mobileQQPath)
+    {
+        MobileQQPath = mobileQQPath;
+        TryCompleteAndroidQQNtChatPicPath(mobileQQPath);
+    }
+
+    public void UsePickedAndroidQQNtChatPicPath(string chatPicPath)
+    {
+        ChatPicPath = chatPicPath;
+    }
+
+    public void UsePickedAndroidMobileQQMediaPath(string mobileQQPath)
+    {
+        AndroidMobileQQMediaPath = mobileQQPath;
+        TryCompleteAndroidMobileQQChatPicPath(mobileQQPath);
+    }
+
+    public void UsePickedAndroidMobileQQChatPicPath(string chatPicPath)
+    {
+        AndroidMobileQQChatPicPath = chatPicPath;
     }
 
     partial void OnNtUidChanged(string value)
@@ -536,6 +569,33 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             PCQQDataPath = directory;
     }
 
+    private void TryCompleteAndroidQQNtChatPicPath(string mobileQQPath)
+    {
+        if (!string.IsNullOrWhiteSpace(ChatPicPath))
+            return;
+
+        if (TryGetMobileQQChatPicPath(mobileQQPath) is { } chatPicPath)
+            ChatPicPath = chatPicPath;
+    }
+
+    private void TryCompleteAndroidMobileQQChatPicPath(string mobileQQPath)
+    {
+        if (!string.IsNullOrWhiteSpace(AndroidMobileQQChatPicPath))
+            return;
+
+        if (TryGetMobileQQChatPicPath(mobileQQPath) is { } chatPicPath)
+            AndroidMobileQQChatPicPath = chatPicPath;
+    }
+
+    private static string? TryGetMobileQQChatPicPath(string mobileQQPath)
+    {
+        if (string.IsNullOrWhiteSpace(mobileQQPath))
+            return null;
+
+        var chatPicPath = Path.Combine(mobileQQPath, "chatpic");
+        return Directory.Exists(chatPicPath) ? chatPicPath : null;
+    }
+
     private static string? EmptyToNull(string value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value;
@@ -554,6 +614,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         NtDataPath = config.NtDataPath ?? string.Empty;
         MobileQQPath = config is AndroidQQNTDatabaseConfig android
             ? android.MobileQQPath ?? string.Empty
+            : string.Empty;
+        ChatPicPath = config is AndroidQQNTDatabaseConfig androidConfig
+            ? androidConfig.ChatPicPath ?? string.Empty
             : string.Empty;
     }
 
@@ -583,6 +646,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 RootPath = EmptyToNull(AndroidMobileQQRootPath),
                 SelfUin = EmptyToNull(AndroidMobileQQSelfUin),
                 MobileQQPath = EmptyToNull(AndroidMobileQQMediaPath),
+                ChatPicPath = EmptyToNull(AndroidMobileQQChatPicPath),
             },
         };
     }
@@ -618,6 +682,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             {
                 NtDataPath = config.NtDataPath,
                 MobileQQPath = EmptyToNull(MobileQQPath),
+                ChatPicPath = EmptyToNull(ChatPicPath),
                 MessageDbPath = config.MessageDbPath,
                 MessageDbPassword = config.MessageDbPassword,
                 GroupInfoDbPath = config.GroupInfoDbPath,

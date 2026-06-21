@@ -65,7 +65,10 @@ internal static class PreparedDatabaseConfigLoader
                 androidMessageDatabase,
                 groupMessageFtsDatabase,
                 config.NtDataPath,
-                config is AndroidQQNTDatabaseConfig android ? android.MobileQQPath : null);
+                config is AndroidQQNTDatabaseConfig android ? android.MobileQQPath : null,
+                config is AndroidQQNTDatabaseConfig androidConfig ? androidConfig.ChatPicPath : null,
+                config is AndroidQQNTDatabaseConfig androidNtConfig ? androidNtConfig.NtUid : null,
+                config is AndroidQQNTDatabaseConfig androidRandConfig ? androidRandConfig.Rand : null);
             groupInfoDatabase = null;
             profileInfoDatabase = null;
             messageDatabase = null;
@@ -76,6 +79,7 @@ internal static class PreparedDatabaseConfigLoader
                 platformType,
                 CreateQQNTDatabaseConfig(config, platformType),
                 ntDatabases,
+                null,
                 null,
                 null,
                 null,
@@ -119,6 +123,7 @@ internal static class PreparedDatabaseConfigLoader
                 null,
                 config.DataPath,
                 null,
+                null,
                 null);
         }
         catch
@@ -149,6 +154,7 @@ internal static class PreparedDatabaseConfigLoader
                 null,
                 null,
                 config.MobileQQPath,
+                config.ChatPicPath,
                 null);
         }
         catch
@@ -176,6 +182,7 @@ internal static class PreparedDatabaseConfigLoader
                 null,
                 null,
                 messageDatabase,
+                null,
                 null,
                 null,
                 config.DataPath);
@@ -268,6 +275,7 @@ internal static class PreparedDatabaseConfigLoader
                 AndroidQQNT = new AndroidQQNTDatabaseConfig
                 {
                     MobileQQPath = android?.MobileQQPath,
+                    ChatPicPath = android?.ChatPicPath,
                     NtUid = android?.NtUid,
                     Rand = android?.Rand,
                     NtDataPath = config.NtDataPath,
@@ -327,6 +335,7 @@ internal static class PreparedDatabaseConfigLoader
                 RootPath = config.RootPath,
                 SelfUin = config.SelfUin,
                 MobileQQPath = config.MobileQQPath,
+                ChatPicPath = config.ChatPicPath,
             },
         };
     }

@@ -16,6 +16,7 @@ public enum LoadedDatabaseItemKind
     GroupMessageFtsDb,
     NtDataPath,
     MobileQQPath,
+    AndroidQQNtChatPicPath,
     PCQQMessageDb,
     PCQQInfoDb,
     PCQQDataPath,
@@ -23,6 +24,7 @@ public enum LoadedDatabaseItemKind
     AndroidMobileQQSlowTableDb,
     AndroidMobileQQRootPath,
     AndroidMobileQQMobileQQPath,
+    AndroidMobileQQChatPicPath,
     IcalinguaMessageDb,
     IcalinguaDataPath,
 }
@@ -32,7 +34,7 @@ public sealed class LoadedDatabaseGroup
     public LoadedDatabaseGroup(DatabasePlatformType platformType, IEnumerable<LoadedDatabaseItem> items, DatabaseConfig? config = null)
     {
         PlatformType = platformType;
-        Name = platformType.ToString();
+        Name = GetPlatformDisplayName(platformType);
         Items = new ObservableCollection<LoadedDatabaseItem>(items);
         Config = config;
     }
@@ -44,6 +46,15 @@ public sealed class LoadedDatabaseGroup
     public ObservableCollection<LoadedDatabaseItem> Items { get; }
 
     public DatabaseConfig? Config { get; }
+
+    private static string GetPlatformDisplayName(DatabasePlatformType platformType)
+    {
+        return platformType switch
+        {
+            DatabasePlatformType.AndroidMobileQQ => "AndroidQQ",
+            _ => platformType.ToString(),
+        };
+    }
 }
 
 public sealed class LoadedDatabaseItem

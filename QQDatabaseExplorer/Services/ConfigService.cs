@@ -154,6 +154,7 @@ public class ConfigService
                     : new AndroidQQNTDatabaseConfig
                     {
                         MobileQQPath = CreatePortablePath(config.AndroidQQNT.MobileQQPath, configDirectory),
+                        ChatPicPath = CreatePortablePath(config.AndroidQQNT.ChatPicPath, configDirectory),
                         NtUid = config.AndroidQQNT.NtUid,
                         Rand = config.AndroidQQNT.Rand,
                         NtDataPath = CreatePortablePath(config.AndroidQQNT.NtDataPath, configDirectory),
@@ -177,6 +178,7 @@ public class ConfigService
                         RootPath = CreatePortablePath(config.AndroidMobileQQ.RootPath, configDirectory),
                         SelfUin = config.AndroidMobileQQ.SelfUin,
                         MobileQQPath = CreatePortablePath(config.AndroidMobileQQ.MobileQQPath, configDirectory),
+                        ChatPicPath = CreatePortablePath(config.AndroidMobileQQ.ChatPicPath, configDirectory),
                     },
             },
             DatabasePlatformType.Icalingua => new DatabaseConfig
@@ -231,6 +233,7 @@ public class ConfigService
         {
             ResolveQQNTPathsForLoad(android, configDirectory);
             android.MobileQQPath = ResolveConfigPath(android.MobileQQPath, configDirectory);
+            android.ChatPicPath = ResolveConfigPath(android.ChatPicPath, configDirectory);
         }
 
         if (config.PCQQ is { } pcqq)
@@ -244,6 +247,7 @@ public class ConfigService
         {
             androidMobileQQ.RootPath = ResolveConfigPath(androidMobileQQ.RootPath, configDirectory);
             androidMobileQQ.MobileQQPath = ResolveConfigPath(androidMobileQQ.MobileQQPath, configDirectory);
+            androidMobileQQ.ChatPicPath = ResolveConfigPath(androidMobileQQ.ChatPicPath, configDirectory);
         }
 
         if (config.Icalingua is { } icalingua)

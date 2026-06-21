@@ -70,6 +70,10 @@ public partial class QQDatabaseService
                 if (_currentQQNTConfig?.AndroidQQNT is { } android)
                     android.MobileQQPath = null;
                 break;
+            case LoadedDatabaseItemKind.AndroidQQNtChatPicPath:
+                if (_currentQQNTConfig?.AndroidQQNT is { } androidConfig)
+                    androidConfig.ChatPicPath = null;
+                break;
         }
     }
 
@@ -116,6 +120,9 @@ public partial class QQDatabaseService
                 break;
             case LoadedDatabaseItemKind.AndroidMobileQQMobileQQPath:
                 androidMobileQQ.MobileQQPath = null;
+                break;
+            case LoadedDatabaseItemKind.AndroidMobileQQChatPicPath:
+                androidMobileQQ.ChatPicPath = null;
                 break;
         }
     }

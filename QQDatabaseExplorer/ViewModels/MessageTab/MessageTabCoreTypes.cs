@@ -222,7 +222,8 @@ internal readonly record struct ResolvedVideoMediaPath(
 internal sealed record LocalMediaContext(
     DatabasePlatformType PlatformType,
     string? NtDataPath,
-    string? MobileQQPath);
+    string? MobileQQPath,
+    string? ChatPicPath);
 
 internal sealed class LocalMediaContextFactory
 {
@@ -240,10 +241,12 @@ internal sealed class LocalMediaContextFactory
             ? new LocalMediaContext(
                 DatabasePlatformType.AndroidQQNT,
                 null,
-                _databaseService.AndroidMobileQQPath)
+                _databaseService.AndroidMobileQQPath,
+                _databaseService.AndroidQQNtChatPicPath)
             : new LocalMediaContext(
                 DatabasePlatformType.QQNT,
                 _databaseService.NtDataPath,
+                null,
                 null);
     }
 }
@@ -743,7 +746,10 @@ internal static class MessageMediaPathResolver
     {
         if (mediaContext.PlatformType is DatabasePlatformType.AndroidQQNT)
         {
-            var androidPath = AndroidMobileQQMediaPathResolver.ResolveImagePath(mediaContext.MobileQQPath, segment);
+            var androidPath = AndroidMobileQQMediaPathResolver.ResolveImagePath(
+                mediaContext.MobileQQPath,
+                mediaContext.ChatPicPath,
+                segment);
             if (!string.IsNullOrWhiteSpace(androidPath))
                 return androidPath;
 

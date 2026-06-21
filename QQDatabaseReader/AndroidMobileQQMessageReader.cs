@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Google.Protobuf;
 using QQDatabaseReader.Database;
 using QQDatabaseReader.Sqlite;
 using SQLitePCL;
@@ -1225,12 +1226,49 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         return msgType switch
         {
             -1000 or -1049 or -1051 => AndroidMobileQQMessageContent.Text(msgType, DecodeUtf8(decoded)),
-            -2000 => AndroidMobileQQMessageContent.Image(msgType, "[图片]"),
+            -2000 => AndroidMobileQQMessageContent.Image(msgType, "[图片]", TryDecodeImageMd5(decoded)),
             -1035 => AndroidMobileQQMessageContent.Unsupported(msgType, "[混合消息]"),
             -5008 => AndroidMobileQQMessageContent.Unsupported(msgType, "[分享卡片]"),
             -5012 or -5018 => AndroidMobileQQMessageContent.Unsupported(msgType, "[戳一戳]"),
             _ => AndroidMobileQQMessageContent.Unsupported(msgType, $"[旧版AndroidQQ消息:{msgType}]"),
         };
+    }
+
+    private static string? TryDecodeImageMd5(byte[] data)
+    {
+        try
+        {
+            var input = new CodedInputStream(data);
+            while (!input.IsAtEnd)
+            {
+                var tag = input.ReadTag();
+                if (tag == 0)
+                    break;
+
+                var fieldNumber = WireFormat.GetTagFieldNumber(tag);
+                var wireType = WireFormat.GetTagWireType(tag);
+                if (fieldNumber == 6 && wireType == WireFormat.WireType.LengthDelimited)
+                {
+                    var md5 = input.ReadString();
+                    return IsHexMd5(md5) ? md5 : null;
+                }
+
+                input.SkipLastField();
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static bool IsHexMd5(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.Length == 32 &&
+               value.All(char.IsAsciiHexDigit);
     }
 
     private string DecodeString(byte[]? data)
@@ -1499,8 +1537,8 @@ public sealed record AndroidMobileQQMessageContent(
     public static AndroidMobileQQMessageContent Text(int msgType, string text) =>
         new(msgType, [new AndroidMobileQQMessagePart(AndroidMobileQQMessagePartType.Text, text, null, null, null, null)]);
 
-    public static AndroidMobileQQMessageContent Image(int msgType, string displayText) =>
-        new(msgType, [new AndroidMobileQQMessagePart(AndroidMobileQQMessagePartType.Image, displayText, null, null, null, null)]);
+    public static AndroidMobileQQMessageContent Image(int msgType, string displayText, string? imageMd5 = null) =>
+        new(msgType, [new AndroidMobileQQMessagePart(AndroidMobileQQMessagePartType.Image, displayText, null, null, imageMd5, null)]);
 
     public static AndroidMobileQQMessageContent Unsupported(int msgType, string displayText) =>
         new(msgType, [new AndroidMobileQQMessagePart(AndroidMobileQQMessagePartType.Unsupported, displayText, null, null, null, null)]);

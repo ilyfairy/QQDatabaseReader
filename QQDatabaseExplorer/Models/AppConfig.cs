@@ -65,6 +65,8 @@ public class AndroidQQNTDatabaseConfig : QQNTDatabaseConfig
 {
     public string? MobileQQPath { get; set; }
 
+    public string? ChatPicPath { get; set; }
+
     public string? NtUid { get; set; }
 
     public string? Rand { get; set; }
@@ -90,6 +92,8 @@ public class AndroidMobileQQDatabaseConfig
     public string? SelfUin { get; set; }
 
     public string? MobileQQPath { get; set; }
+
+    public string? ChatPicPath { get; set; }
 }
 
 public class IcalinguaDatabaseConfig

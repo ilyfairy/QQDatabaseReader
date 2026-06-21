@@ -37,10 +37,16 @@ public partial class OpenDatabaseDialog : Window
         if (!string.IsNullOrWhiteSpace(folderPath))
         {
             if (ViewModel.IsAndroidQQNT)
-                ViewModel.MobileQQPath = folderPath;
+                ViewModel.UsePickedAndroidQQNtMobileQQPath(folderPath);
             else
                 ViewModel.NtDataPath = folderPath;
         }
+    }
+
+    private async void PickAndroidQQNtChatPicPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (await PickFolderAsync("选择 chatpic 目录") is { } folderPath)
+            ViewModel.UsePickedAndroidQQNtChatPicPath(folderPath);
     }
 
     private async void PickPCQQDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -99,8 +105,14 @@ public partial class OpenDatabaseDialog : Window
             : null;
         if (!string.IsNullOrWhiteSpace(folderPath))
         {
-            ViewModel.AndroidMobileQQMediaPath = folderPath;
+            ViewModel.UsePickedAndroidMobileQQMediaPath(folderPath);
         }
+    }
+
+    private async void PickAndroidMobileQQChatPicPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (await PickFolderAsync("选择 chatpic 目录") is { } folderPath)
+            ViewModel.UsePickedAndroidMobileQQChatPicPath(folderPath);
     }
 
     private async void PickIcalinguaDataPathButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -200,6 +212,22 @@ public partial class OpenDatabaseDialog : Window
 
         return files.Count > 0
             ? files[0].TryGetLocalPath()
+            : null;
+    }
+
+    private async Task<string?> PickFolderAsync(string title)
+    {
+        if (!StorageProvider.CanPickFolder)
+            return null;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+        });
+
+        return folders.Count > 0
+            ? folders[0].TryGetLocalPath()
             : null;
     }
 }

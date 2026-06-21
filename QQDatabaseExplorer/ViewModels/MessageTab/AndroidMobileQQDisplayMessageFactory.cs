@@ -11,19 +11,25 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
 {
     private readonly Func<bool> _alwaysShowMessageTime;
     private readonly Func<bool> _highlightMentions;
+    private readonly Func<string?> _getMobileQQPath;
+    private readonly Func<string?> _getChatPicPath;
 
     public AndroidMobileQQDisplayMessageFactory(
         Func<bool> alwaysShowMessageTime,
-        Func<bool> highlightMentions)
+        Func<bool> highlightMentions,
+        Func<string?> getMobileQQPath,
+        Func<string?> getChatPicPath)
     {
         _alwaysShowMessageTime = alwaysShowMessageTime;
         _highlightMentions = highlightMentions;
+        _getMobileQQPath = getMobileQQPath;
+        _getChatPicPath = getChatPicPath;
     }
 
     public AvaQQMessage Create(MessageRecord item, AvaQQGroup conversation)
     {
         var payload = AndroidMobileQQMessagePayload.FromContent(item.Content);
-        var segments = CreateSegments(payload);
+        var segments = CreateSegments(payload, _getMobileQQPath(), _getChatPicPath());
         if (!MessageTextSegmentBuilder.HasDisplayContent(segments))
         {
             segments.Clear();
@@ -53,7 +59,10 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
         };
     }
 
-    private static List<AvaQQMessageSegment> CreateSegments(AndroidMobileQQMessagePayload? payload)
+    private static List<AvaQQMessageSegment> CreateSegments(
+        AndroidMobileQQMessagePayload? payload,
+        string? mobileQQPath,
+        string? chatPicPath)
     {
         if (payload is null)
             return [];
@@ -73,7 +82,7 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
                         : faceSegment);
                     break;
                 case AndroidMobileQQMessagePartType.Image:
-                    segments.Add(AvaQQMessageSegment.CreateBrokenImage(null, null, "[图片文件未找到]"));
+                    segments.Add(CreateImageSegment(part, mobileQQPath, chatPicPath));
                     break;
                 default:
                     segments.Add(AvaQQMessageSegment.CreateUnsupportedText(FirstNonEmpty(part.Text, payload.DisplayText)));
@@ -85,6 +94,22 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
             segments.AddRange(MessageTextSegmentBuilder.CreateTextSegments(payload.DisplayText));
 
         return segments;
+    }
+
+    private static AvaQQMessageSegment CreateImageSegment(
+        AndroidMobileQQMessagePart part,
+        string? mobileQQPath,
+        string? chatPicPath)
+    {
+        var localPath = AndroidMobileQQMediaPathResolver.ResolveImagePath(mobileQQPath, chatPicPath, part.ImageMd5);
+        var imageSize = LocalImageFile.TryGetImageSize(localPath);
+        return string.IsNullOrWhiteSpace(localPath)
+            ? AvaQQMessageSegment.CreateBrokenImage(null, null, "[图片文件未找到]")
+            : AvaQQMessageSegment.CreateImage(
+                localPath,
+                imageSize?.Width,
+                imageSize?.Height,
+                "[图片]");
     }
 
     private static string FirstNonEmpty(params string?[] values)

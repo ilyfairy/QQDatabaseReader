@@ -30,7 +30,7 @@
                                 VerticalAlignment="Center" />
                             <TextBlock
                                 Grid.Column="1"
-                                Text="{Binding Items.Count, StringFormat='{}{0} 个项目'}"
+                                Text="{Binding Items.Count, StringFormat='{}已打开 {0} 个文件或目录'}"
                                 Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                                 VerticalAlignment="Center" />
                         </Grid>

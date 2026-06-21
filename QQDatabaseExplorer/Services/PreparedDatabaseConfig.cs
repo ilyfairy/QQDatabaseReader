@@ -15,7 +15,10 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
         QQAndroidMessageReader? androidMessageDatabase,
         QQGroupMessageFtsReader? groupMessageFtsDatabase,
         string? ntDataPath,
-        string? androidMobileQQPath)
+        string? androidMobileQQPath,
+        string? androidChatPicPath,
+        string? androidNtUid,
+        string? androidRand)
     {
         GroupInfoDatabase = groupInfoDatabase;
         ProfileInfoDatabase = profileInfoDatabase;
@@ -24,6 +27,9 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
         GroupMessageFtsDatabase = groupMessageFtsDatabase;
         NtDataPath = ntDataPath;
         AndroidMobileQQPath = androidMobileQQPath;
+        AndroidChatPicPath = androidChatPicPath;
+        AndroidNtUid = androidNtUid;
+        AndroidRand = androidRand;
     }
 
     public QQGroupInfoReader? GroupInfoDatabase { get; }
@@ -39,6 +45,12 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
     public string? NtDataPath { get; }
 
     public string? AndroidMobileQQPath { get; }
+
+    public string? AndroidChatPicPath { get; }
+
+    public string? AndroidNtUid { get; }
+
+    public string? AndroidRand { get; }
 
     public IEnumerable<IQQDatabase> Databases
     {
@@ -80,6 +92,7 @@ internal sealed class PreparedDatabaseConfig : IDisposable
         IcalinguaMessageReader? icalinguaMessageDatabase,
         string? pcqqDataPath,
         string? androidMobileQQMediaPath,
+        string? androidMobileQQChatPicPath,
         string? icalinguaDataPath)
     {
         PlatformType = platformType;
@@ -90,6 +103,7 @@ internal sealed class PreparedDatabaseConfig : IDisposable
         IcalinguaMessageDatabase = icalinguaMessageDatabase;
         PCQQDataPath = pcqqDataPath;
         AndroidMobileQQMediaPath = androidMobileQQMediaPath;
+        AndroidMobileQQChatPicPath = androidMobileQQChatPicPath;
         IcalinguaDataPath = icalinguaDataPath;
     }
 
@@ -119,14 +133,18 @@ internal sealed class PreparedDatabaseConfig : IDisposable
 
     public string? AndroidQQNtMobileQQPath => NtDatabaseGroup?.AndroidMobileQQPath;
 
+    public string? AndroidQQNtChatPicPath => NtDatabaseGroup?.AndroidChatPicPath;
+
     public string? PCQQDataPath { get; }
 
     public string? AndroidMobileQQMediaPath { get; }
 
+    public string? AndroidMobileQQChatPicPath { get; }
+
     public string? IcalinguaDataPath { get; }
 
     public static PreparedDatabaseConfig Empty(DatabasePlatformType platformType) =>
-        new(platformType, null, null, null, null, null, null, null, null);
+        new(platformType, null, null, null, null, null, null, null, null, null);
 
     public void Detach()
     {
