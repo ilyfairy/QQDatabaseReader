@@ -7,10 +7,10 @@ QQ / QQNT 本地聊天数据库读取和浏览工具.
 ## 功能
 
 - 浏览私聊和群聊消息.
-- 搜索 QQNT 群消息.
+- 搜索聊天记录.
 - 显示好友昵称, 群名, 群成员昵称和备注等资料.
-- 读取本地图片, 图片表情, Android MobileQQ 图片.
-- 解析回复消息, 转发消息, 系统消息, 戳一戳消息, 图片消息和常见富文本消息片段.
+- 读取本地图片, 图片表情, 语音和视频资源.
+- 解析回复消息, 转发消息, 系统消息, 戳一戳消息, 撤回消息, reaction, 图片消息和常见富文本消息片段.
 - 按日期筛选消息, 群聊支持按发送者筛选消息.
 
 ## 支持的数据库类型
@@ -25,13 +25,23 @@ QQ / QQNT 本地聊天数据库读取和浏览工具.
 
 支持 Android QQNT 的 `nt_msg.db`, 并支持配套读取 `group_info.db`, `profile_info.db` 和 `group_msg_fts.db`.
 
-AndroidQQNT 的 `nt_msg.db` 密钥通过 `NtUid` + `Rand` 计算. `Rand` 通常可以从数据库头部自动读取. 如果提供从 Android 设备备份出的 `MobileQQ` 目录, 可以读取本地图片资源.
+AndroidQQNT 的 `nt_msg.db` 密钥通过 `NtUid` + `Rand` 计算. `Rand` 通常可以从数据库头部自动读取. 配置 `MobileQQ` 或 `chatpic` 后, 可以读取本地图片资源.
+
+### AndroidQQ
+
+支持旧版 Android QQ 的 `com.tencent.mobileqq` 数据目录, 读取 `databases/{QQ}.db`, 并在 `slowtable_{QQ}.db` 存在时一并读取其中的聊天记录.
+
+旧版 Android QQ 使用 `files/kc` 解码消息字段. 配置 `MobileQQ` 或 `chatpic` 后, 可以读取本地图片资源.
 
 ### PCQQ
 
 支持 PCQQ 的 `Msg3.0.db`, 并支持配套读取 `Info.db`.
 
 `Info.db` 用于补充联系人, 群资料和更准确的会话信息. 配置当前 QQ 号的数据目录后, 可以读取本地图片等媒体文件.
+
+### Icalingua
+
+支持 Icalingua 的 `eqq*.db`. 这类数据库本身不加密, 可以直接打开并浏览聊天记录.
 
 ## 密钥
 
@@ -41,6 +51,8 @@ QQNT 和 PCQQ 都可以在桌面界面中自动获取密钥:
 - PCQQ: 使用 `登录 PCQQ 自动获取 Key`.
 
 AndroidQQNT 不使用登录获取密钥. 程序会通过 `NtUid` + `Rand` 计算 `nt_msg.db` 密钥.
+
+旧版 Android QQ 不使用 SQLCipher 密钥. 程序会使用 `files/kc` 解码消息字段.
 
 ### 手动获取 QQNT Key
 
