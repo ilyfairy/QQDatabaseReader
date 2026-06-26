@@ -44,6 +44,7 @@ public partial class AvaQQMessage : ObservableObject
     public int SystemHintFaceId { get; set; }
     public string? SystemHintFaceAssetPath { get; set; }
     public IReadOnlyList<AvaMessageReaction> Reactions { get; set; } = [];
+    public AvaRawMessageData? RawData { get; set; }
 
     public bool HighlightMentions
     {

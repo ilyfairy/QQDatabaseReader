@@ -115,6 +115,16 @@ public class DialogService : IDialogService
         return viewModel.ResultFilter;
     }
 
+    public async Task ShowChatExportDialog(AvaQQGroup conversation, ViewModelToken? ownerToken = null)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var viewModel = scope.ServiceProvider.GetRequiredService<ChatExportDialogViewModel>();
+        viewModel.Initialize(conversation);
+
+        var dialog = scope.ServiceProvider.GetRequiredService<ChatExportDialog>();
+        await ShowDialog(dialog, ownerToken);
+    }
+
     public async Task<string> ShowQQDebuggerWindow(ViewModelToken? ownerToken = null)
     {
         using var scope = _serviceProvider.CreateScope();

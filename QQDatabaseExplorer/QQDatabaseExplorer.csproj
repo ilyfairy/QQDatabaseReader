@@ -47,4 +47,16 @@
   <ItemGroup>
     <Folder Include="Models\Messenger\" />
   </ItemGroup>
+
+  <Target Name="BuildChatExportViewer" BeforeTargets="ComputeFilesToPublish" Condition="'$(SkipChatExportViewerBuild)' != 'true' And Exists('..\QQDatabaseExportViewer\package.json')">
+    <Exec WorkingDirectory="..\QQDatabaseExportViewer" Command="npm ci" Condition="!Exists('..\QQDatabaseExportViewer\node_modules')" />
+    <Exec WorkingDirectory="..\QQDatabaseExportViewer" Command="npm run build" />
+    <ItemGroup>
+      <ChatExportViewerDist Include="..\QQDatabaseExportViewer\dist\**\*.*" />
+      <ResolvedFileToPublish Include="@(ChatExportViewerDist)">
+        <RelativePath>ChatExportViewer\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>

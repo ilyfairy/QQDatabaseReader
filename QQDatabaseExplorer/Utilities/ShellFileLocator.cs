@@ -7,6 +7,31 @@ namespace QQDatabaseExplorer.Utilities;
 
 public static class ShellFileLocator
 {
+    public static bool ShowDirectory(string? directoryPath)
+    {
+        if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+            return false;
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                return WindowsShellFileLocator.ShowFileInFolder(directoryPath);
+
+            var opener = OperatingSystem.IsMacOS() ? "open" : "xdg-open";
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = opener,
+                ArgumentList = { directoryPath },
+                UseShellExecute = false,
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static bool ShowFileInFolder(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))

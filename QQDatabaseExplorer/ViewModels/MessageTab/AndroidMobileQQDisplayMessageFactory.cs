@@ -54,6 +54,7 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
             MessageTime = item.MessageTime,
             SenderId = item.SenderId,
             ProtobufContent = null,
+            RawData = item.CreateRawData("AndroidQQ"),
             IsHoverTimeVisible = _alwaysShowMessageTime(),
             HighlightMentions = _highlightMentions(),
         };

@@ -88,6 +88,7 @@ internal sealed class IcalinguaDisplayMessageFactory
             SenderId = item.SenderId,
             CachedAvatarUrl = ResolveAvatarUrl(payload),
             ProtobufContent = null,
+            RawData = item.CreateRawData("Icalingua"),
             IsHoverTimeVisible = _alwaysShowMessageTime(),
             HighlightMentions = _highlightMentions(),
         };

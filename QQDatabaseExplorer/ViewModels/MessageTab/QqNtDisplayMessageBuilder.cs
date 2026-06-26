@@ -42,6 +42,7 @@ internal static class QqNtDisplayMessageBuilder
             SenderId = item.SenderId,
             CachedAvatarLocalPath = cachedAvatarLocalPath,
             ProtobufContent = item.Content,
+            RawData = item.CreateRawData("QQNT"),
             IsHoverTimeVisible = alwaysShowMessageTime,
             HighlightMentions = highlightMentions,
         };

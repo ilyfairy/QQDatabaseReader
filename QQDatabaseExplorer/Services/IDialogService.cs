@@ -23,6 +23,8 @@ public interface IDialogService
         MessageFilterDialogRequest request,
         ViewModelToken? ownerToken = null);
 
+    Task ShowChatExportDialog(AvaQQGroup conversation, ViewModelToken? ownerToken = null);
+
     Task<string> ShowQQDebuggerWindow(ViewModelToken? ownerToken = null);
 
     void ShowPCQQKeyDumpWindow(ViewModelToken? ownerToken = null);

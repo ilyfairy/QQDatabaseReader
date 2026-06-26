@@ -78,6 +78,11 @@ internal sealed class MessageTimelineFacade
             .ToList();
     }
 
+    public IReadOnlyList<MessageRecord> LoadAllMessages(AvaQQGroup conversation, int pageSize)
+    {
+        return _query.LoadAllMessages(conversation, pageSize);
+    }
+
     private MessageFilterCriteria GetCurrentFilter(AvaQQGroup conversation)
     {
         return _filterState.Get(conversation);

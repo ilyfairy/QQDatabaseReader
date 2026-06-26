@@ -45,7 +45,8 @@ internal sealed class QqNtDisplayMessageAssembler
             conversation.GroupId,
             item.SenderId,
             item.SenderUid,
-            mainContent.SenderName);
+            mainContent.SenderName) ??
+            QqNtSystemHintDisplayFactory.CreateFallback(item, mainContent.Segments);
         var forwardedMessages = _forwardedMessageFactory.CreateForwardedMessages(item, mainContent.Content, mediaContext);
         var reactions = MessageReactionDisplayFactory.Create(item.MessageReactions);
         var reply = _replyFactory.Create(new QqNtReplyDisplayRequest(

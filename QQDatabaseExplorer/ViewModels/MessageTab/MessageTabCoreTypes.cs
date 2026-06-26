@@ -165,6 +165,27 @@ internal static class MessageRecordFactory
     }
 }
 
+internal static class MessageRecordRawDataFactory
+{
+    public static AvaRawMessageData CreateRawData(this MessageRecord record, string source)
+    {
+        return AvaRawMessageData.Create(
+            source,
+            (int)record.MessageType,
+            (int)record.SubMessageType,
+            record.SendType,
+            record.SenderUid,
+            record.PeerUid,
+            record.PeerUin,
+            record.GroupId,
+            record.PrivateConversationId,
+            record.ReplyToMessageSeq,
+            record.Content,
+            record.SubContent,
+            record.MessageReactions);
+    }
+}
+
 // 下面是消息显示、回复、撤回、媒体解析之间传递的小型数据结构。
 internal readonly record struct MessageSenderInfo(
     uint SenderId,
@@ -1490,4 +1511,62 @@ internal interface IMessageTimelineProvider
         long messageSeq,
         long messageId,
         MessageFilterCriteria filter);
+}
+
+internal static class MessageTimelineExporter
+{
+    public static IReadOnlyList<MessageRecord> LoadAll(
+        IMessageTimelineProvider provider,
+        AvaQQGroup conversation,
+        int pageSize)
+    {
+        var messages = new List<MessageRecord>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var page = provider.LoadEarliestMessages(conversation, pageSize, MessageFilterCriteria.Empty);
+        var previousAnchorKey = string.Empty;
+
+        while (page.Count > 0)
+        {
+            foreach (var message in page)
+            {
+                if (seen.Add(CreateMessageKey(message)))
+                    messages.Add(message);
+            }
+
+            if (page.Count < pageSize)
+                break;
+
+            var last = page
+                .OrderBy(static message => message.MessageSeq)
+                .ThenBy(static message => message.MessageId)
+                .Last();
+            var anchorKey = CreateMessageKey(last);
+            if (string.Equals(anchorKey, previousAnchorKey, StringComparison.Ordinal))
+                break;
+
+            previousAnchorKey = anchorKey;
+            page = provider.LoadNewerMessages(
+                conversation,
+                last.MessageSeq,
+                last.MessageId,
+                pageSize,
+                MessageFilterCriteria.Empty);
+        }
+
+        return messages
+            .OrderBy(static message => message.MessageSeq)
+            .ThenBy(static message => message.MessageId)
+            .ToArray();
+    }
+
+    private static string CreateMessageKey(MessageRecord message)
+    {
+        return string.Join(
+            ":",
+            message.MessageId,
+            message.MessageRandom,
+            message.MessageSeq,
+            message.MessageTime,
+            message.SenderId);
+    }
 }

@@ -13,7 +13,8 @@ public partial class MessageTabViewModel
         QQDatabaseService qqDatabaseService,
         AppSettingsService appSettingsService,
         IDialogService dialogService,
-        IVoicePlaybackService voicePlaybackService)
+        IVoicePlaybackService voicePlaybackService,
+        ChatExportService chatExportService)
     {
         Groups = _filteredGroups.ToNotifyCollectionChanged();
         Messages = _messages.ToNotifyCollectionChanged();
@@ -22,6 +23,7 @@ public partial class MessageTabViewModel
         _qqDatabaseService = qqDatabaseService;
         _appSettingsService = appSettingsService;
         _dialogService = dialogService;
+        _chatExportService = chatExportService;
         _messageFilterOptionProvider = new MessageFilterOptionProvider(_qqDatabaseService);
         _databaseAvailability = new MessageDatabaseAvailability(_qqDatabaseService);
         _participantResolver = new MessageParticipantResolver(

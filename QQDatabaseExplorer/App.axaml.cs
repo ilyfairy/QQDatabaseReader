@@ -34,6 +34,7 @@ public partial class App : Application
         builder.Services.AddSingleton<IDialogService, DialogService>();
         builder.Services.AddSingleton<IClipboardService, ClipboardService>();
         builder.Services.AddSingleton<IVoicePlaybackService, VoicePlaybackService>();
+        builder.Services.AddSingleton<ChatExportService>();
         builder.Services.AddTransient<ViewModelToken>();
 
         builder.Services.AddSingleton<MainWindow>();
@@ -69,6 +70,9 @@ public partial class App : Application
 
         builder.Services.AddScoped<MessageFilterDialog>();
         builder.Services.AddScoped<MessageFilterDialogViewModel>();
+
+        builder.Services.AddScoped<ChatExportDialog>();
+        builder.Services.AddScoped<ChatExportDialogViewModel>();
 
         Host = builder.Build();
         Host.Services.GetRequiredService<AppSettingsService>().Load();

@@ -10,6 +10,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Microsoft.Extensions.DependencyInjection;
@@ -1050,9 +1051,17 @@ public partial class MessageTab : UserControl
             }
         };
 
+        var exportMenuItem = new MenuItem
+        {
+            Header = "导出聊天记录",
+            IsEnabled = _viewModel.CanExportConversation(group),
+        };
+        exportMenuItem.Click += async (_, _) => await App.Host.Services.GetRequiredService<IDialogService>()
+            .ShowChatExportDialog(group, _viewModel.ViewModelToken);
+
         var contextMenu = new ContextMenu
         {
-            ItemsSource = new Control[] { copyIdMenuItem, copyNameMenuItem },
+            ItemsSource = new Control[] { copyIdMenuItem, copyNameMenuItem, new Separator(), exportMenuItem },
         };
         ContextMenuHelper.Open(control, contextMenu);
     }

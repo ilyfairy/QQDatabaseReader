@@ -43,6 +43,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly QqNtDisplayMessageFactory _qqNtDisplayMessageFactory;
     private readonly LatestMessagePreviewFactory _latestMessagePreviewFactory;
     private readonly MentionUinResolver _mentionUinResolver;
+    private readonly ChatExportService _chatExportService;
 
     public ViewModelToken ViewModelToken { get; } = new();
 
@@ -72,6 +73,9 @@ public partial class MessageTabViewModel : ViewModelBase
     public partial bool IsLoadingInitialMessages { get; set; }
 
     [ObservableProperty]
+    public partial bool IsExportingConversation { get; set; }
+
+    [ObservableProperty]
     public partial bool IsMessageMultiSelectMode { get; set; }
 
     [ObservableProperty]
@@ -89,6 +93,8 @@ public partial class MessageTabViewModel : ViewModelBase
     public string MessageFilterSummary => MessageFilterState.FormatSummary(MessageFilter);
 
     private const int PageSize = 50;
+    private const int ExportPageSize = 200;
+    private const int ExportReplyLookupLimit = 200;
     private const int JumpContextPageSize = 30;
     private readonly MessageLoadVersionTracker _messageLoadVersion = new();
     private readonly MessageWindowLoadState _messageWindowState = new();
@@ -112,6 +118,65 @@ public partial class MessageTabViewModel : ViewModelBase
     public bool HasOlderMessages => _messageWindowState.HasOlderMessages;
 
     public bool HasSelectedConversation => SelectedGroup is not null;
+
+    public bool CanExportConversation(AvaQQGroup? conversation)
+    {
+        return conversation is not null &&
+               !IsExportingConversation &&
+               IsValidConversation(conversation) &&
+               _databaseAvailability.HasMessageDatabase(conversation);
+    }
+
+    public async Task<ChatExportResult?> ExportConversationAsync(
+        AvaQQGroup conversation,
+        string parentDirectory,
+        ChatExportOptions options,
+        IProgress<ChatExportProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!CanExportConversation(conversation))
+            return null;
+
+        try
+        {
+            IsExportingConversation = true;
+            var exportSources = new List<ChatExportSource>();
+            var sourceConversations = GetExportConversations(conversation);
+            var sourceIndex = 0;
+            foreach (var sourceConversation in sourceConversations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                sourceIndex++;
+                progress?.Report(new ChatExportProgress(
+                    "读取消息",
+                    $"{sourceConversation.DisplayName} ({sourceIndex}/{sourceConversations.Count})",
+                    sourceIndex - 1,
+                    sourceConversations.Count));
+                var page = await _messageDatabaseQueryRunner.RunAsync(() =>
+                    _messagePageLoader.CreatePage(
+                        sourceConversation,
+                        _messageTimelineFacade.LoadAllMessages(sourceConversation, ExportPageSize),
+                        ExportReplyLookupLimit));
+
+                var avaMessages = await _messagePageDisplayBuilder.CreateAsync(sourceConversation, page);
+                exportSources.Add(new ChatExportSource(sourceConversation, avaMessages));
+            }
+
+            return await Task.Run(
+                async () => await _chatExportService.ExportAsync(
+                    conversation,
+                    exportSources,
+                    parentDirectory,
+                    options,
+                    progress,
+                    cancellationToken),
+                cancellationToken);
+        }
+        finally
+        {
+            IsExportingConversation = false;
+        }
+    }
 
     public async Task ReturnToLatestMessagesAsync()
     {
@@ -313,6 +378,21 @@ public partial class MessageTabViewModel : ViewModelBase
     private static bool IsValidConversation(AvaQQGroup group)
     {
         return ConversationListState.IsValidConversation(group);
+    }
+
+    private IReadOnlyList<AvaQQGroup> GetExportConversations(AvaQQGroup conversation)
+    {
+        var relatedConversations = _groups
+            .Where(IsValidConversation)
+            .Where(candidate => ChatExportConversationMatcher.IsSameLogicalConversation(candidate, conversation))
+            .Where(_databaseAvailability.HasMessageDatabase)
+            .OrderByDescending(static candidate => candidate.LatestMessageTime)
+            .ThenBy(static candidate => candidate.ConversationType)
+            .ToArray();
+
+        return relatedConversations.Length == 0
+            ? [conversation]
+            : relatedConversations;
     }
 
     private void UpdateMessageSelectionState(int selectedCount)

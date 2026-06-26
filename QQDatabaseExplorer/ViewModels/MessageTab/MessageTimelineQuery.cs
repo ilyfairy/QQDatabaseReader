@@ -76,6 +76,11 @@ internal sealed class MessageTimelineQuery
         return GetProvider(conversation).LoadMessage(conversation, messageSeq, messageId, filter);
     }
 
+    public IReadOnlyList<MessageRecord> LoadAllMessages(AvaQQGroup conversation, int pageSize)
+    {
+        return MessageTimelineExporter.LoadAll(GetProvider(conversation), conversation, pageSize);
+    }
+
     private IMessageTimelineProvider GetProvider(AvaQQGroup conversation)
     {
         return _providers.First(provider => provider.CanLoad(conversation));

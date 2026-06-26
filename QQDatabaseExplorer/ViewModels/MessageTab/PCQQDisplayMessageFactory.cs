@@ -68,6 +68,7 @@ internal sealed class PCQQDisplayMessageFactory
             MessageTime = item.MessageTime,
             SenderId = item.SenderId,
             ProtobufContent = item.Content,
+            RawData = item.CreateRawData("PCQQ"),
             IsHoverTimeVisible = _alwaysShowMessageTime(),
             HighlightMentions = _highlightMentions(),
         };

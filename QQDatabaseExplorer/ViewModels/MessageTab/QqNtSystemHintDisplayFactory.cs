@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
+using QQDatabaseReader.Database;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -110,6 +112,42 @@ internal sealed class QqNtSystemHintDisplayFactory
             hint.TargetMessageSeq,
             hint.FaceId,
             face?.AssetPath,
+            displayText);
+    }
+
+    public static SystemHintDisplay? CreateFallback(MessageRecord item, IReadOnlyList<AvaQQMessageSegment> segments)
+    {
+        if (item.MessageType != MessageType.System ||
+            item.SubMessageType is not (SubMessageType.Nudge or SubMessageType.Pat))
+        {
+            return null;
+        }
+
+        var displayText = MessageTextSegmentBuilder.CreateDisplayText(segments);
+        if (string.IsNullOrWhiteSpace(displayText))
+        {
+            displayText = QQMessageDisplayText.TryGetFallbackText(item.MessageType, item.SubMessageType, out var fallbackText)
+                ? fallbackText
+                : string.Empty;
+        }
+
+        displayText = CleanText(displayText);
+        if (string.IsNullOrWhiteSpace(displayText))
+            return null;
+
+        return new SystemHintDisplay(
+            string.Empty,
+            string.Empty,
+            false,
+            string.Empty,
+            string.Empty,
+            false,
+            displayText,
+            string.Empty,
+            null,
+            0,
+            0,
+            null,
             displayText);
     }
 
