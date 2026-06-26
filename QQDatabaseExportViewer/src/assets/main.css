@@ -44,7 +44,7 @@ input {
 .conversation-header {
   z-index: 2;
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 16px 24px;
@@ -95,6 +95,38 @@ input {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-action-button,
+.settings-toggle-button {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: #4d5662;
+  cursor: pointer;
+}
+
+.settings-toggle-button {
+  width: 100%;
+  text-align: center;
+}
+
+.header-action-button:hover,
+.settings-toggle-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-toggle-button:disabled {
+  color: #a4abb5;
+  cursor: default;
 }
 
 .search-box {
@@ -174,6 +206,11 @@ input {
   width: 100%;
 }
 
+.timeline-full-list {
+  display: grid;
+  width: 100%;
+}
+
 .timeline-row {
   position: absolute;
   top: 0;
@@ -181,6 +218,12 @@ input {
   box-sizing: border-box;
   width: 100%;
   overflow: clip;
+}
+
+.timeline-row.full-timeline-row {
+  position: static;
+  height: auto;
+  transform: none;
 }
 
 .timeline-row.date-row {
@@ -620,7 +663,8 @@ input {
   display: none;
 }
 
-.floating-search {
+.floating-search,
+.floating-settings {
   position: fixed;
   top: 88px;
   right: 18px;
@@ -636,11 +680,29 @@ input {
   box-shadow: 0 10px 30px rgb(0 0 0 / 12%);
 }
 
+.floating-settings {
+  width: min(240px, calc(100vw - 36px));
+  max-height: none;
+}
+
 .floating-search-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
+}
+
+.floating-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.floating-settings p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .icon-button {
@@ -700,6 +762,11 @@ input {
     padding: 14px 16px;
   }
 
+  .header-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
   .conversation-avatar {
     width: 44px;
     height: 44px;
@@ -713,7 +780,8 @@ input {
     padding: 14px 12px 32px;
   }
 
-  .floating-search {
+  .floating-search,
+  .floating-settings {
     top: 74px;
     right: 12px;
     width: min(360px, calc(100vw - 24px));

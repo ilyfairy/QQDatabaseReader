@@ -119,6 +119,7 @@ public sealed class ChatExportService
                 .First())
             .ToArray();
         var participants = CreateParticipants(messages, mediaStore);
+        var participantLookup = participants.ToDictionary(static participant => participant.Key, StringComparer.Ordinal);
         var orderedMessages = messages
             .OrderBy(static message => message.MessageTime)
             .ThenBy(static message => message.MessageSeq)
@@ -130,7 +131,7 @@ public sealed class ChatExportService
         for (var i = 0; i < orderedMessages.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            exportedMessages[i] = CreateMessage(orderedMessages[i], mediaStore, depth: 0);
+            exportedMessages[i] = CreateMessage(orderedMessages[i], mediaStore, depth: 0, participantLookup);
 
             var current = i + 1;
             if (current == orderedMessages.Length || current % 25 == 0)
@@ -200,12 +201,11 @@ public sealed class ChatExportService
         ExportMediaStore mediaStore)
     {
         return messages
-            .Select(message => CreateParticipantRef(message, mediaStore))
-            .GroupBy(static participant => participant.Key, StringComparer.Ordinal)
-            .Select(static group => group.First())
+            .GroupBy(static message => CreateParticipantKey(message), StringComparer.Ordinal)
+            .Select(group => CreateParticipantRef(ChooseParticipantMessage(group), mediaStore))
             .OrderBy(static participant => participant.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(static participant => participant.Uin)
-            .Select(participant => new ChatExportParticipant(
+            .Select(static participant => new ChatExportParticipant(
                 participant.Key,
                 participant.Uin,
                 participant.Uid,
@@ -215,10 +215,31 @@ public sealed class ChatExportService
             .ToArray();
     }
 
+    private static AvaQQMessage ChooseParticipantMessage(IEnumerable<AvaQQMessage> messages)
+    {
+        AvaQQMessage? first = null;
+        AvaQQMessage? firstWithUrl = null;
+        foreach (var message in messages)
+        {
+            first ??= message;
+            if (!string.IsNullOrWhiteSpace(message.AvatarLocalPath) &&
+                File.Exists(message.AvatarLocalPath))
+            {
+                return message;
+            }
+
+            if (firstWithUrl is null && !string.IsNullOrWhiteSpace(message.AvatarUrl))
+                firstWithUrl = message;
+        }
+
+        return firstWithUrl ?? first ?? throw new InvalidOperationException("Participant group is empty.");
+    }
+
     private static ChatExportMessage CreateMessage(
         AvaQQMessage message,
         ExportMediaStore mediaStore,
-        int depth)
+        int depth,
+        IReadOnlyDictionary<string, ChatExportParticipant>? participantLookup = null)
     {
         var segments = message.Segments
             .Select(segment => CreateSegment(segment, mediaStore))
@@ -237,7 +258,7 @@ public sealed class ChatExportService
             message.PCQQMessageSeq,
             message.MessageTime,
             FormatMessageTime(message.MessageTime),
-            CreateParticipantRef(message, mediaStore),
+            CreateParticipantRef(message, mediaStore, participantLookup),
             message.IsSystemHint,
             message.IsRecalledMessage,
             message.DisplayText,
@@ -271,11 +292,23 @@ public sealed class ChatExportService
             raw?.MessageReactionsBase64);
     }
 
-    private static ChatExportParticipantRef CreateParticipantRef(AvaQQMessage message, ExportMediaStore mediaStore)
+    private static ChatExportParticipantRef CreateParticipantRef(
+        AvaQQMessage message,
+        ExportMediaStore mediaStore,
+        IReadOnlyDictionary<string, ChatExportParticipant>? participantLookup = null)
     {
-        var key = !string.IsNullOrWhiteSpace(message.PeerUid) && message.SenderId == 0
-            ? "uid:" + message.PeerUid
-            : "uin:" + message.SenderId.ToString(CultureInfo.InvariantCulture);
+        var key = CreateParticipantKey(message);
+        if (participantLookup?.TryGetValue(key, out var participant) == true)
+        {
+            return new ChatExportParticipantRef(
+                participant.Key,
+                participant.Uin,
+                participant.Uid,
+                participant.DisplayName,
+                participant.AvatarUrl,
+                participant.AvatarPath);
+        }
+
         var name = FirstNonEmpty(
             message.Name,
             message.SenderId == 0 ? null : message.SenderId.ToString(CultureInfo.InvariantCulture),
@@ -289,6 +322,13 @@ public sealed class ChatExportService
             name,
             message.AvatarUrl,
             mediaStore.CopyAvatar(message.AvatarLocalPath, message.AvatarUrl));
+    }
+
+    private static string CreateParticipantKey(AvaQQMessage message)
+    {
+        return !string.IsNullOrWhiteSpace(message.PeerUid) && message.SenderId == 0
+            ? "uid:" + message.PeerUid
+            : "uin:" + message.SenderId.ToString(CultureInfo.InvariantCulture);
     }
 
     private static ChatExportReply? CreateReply(AvaReplyMessage? reply, ExportMediaStore mediaStore)

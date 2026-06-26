@@ -45,6 +45,11 @@ interface RenderedTimelineRow {
   row: TimelineRow
 }
 
+interface FullTimelineRow {
+  rowIndex: number
+  row: TimelineRow
+}
+
 const searchDebounceMilliseconds = 500
 const keyScrollStepRatio = 0.9
 const maxBubbleOuterWidth = 720
@@ -91,6 +96,9 @@ const timelineRef = ref<HTMLElement | null>(null)
 const timelineScrollRef = ref<HTMLDivElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const isSearchOpen = ref(false)
+const isSettingsOpen = ref(false)
+const isVirtualizationEnabled = ref(true)
+const isLoadingAllMessages = ref(false)
 const searchText = ref('')
 const searchHits = shallowRef<SearchHit[]>([])
 const activeSearchIndex = ref(-1)
@@ -198,6 +206,16 @@ const renderedRows = computed<RenderedTimelineRow[]>(() =>
     return row ? [{ virtualRow, row }] : []
   }),
 )
+const fullRows = computed<FullTimelineRow[]>(() => {
+  if (isVirtualizationEnabled.value) {
+    return []
+  }
+
+  return rows.value.flatMap((_, rowIndex) => {
+    const row = materializeRow(rowIndex)
+    return row ? [{ rowIndex, row }] : []
+  })
+})
 
 onMounted(async () => {
   document.addEventListener('keydown', handleGlobalKeyDown, true)
@@ -223,6 +241,9 @@ watch(searchText, () => {
 })
 
 async function afterDocumentLoaded() {
+  isVirtualizationEnabled.value = true
+  isSettingsOpen.value = false
+  isLoadingAllMessages.value = false
   resetLoadedMessages()
   await nextTick()
   observeTimelineResize()
@@ -275,7 +296,9 @@ function addReplyIndex(message: ChatExportMessageIndex) {
 }
 
 watch(virtualRows, () => {
-  scheduleVisibleMessagesLoad()
+  if (isVirtualizationEnabled.value) {
+    scheduleVisibleMessagesLoad()
+  }
 })
 
 function rowSize(index: number) {
@@ -321,6 +344,10 @@ function messageAt(messageIndex: number) {
 }
 
 async function ensureVisibleMessagesLoaded() {
+  if (!isVirtualizationEnabled.value) {
+    return
+  }
+
   const pending = virtualRows.value
     .map((row) => rows.value[row.index])
     .filter((row): row is Extract<TimelineRowMeta, { kind: 'message' }> =>
@@ -335,10 +362,73 @@ async function ensureVisibleMessagesLoaded() {
 }
 
 function scheduleVisibleMessagesLoad() {
+  if (!isVirtualizationEnabled.value) {
+    return
+  }
+
   window.clearTimeout(visibleLoadTimer)
   visibleLoadTimer = window.setTimeout(() => {
     void ensureVisibleMessagesLoaded()
   }, visibleMessageLoadDelayMilliseconds)
+}
+
+async function toggleVirtualization() {
+  if (isVirtualizationEnabled.value) {
+    await disableVirtualization()
+    return
+  }
+
+  enableVirtualization()
+}
+
+async function disableVirtualization() {
+  isVirtualizationEnabled.value = false
+  isLoadingAllMessages.value = true
+  window.clearTimeout(visibleLoadTimer)
+  try {
+    await loadAllMessages()
+    for (let index = 0; index < rows.value.length; index++) {
+      const row = rows.value[index]
+      if (row?.kind === 'message') {
+        ensureMessageRowSize(row.messageIndex)
+      }
+    }
+    await nextTick()
+    timelineScrollElement()?.scrollTo({ top: 0, behavior: 'auto' })
+  } finally {
+    isLoadingAllMessages.value = false
+  }
+}
+
+function enableVirtualization() {
+  isVirtualizationEnabled.value = true
+  void nextTick().then(() => {
+    recomputeCachedRowSizes()
+    rowVirtualizer.value.scrollToOffset(0, { behavior: 'auto' })
+    scheduleVisibleMessagesLoad()
+  })
+}
+
+async function loadAllMessages() {
+  const data = documentData.value
+  const total = data?.metadata.messageCount ?? data?.messages?.length ?? 0
+  if (!data || total <= 0) {
+    return
+  }
+
+  if (data.messages) {
+    return
+  }
+
+  for (let index = 0; index < total;) {
+    const messageIndex = index
+    await ensureMessageLoaded(messageIndex)
+    const chunk = data.messageChunks?.find((item) =>
+      messageIndex >= item.start && messageIndex < item.start + item.count,
+    )
+    index += chunk ? Math.max(1, chunk.count - Math.max(0, messageIndex - chunk.start)) : 1
+    await nextFrame()
+  }
 }
 
 async function ensureMessageLoaded(messageIndex: number) {
@@ -419,6 +509,10 @@ function rememberLoadedChunk(
   }
 
   loadedChunkRanges.push(chunk)
+  if (!isVirtualizationEnabled.value) {
+    return
+  }
+
   while (loadedChunkRanges.length > loadedMessageChunkLimit) {
     const removed = loadedChunkRanges.shift()
     if (!removed) {
@@ -615,7 +709,7 @@ function updateTimelineContentWidth(force = false) {
   const anchorRowIndex = force ? -1 : currentViewportAnchorRowIndex()
   timelineContentWidth.value = contentWidth
   recomputeCachedRowSizes()
-  if (anchorRowIndex >= 0) {
+  if (isVirtualizationEnabled.value && anchorRowIndex >= 0) {
     window.requestAnimationFrame(() => {
       rowVirtualizer.value.scrollToIndex(anchorRowIndex, { align: 'center', behavior: 'auto' })
       scheduleVisibleMessagesLoad()
@@ -1014,10 +1108,18 @@ async function searchInBatches(requestId: number, query: string) {
 }
 
 async function openSearch() {
+  isSettingsOpen.value = false
   isSearchOpen.value = true
   await nextTick()
   searchInputRef.value?.focus()
   searchInputRef.value?.select()
+}
+
+function toggleSettings() {
+  isSettingsOpen.value = !isSettingsOpen.value
+  if (isSettingsOpen.value) {
+    closeSearch()
+  }
 }
 
 function closeSearch() {
@@ -1264,6 +1366,12 @@ async function scrollToRowIndex(
     ensureMessageRowSize(row.messageIndex)
   }
 
+  if (!isVirtualizationEnabled.value) {
+    await nextFrame()
+    centerRenderedMessage(messageKey, behavior)
+    return
+  }
+
   rowVirtualizer.value.scrollToIndex(index, { align, behavior })
   await nextFrame()
   rowVirtualizer.value.scrollToIndex(index, { align, behavior })
@@ -1363,15 +1471,24 @@ function createPreview(text: string, query: string) {
           {{ documentData.conversation.sources.length }} 个数据库来源
         </p>
       </div>
+      <div class="header-actions">
+        <button type="button" class="header-action-button" @click="openSearch">搜索</button>
+        <button type="button" class="header-action-button" @click="toggleSettings">设置</button>
+      </div>
     </header>
 
     <section ref="timelineRef" class="timeline">
       <div
         ref="timelineScrollRef"
         class="timeline-scroller"
+        :class="{ 'full-timeline-scroller': !isVirtualizationEnabled }"
         @wheel="handleTimelineWheel"
       >
-        <div class="timeline-virtual-spacer" :style="{ height: `${timelineHeight}px` }">
+        <div
+          v-if="isVirtualizationEnabled"
+          class="timeline-virtual-spacer"
+          :style="{ height: `${timelineHeight}px` }"
+        >
           <div
             v-for="{ virtualRow, row } in renderedRows"
             :key="row.key"
@@ -1395,8 +1512,43 @@ function createPreview(text: string, query: string) {
             />
           </div>
         </div>
+        <div v-else class="timeline-full-list">
+          <div
+            v-for="{ rowIndex, row } in fullRows"
+            :key="row.key"
+            class="timeline-row full-timeline-row"
+            :class="row.kind === 'date' ? 'date-row' : 'message-row'"
+            :data-index="rowIndex"
+            :data-message-key="row.kind === 'message' ? row.message.key : undefined"
+          >
+            <template v-if="row.kind === 'date'">
+              <div class="date-divider">
+                {{ row.label }}
+              </div>
+            </template>
+            <MessageItem
+              v-else
+              :message="row.message"
+              :show-source="documentData.conversation.sources.length > 1"
+              :highlighted="currentHit?.key === row.message.key || transientHighlightKey === row.message.key"
+              @reply-click="jumpToReply"
+            />
+          </div>
+          <div v-if="isLoadingAllMessages" class="load-all-status">正在加载全部消息...</div>
+        </div>
       </div>
     </section>
+
+    <aside v-if="isSettingsOpen" class="floating-settings">
+      <div class="floating-settings-head">
+        <strong>设置</strong>
+        <button type="button" class="icon-button" aria-label="关闭设置" @click="isSettingsOpen = false">×</button>
+      </div>
+      <button type="button" class="settings-toggle-button" :disabled="isLoadingAllMessages" @click="toggleVirtualization">
+        {{ isVirtualizationEnabled ? '关闭虚拟化' : '开启虚拟化' }}
+      </button>
+      <p v-if="!isVirtualizationEnabled">已全量加载聊天消息。</p>
+    </aside>
 
     <aside v-if="isSearchOpen" class="floating-search">
       <div class="floating-search-head">

@@ -10,91 +10,96 @@
         Width="520"
         SizeToContent="Height"
         MinWidth="480"
+        MaxHeight="720"
         WindowStartupLocation="CenterOwner">
     <Border Padding="20">
-        <StackPanel Spacing="16">
-            <StackPanel Spacing="4">
-                <TextBlock FontSize="16" FontWeight="SemiBold" Text="导出聊天记录" />
-                <TextBlock Foreground="#667085" Text="{Binding Conversation.DisplayName}" />
-            </StackPanel>
+        <Grid RowDefinitions="*,Auto" RowSpacing="16">
+            <ScrollViewer
+                Grid.Row="0"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="16">
+                    <TextBlock Foreground="#667085" Text="{Binding Conversation.DisplayName}" />
 
-            <StackPanel Spacing="8">
-                <TextBlock Foreground="#555" Text="导出目录" />
-                <Grid ColumnDefinitions="* Auto" ColumnSpacing="8">
-                    <TextBox
-                        Grid.Column="0"
-                        Text="{Binding OutputDirectory}" />
-                    <Button
-                        Grid.Column="1"
-                        Padding="12,4"
-                        Click="ChooseOutputDirectory_Click"
-                        Content="选择" />
-                </Grid>
-            </StackPanel>
+                    <StackPanel Spacing="8">
+                        <TextBlock Foreground="#555" Text="导出目录" />
+                        <Grid ColumnDefinitions="* Auto" ColumnSpacing="8">
+                            <TextBox
+                                Grid.Column="0"
+                                Text="{Binding OutputDirectory}" />
+                            <Button
+                                Grid.Column="1"
+                                Padding="12,4"
+                                Click="ChooseOutputDirectory_Click"
+                                Content="选择" />
+                        </Grid>
+                    </StackPanel>
 
-            <StackPanel Spacing="8">
-                <TextBlock Foreground="#555" Text="导出格式" />
-                <StackPanel Spacing="6">
-                    <ComboBox
-                        Width="180"
-                        HorizontalAlignment="Left"
-                        ItemsSource="{Binding ExportFormats}"
-                        DisplayMemberBinding="{Binding Value}"
-                        SelectedValueBinding="{Binding Key}"
-                        SelectedValue="{Binding SelectedFormat}" />
+                    <StackPanel Spacing="8">
+                        <TextBlock Foreground="#555" Text="导出格式" />
+                        <StackPanel Spacing="6">
+                            <ComboBox
+                                Width="180"
+                                HorizontalAlignment="Left"
+                                ItemsSource="{Binding ExportFormats}"
+                                DisplayMemberBinding="{Binding Value}"
+                                SelectedValueBinding="{Binding Key}"
+                                SelectedValue="{Binding SelectedFormat}" />
+                            <TextBlock
+                                Margin="0,2,0,0"
+                                FontSize="12"
+                                Foreground="#667085"
+                                Text="{Binding FormatDescription}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Spacing="8" IsVisible="{Binding ShowContentOptions}">
+                        <TextBlock Foreground="#555" Text="导出内容" />
+                        <UniformGrid Columns="2">
+                            <CheckBox IsChecked="{Binding IncludeAvatars}" Content="头像" />
+                            <CheckBox IsChecked="{Binding IncludeImages}" Content="图片" />
+                            <CheckBox IsChecked="{Binding IncludeVoice}" Content="语音" />
+                            <CheckBox IsChecked="{Binding IncludeVideos}" Content="视频" />
+                            <CheckBox IsChecked="{Binding IncludeFiles}" Content="文件" />
+                            <CheckBox IsChecked="{Binding IncludeFaceAssets}" Content="表情资源" />
+                        </UniformGrid>
+                    </StackPanel>
+
+                    <Border
+                        Padding="10"
+                        Background="#F5F7FA"
+                        CornerRadius="8"
+                        IsVisible="{Binding IsExporting}">
+                        <StackPanel Spacing="8">
+                            <ProgressBar
+                                Height="4"
+                                Minimum="0"
+                                Maximum="100"
+                                Value="{Binding ProgressValue}"
+                                IsIndeterminate="{Binding IsProgressIndeterminate}" />
+                            <Grid ColumnDefinitions="* Auto" ColumnSpacing="12">
+                                <TextBlock
+                                    Grid.Column="0"
+                                    FontSize="12"
+                                    Foreground="#555"
+                                    Text="{Binding ProgressText}" />
+                                <TextBlock
+                                    Grid.Column="1"
+                                    FontSize="12"
+                                    Foreground="#667085"
+                                    Text="{Binding ProgressCountText}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock
-                        Margin="0,2,0,0"
-                        FontSize="12"
-                        Foreground="#667085"
-                        Text="{Binding FormatDescription}" />
+                        Foreground="#1677FF"
+                        IsVisible="{Binding HasCompletedText}"
+                        Text="{Binding CompletedText}" />
                 </StackPanel>
-            </StackPanel>
+            </ScrollViewer>
 
-            <StackPanel Spacing="8" IsVisible="{Binding ShowContentOptions}">
-                <TextBlock Foreground="#555" Text="导出内容" />
-                <UniformGrid Columns="2">
-                    <CheckBox IsChecked="{Binding IncludeAvatars}" Content="头像" />
-                    <CheckBox IsChecked="{Binding IncludeImages}" Content="图片" />
-                    <CheckBox IsChecked="{Binding IncludeVoice}" Content="语音" />
-                    <CheckBox IsChecked="{Binding IncludeVideos}" Content="视频" />
-                    <CheckBox IsChecked="{Binding IncludeFiles}" Content="文件" />
-                    <CheckBox IsChecked="{Binding IncludeFaceAssets}" Content="表情资源" />
-                </UniformGrid>
-            </StackPanel>
-
-            <Border
-                Padding="10"
-                Background="#F5F7FA"
-                CornerRadius="8"
-                IsVisible="{Binding IsExporting}">
-                <StackPanel Spacing="8">
-                    <ProgressBar
-                        Height="4"
-                        Minimum="0"
-                        Maximum="100"
-                        Value="{Binding ProgressValue}"
-                        IsIndeterminate="{Binding IsProgressIndeterminate}" />
-                    <Grid ColumnDefinitions="* Auto" ColumnSpacing="12">
-                        <TextBlock
-                            Grid.Column="0"
-                            FontSize="12"
-                            Foreground="#555"
-                            Text="{Binding ProgressText}" />
-                        <TextBlock
-                            Grid.Column="1"
-                            FontSize="12"
-                            Foreground="#667085"
-                            Text="{Binding ProgressCountText}" />
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <TextBlock
-                Foreground="#1677FF"
-                IsVisible="{Binding HasCompletedText}"
-                Text="{Binding CompletedText}" />
-
-            <DockPanel>
+            <DockPanel Grid.Row="1">
                 <Button
                     DockPanel.Dock="Left"
                     MinWidth="86"
@@ -116,6 +121,6 @@
                         Content="关闭" />
                 </StackPanel>
             </DockPanel>
-        </StackPanel>
+        </Grid>
     </Border>
 </Window>
