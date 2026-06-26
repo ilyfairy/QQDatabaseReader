@@ -34,9 +34,32 @@ internal sealed class QqNtSystemHintDisplayFactory
             .Select(segment => segment.SystemHint)
             .FirstOrDefault(systemHint =>
                 systemHint is not null &&
-                (systemHint.Participants.Count > 0 || !string.IsNullOrWhiteSpace(systemHint.SourceName)));
+                (systemHint.Participants.Count > 0 ||
+                 !string.IsNullOrWhiteSpace(systemHint.SourceName) ||
+                 !string.IsNullOrWhiteSpace(systemHint.DisplayText)));
         if (hint is null)
             return null;
+
+        var cleanDisplayText = CleanText(hint.DisplayText);
+        if (!string.IsNullOrWhiteSpace(cleanDisplayText) &&
+            hint.Participants.Count == 0 &&
+            string.IsNullOrWhiteSpace(hint.SourceName))
+        {
+            return new SystemHintDisplay(
+                string.Empty,
+                string.Empty,
+                false,
+                string.Empty,
+                string.Empty,
+                false,
+                cleanDisplayText,
+                string.Empty,
+                null,
+                0,
+                0,
+                null,
+                cleanDisplayText);
+        }
 
         var sourceParticipant = hint.Participants.FirstOrDefault();
         var sourceNtUid = CleanText(sourceParticipant?.Uid);

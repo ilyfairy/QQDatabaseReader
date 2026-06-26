@@ -414,7 +414,20 @@ public partial class QQMessageReader
             }
         }
 
+        ApplyFileTransferSystemHint(currentMessage);
         return currentMessage;
+    }
+
+    private static void ApplyFileTransferSystemHint(QQMessageSegment segment)
+    {
+        if (segment.Type != MessageSegmentType.System ||
+            string.IsNullOrWhiteSpace(segment.ImageFileName))
+        {
+            return;
+        }
+
+        var hint = segment.SystemHint ??= new QQSystemHintMessage();
+        SetSystemHintPropertyIfMissing(hint, "display_text", $"对方已成功接收文件“{segment.ImageFileName.Trim()}”");
     }
 
     private static bool IsRecallSystemHintField(QQMessageSegment currentMessage, int key)
