@@ -201,15 +201,11 @@
                             Foreground="#555"
                             Text="发送人" />
 
-                        <TextBox
-                            Text="{Binding SenderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                            PlaceholderText="搜索昵称、QQ号或 nt_uid" />
-
                         <Grid ColumnDefinitions="* Auto" ColumnSpacing="8">
                             <TextBox
                                 Grid.Column="0"
-                                Text="{Binding SenderIdInput, Mode=TwoWay}"
-                                PlaceholderText="手动输入多个 QQ号，用空格或逗号分隔" />
+                                Text="{Binding SenderSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                PlaceholderText="搜索昵称、QQ号或 nt_uid；多个 QQ号 用空格或逗号分隔" />
                             <Button
                                 Grid.Column="1"
                                 Padding="12,4"

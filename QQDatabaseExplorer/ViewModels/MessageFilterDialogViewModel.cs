@@ -46,9 +46,6 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     [ObservableProperty]
     public partial string SenderSearchText { get; set; } = string.Empty;
 
-    [ObservableProperty]
-    public partial string SenderIdInput { get; set; } = string.Empty;
-
     public bool HasSelectedSenders => SelectedSenders.Count > 0;
 
     public bool HasSelectedDates => _selectedDayStartTimes.Count > 0;
@@ -144,7 +141,7 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     [RelayCommand]
     public void AddManualSenders()
     {
-        var senderIds = SenderIdInput
+        var senderIds = SenderSearchText
             .Split([',', '，', ';', '；', ' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(value => uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var senderId) ? senderId : 0)
             .Where(senderId => senderId != 0)
@@ -161,7 +158,7 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
             SelectedSenders.Add(ResolveSenderOption(senderId));
         }
 
-        SenderIdInput = string.Empty;
+        SenderSearchText = string.Empty;
         RefreshSenderCandidates();
         OnPropertyChanged(nameof(HasSelectedSenders));
     }
@@ -187,7 +184,6 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     {
         _selectedDayStartTimes.Clear();
         SelectedSenders.Clear();
-        SenderIdInput = string.Empty;
         SenderSearchText = string.Empty;
         RefreshSenderCandidates();
         RefreshDateCells();
