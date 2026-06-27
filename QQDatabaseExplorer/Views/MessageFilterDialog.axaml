@@ -82,12 +82,62 @@
         <Style Selector="Border.DateCard">
             <Setter Property="Width" Value="300" />
         </Style>
+        <Style Selector="StackPanel.TypeFilterPanel">
+            <Setter Property="Width" Value="300" />
+        </Style>
+        <Style Selector="StackPanel.TypeFilterPanel.GroupMode">
+            <Setter Property="Width" Value="652" />
+        </Style>
     </Window.Styles>
 
     <Border Padding="20,20,20,10">
         <Grid RowDefinitions="Auto Auto">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Orientation="Vertical" Spacing="20">
+                    <StackPanel
+                        Classes="TypeFilterPanel"
+                        Classes.GroupMode="{Binding IsGroupConversation}"
+                        HorizontalAlignment="Center"
+                        Orientation="Vertical"
+                        Spacing="8">
+                        <TextBlock
+                            FontSize="14"
+                            Foreground="#555"
+                            Text="文本内容" />
+                        <TextBox
+                            Text="{Binding FilterText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            PlaceholderText="筛选当前聊天中的文本" />
+                    </StackPanel>
+
+                    <StackPanel
+                        Classes="TypeFilterPanel"
+                        Classes.GroupMode="{Binding IsGroupConversation}"
+                        HorizontalAlignment="Center"
+                        Orientation="Vertical"
+                        Spacing="8">
+                        <TextBlock
+                            FontSize="14"
+                            Foreground="#555"
+                            Text="消息类型" />
+                        <ItemsControl ItemsSource="{Binding ContentKindOptions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.DataTemplates>
+                                <DataTemplate DataType="vm:MessageContentKindFilterOption">
+                                    <CheckBox
+                                        Margin="0,0,16,6"
+                                        Command="{Binding $parent[Window].DataContext.ToggleContentKindCommand}"
+                                        CommandParameter="{Binding}"
+                                        Content="{Binding DisplayName}"
+                                        IsChecked="{Binding IsSelected, Mode=OneWay}" />
+                                </DataTemplate>
+                            </ItemsControl.DataTemplates>
+                        </ItemsControl>
+                    </StackPanel>
+
                     <Grid
                         Classes="FilterContentGrid"
                         Classes.GroupMode="{Binding IsGroupConversation}"

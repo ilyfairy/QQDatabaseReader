@@ -92,6 +92,12 @@ public partial class MessageTabViewModel : ViewModelBase
 
     public string MessageFilterSummary => MessageFilterState.FormatSummary(MessageFilter);
 
+    public bool ShowMessageEmptyState =>
+        SelectedGroup is not null &&
+        HasMessageFilter &&
+        !IsLoadingInitialMessages &&
+        _messages.Count == 0;
+
     private const int PageSize = 50;
     private const int ExportPageSize = 200;
     private const int ExportReplyLookupLimit = 200;
@@ -210,6 +216,7 @@ public partial class MessageTabViewModel : ViewModelBase
     partial void OnSelectedGroupChanged(AvaQQGroup? value)
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
         HandleSelectedGroupChanged(value);
     }
 
@@ -222,6 +229,12 @@ public partial class MessageTabViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(HasMessageFilter));
         OnPropertyChanged(nameof(MessageFilterSummary));
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
+    }
+
+    partial void OnIsLoadingInitialMessagesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
     }
 
     public void ActivateGroup(AvaQQGroup? group, bool updateRangeAnchor = true)

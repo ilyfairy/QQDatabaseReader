@@ -9,21 +9,31 @@ public sealed record MessageFilterCriteria(
     int? StartTime,
     int? EndTimeExclusive,
     IReadOnlyList<int> SelectedDayStartTimes,
-    IReadOnlyList<uint> SenderIds)
+    IReadOnlyList<uint> SenderIds,
+    IReadOnlyList<MessageContentKind> ContentKinds,
+    string Text)
 {
-    public static MessageFilterCriteria Empty { get; } = new(null, null, Array.Empty<int>(), Array.Empty<uint>());
+    public static MessageFilterCriteria Empty { get; } = new(null, null, Array.Empty<int>(), Array.Empty<uint>(), Array.Empty<MessageContentKind>(), string.Empty);
 
     public bool IsEmpty =>
         StartTime is null &&
         EndTimeExclusive is null &&
         SelectedDayStartTimes.Count == 0 &&
-        SenderIds.Count == 0;
+        SenderIds.Count == 0 &&
+        ContentKinds.Count == 0 &&
+        string.IsNullOrWhiteSpace(Text);
+
+    public bool HasContentFilter =>
+        ContentKinds.Count > 0 ||
+        !string.IsNullOrWhiteSpace(Text);
 
     public static MessageFilterCriteria Create(
         int? startTime,
         int? endTimeExclusive,
         IEnumerable<int>? selectedDayStartTimes,
-        IEnumerable<uint>? senderIds)
+        IEnumerable<uint>? senderIds,
+        IEnumerable<MessageContentKind>? contentKinds = null,
+        string? text = null)
     {
         var normalizedDayStartTimes = selectedDayStartTimes?
             .Where(dayStartTime => dayStartTime > 0)
@@ -35,22 +45,66 @@ public sealed record MessageFilterCriteria(
             .Distinct()
             .OrderBy(senderId => senderId)
             .ToArray() ?? [];
+        var normalizedContentKinds = contentKinds?
+            .Distinct()
+            .OrderBy(kind => kind)
+            .ToArray() ?? [];
+        var normalizedText = text?.Trim() ?? string.Empty;
 
-        return new MessageFilterCriteria(startTime, endTimeExclusive, normalizedDayStartTimes, normalizedSenderIds);
+        return new MessageFilterCriteria(startTime, endTimeExclusive, normalizedDayStartTimes, normalizedSenderIds, normalizedContentKinds, normalizedText);
     }
 
     public static MessageFilterCriteria CreateForSelectedDays(
         IEnumerable<int>? selectedDayStartTimes,
-        IEnumerable<uint>? senderIds)
+        IEnumerable<uint>? senderIds,
+        IEnumerable<MessageContentKind>? contentKinds = null,
+        string? text = null)
     {
-        return Create(null, null, selectedDayStartTimes, senderIds);
+        return Create(null, null, selectedDayStartTimes, senderIds, contentKinds, text);
     }
 
     public MessageQueryFilter ToQueryFilter()
     {
-        return IsEmpty
+        return StartTime is null &&
+               EndTimeExclusive is null &&
+               SelectedDayStartTimes.Count == 0 &&
+               SenderIds.Count == 0
             ? MessageQueryFilter.Empty
             : new MessageQueryFilter(StartTime, EndTimeExclusive, SelectedDayStartTimes, SenderIds);
+    }
+}
+
+public enum MessageContentKind
+{
+    Text,
+    Link,
+    Image,
+    Video,
+    Sticker,
+    Voice,
+    File,
+    System,
+    Card,
+    Other,
+}
+
+public static class MessageContentKindText
+{
+    public static string GetDisplayName(MessageContentKind kind)
+    {
+        return kind switch
+        {
+            MessageContentKind.Text => "文本",
+            MessageContentKind.Link => "链接",
+            MessageContentKind.Image => "图片",
+            MessageContentKind.Video => "视频",
+            MessageContentKind.Sticker => "Emoji表情",
+            MessageContentKind.Voice => "语音",
+            MessageContentKind.File => "文件",
+            MessageContentKind.System => "系统消息",
+            MessageContentKind.Card => "卡片",
+            _ => "其它",
+        };
     }
 }
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
@@ -20,45 +21,55 @@ internal sealed class MessageTimelineFacade
         _jumpContextPageSize = jumpContextPageSize;
     }
 
-    public List<MessageRecord> LoadInitialMessages(AvaQQGroup conversation, int pageSize)
+    public List<MessageRecord> LoadInitialMessages(
+        AvaQQGroup conversation,
+        int pageSize,
+        Func<bool>? shouldContinue = null)
     {
-        return _query.LoadInitialMessages(conversation, pageSize, GetCurrentFilter(conversation));
+        return _query.LoadInitialMessages(conversation, pageSize, GetCurrentFilter(conversation), shouldContinue);
     }
 
-    public List<MessageRecord> LoadEarliestMessages(AvaQQGroup conversation, int pageSize)
+    public List<MessageRecord> LoadEarliestMessages(
+        AvaQQGroup conversation,
+        int pageSize,
+        Func<bool>? shouldContinue = null)
     {
-        return _query.LoadEarliestMessages(conversation, pageSize, GetCurrentFilter(conversation));
+        return _query.LoadEarliestMessages(conversation, pageSize, GetCurrentFilter(conversation), shouldContinue);
     }
 
     public List<MessageRecord> LoadOlderMessages(
         AvaQQGroup conversation,
         long messageSeq,
         long messageId,
-        int pageSize)
+        int pageSize,
+        Func<bool>? shouldContinue = null)
     {
-        return _query.LoadOlderMessages(conversation, messageSeq, messageId, pageSize, GetCurrentFilter(conversation));
+        return _query.LoadOlderMessages(conversation, messageSeq, messageId, pageSize, GetCurrentFilter(conversation), shouldContinue);
     }
 
     public List<MessageRecord> LoadNewerMessages(
         AvaQQGroup conversation,
         long messageSeq,
         long messageId,
-        int pageSize)
+        int pageSize,
+        Func<bool>? shouldContinue = null)
     {
-        return _query.LoadNewerMessages(conversation, messageSeq, messageId, pageSize, GetCurrentFilter(conversation));
+        return _query.LoadNewerMessages(conversation, messageSeq, messageId, pageSize, GetCurrentFilter(conversation), shouldContinue);
     }
 
     public List<MessageRecord> LoadTargetAndNewerMessages(
         AvaQQGroup conversation,
         long messageSeq,
-        long messageId)
+        long messageId,
+        Func<bool>? shouldContinue = null)
     {
         var messages = _query.LoadNewerOrEqualMessages(
             conversation,
             messageSeq,
             messageId,
             _jumpContextPageSize + 1,
-            GetCurrentFilter(conversation));
+            GetCurrentFilter(conversation),
+            shouldContinue);
         if (messages.Any(message => message.MessageId == messageId))
             return messages;
 

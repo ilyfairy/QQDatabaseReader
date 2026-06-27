@@ -20,7 +20,7 @@ public partial class MessageTabViewModel
                 MessageReloadScrollIntent.ScrollToBottom,
                 async context =>
                 {
-                    var page = await _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(conversation, () => _messageTimelineFacade.LoadInitialMessages(conversation, PageSize)));
+                    var page = await _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(conversation, () => _messageTimelineFacade.LoadInitialMessages(conversation, PageSize, () => _messageLoadVersion.IsCurrentVersion(loadVersion))));
 
                     if (!context.IsCurrent)
                         return;
@@ -32,6 +32,7 @@ public partial class MessageTabViewModel
 
                     _messages.AddLastRange(avaMessages);
                     UpdateMessageWindowState(page.Messages, olderAvailable: page.Messages.Count == PageSize, newerAvailable: false);
+                    OnPropertyChanged(nameof(ShowMessageEmptyState));
                     UpdateCurrentConversationLatestPreview(conversation, page.Messages);
                     ScrollToBottom();
                 });
@@ -52,7 +53,7 @@ public partial class MessageTabViewModel
             MessageReloadScrollIntent.MessageJump,
             async context =>
             {
-                var page = await _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(conversation, () => _messageTimelineFacade.LoadEarliestMessages(conversation, PageSize)));
+                var page = await _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(conversation, () => _messageTimelineFacade.LoadEarliestMessages(conversation, PageSize, () => _messageLoadVersion.IsCurrentVersion(loadVersion))));
 
                 if (!context.IsCurrent)
                     return;
@@ -64,6 +65,7 @@ public partial class MessageTabViewModel
 
                 _messages.AddLastRange(avaMessages);
                 UpdateMessageWindowState(page.Messages, olderAvailable: false, newerAvailable: page.Messages.Count == PageSize);
+                OnPropertyChanged(nameof(ShowMessageEmptyState));
                 View?.ScrollToTop();
                 View?.ShowMessagesImmediately();
             });
@@ -83,8 +85,8 @@ public partial class MessageTabViewModel
             {
                 var (olderMessages, targetAndNewerMessages, referencedMessages, replyTargetMessages) = await _messageDatabaseQueryRunner.RunAsync(() =>
                 {
-                    var older = _messageTimelineFacade.LoadOlderMessages(conversation, messageSeq, messageId, JumpContextPageSize);
-                    var targetAndNewer = _messageTimelineFacade.LoadTargetAndNewerMessages(conversation, messageSeq, messageId);
+                    var older = _messageTimelineFacade.LoadOlderMessages(conversation, messageSeq, messageId, JumpContextPageSize, () => _messageLoadVersion.IsCurrentVersion(loadVersion));
+                    var targetAndNewer = _messageTimelineFacade.LoadTargetAndNewerMessages(conversation, messageSeq, messageId, () => _messageLoadVersion.IsCurrentVersion(loadVersion));
                     var messages = older.Concat(targetAndNewer).DistinctBy(message => message.MessageId).ToArray();
                     var page = _messagePageLoader.CreatePage(conversation, messages, PageSize);
                     var referenced = page.ReferencedMessages;
@@ -117,6 +119,7 @@ public partial class MessageTabViewModel
                     messages,
                     olderAvailable: olderMessages.Count == JumpContextPageSize,
                     newerAvailable: targetAndNewerMessages.Count == JumpContextPageSize + 1);
+                OnPropertyChanged(nameof(ShowMessageEmptyState));
 
                 View?.ScrollToMessage(messageId);
             });
@@ -146,7 +149,7 @@ public partial class MessageTabViewModel
                 loadVersion,
                 () => _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(
                     conversation,
-                    () => _messageTimelineFacade.LoadOlderMessages(conversation, messageSeq, messageId, PageSize))),
+                    () => _messageTimelineFacade.LoadOlderMessages(conversation, messageSeq, messageId, PageSize, () => _messageLoadVersion.IsCurrentVersion(loadVersion)))),
                 page => _messagePageDisplayBuilder.CreateAsync(conversation, page),
                 (page, avaMessages) =>
                 {
@@ -190,7 +193,7 @@ public partial class MessageTabViewModel
                 loadVersion,
                 () => _messageDatabaseQueryRunner.RunAsync(() => LoadMessagePage(
                     conversation,
-                    () => _messageTimelineFacade.LoadNewerMessages(conversation, messageSeq, messageId, PageSize))),
+                    () => _messageTimelineFacade.LoadNewerMessages(conversation, messageSeq, messageId, PageSize, () => _messageLoadVersion.IsCurrentVersion(loadVersion)))),
                 page => _messagePageDisplayBuilder.CreateAsync(conversation, page),
                 (page, avaMessages) =>
                 {
@@ -215,7 +218,8 @@ public partial class MessageTabViewModel
     {
         ClearMessageSelection();
         _messages.Clear();
-        ResetMessageWindowState();
+        ResetMessageWindowState(resetInitialLoading: false);
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
     }
 
     private bool IsMessageLoadCurrent(AvaQQGroup conversation, int loadVersion)
@@ -241,13 +245,15 @@ public partial class MessageTabViewModel
         View?.ShowMessagesImmediately();
     }
 
-    private void ResetMessageWindowState()
+    private void ResetMessageWindowState(bool resetInitialLoading = true)
     {
         _messageWindowState.Reset();
-        IsLoadingInitialMessages = false;
+        if (resetInitialLoading)
+            IsLoadingInitialMessages = false;
         IsLoadingPrevious = false;
         IsLoadingNext = false;
         NotifyMessageWindowAvailabilityChanged();
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
     }
 
     private void UpdateMessageWindowState(

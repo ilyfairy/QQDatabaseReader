@@ -579,7 +579,315 @@ internal sealed class MessageFilterState
         if (filter.SenderIds.Count > 0)
             parts.Add($"发送人 {filter.SenderIds.Count} 个");
 
+        if (!string.IsNullOrWhiteSpace(filter.Text))
+            parts.Add($"文本 {TrimSummaryText(filter.Text)}");
+
+        if (filter.ContentKinds.Count > 0)
+        {
+            var kinds = filter.ContentKinds
+                .Select(MessageContentKindText.GetDisplayName)
+                .ToArray();
+            parts.Add(kinds.Length <= 3
+                ? $"类型 {string.Join("、", kinds)}"
+                : $"类型 {kinds.Length} 个");
+        }
+
         return string.Join("，", parts);
+    }
+
+    private static string TrimSummaryText(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.Length <= 12 ? trimmed : trimmed[..12] + "...";
+    }
+}
+
+internal static class MessageContentFilterMatcher
+{
+    public static bool Matches(
+        AvaQQGroup conversation,
+        MessageRecord message,
+        MessageFilterCriteria filter)
+    {
+        return MessageContentKindMatcher.Matches(conversation, message, filter.ContentKinds) &&
+               MessageTextFilterMatcher.Matches(conversation, message, filter.Text);
+    }
+}
+
+internal static class MessageContentKindMatcher
+{
+    public static bool Matches(
+        AvaQQGroup conversation,
+        MessageRecord message,
+        IReadOnlyCollection<MessageContentKind> selectedKinds)
+    {
+        if (selectedKinds.Count == 0)
+            return true;
+
+        foreach (var kind in GetKinds(conversation, message))
+        {
+            if (selectedKinds.Contains(kind))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyCollection<MessageContentKind> GetKinds(AvaQQGroup conversation, MessageRecord message)
+    {
+        var kinds = new HashSet<MessageContentKind>();
+        if (ConversationTypeClassifier.IsPCQQ(conversation))
+        {
+            AddPCQQKinds(kinds, message);
+        }
+        else if (ConversationTypeClassifier.IsAndroidMobileQQ(conversation))
+        {
+            AddAndroidMobileQQKinds(kinds, message);
+        }
+        else if (ConversationTypeClassifier.IsIcalingua(conversation))
+        {
+            AddIcalinguaKinds(kinds, message);
+        }
+        else
+        {
+            AddQqNtKinds(kinds, message);
+        }
+
+        if (kinds.Count == 0)
+            kinds.Add(MessageContentKind.Other);
+
+        return kinds;
+    }
+
+    private static void AddQqNtKinds(HashSet<MessageContentKind> kinds, MessageRecord message)
+    {
+        if (message.MessageType == MessageType.System)
+            kinds.Add(MessageContentKind.System);
+        if (message.MessageType == MessageType.GroupFile)
+            kinds.Add(MessageContentKind.File);
+        if (message.MessageType == MessageType.Voice)
+            kinds.Add(MessageContentKind.Voice);
+        if (message.MessageType == MessageType.Video)
+            kinds.Add(MessageContentKind.Video);
+        if (message.MessageType is MessageType.Forwarded or MessageType.App or MessageType.RedPacket)
+            kinds.Add(MessageContentKind.Card);
+        if (message.SubMessageType == SubMessageType.ContainsLink)
+            kinds.Add(MessageContentKind.Link);
+        if (message.SubMessageType == SubMessageType.Sticker)
+            kinds.Add(MessageContentKind.Sticker);
+
+        var content = QqNtMessageContentParser.TryParse(message.Content);
+        if (content is null)
+        {
+            if (message.MessageType == MessageType.Text &&
+                QQMessageDisplayText.CreateText(message.Content, message.MessageType, message.SubMessageType) is { Length: > 0 } fallbackText &&
+                !IsKnownQqNtFallbackText(message, fallbackText))
+            {
+                kinds.Add(MessageContentKind.Text);
+                AddLinkKind(kinds, fallbackText);
+            }
+
+            return;
+        }
+
+        foreach (var segment in content.Segments)
+        {
+            if (segment.Type == MessageSegmentType.Reply)
+                continue;
+
+            if (segment.Type == MessageSegmentType.Text && !string.IsNullOrWhiteSpace(segment.Text))
+            {
+                kinds.Add(MessageContentKind.Text);
+                AddLinkKind(kinds, segment.Text);
+            }
+
+            AddLinkKind(kinds, segment.AltText);
+            if (segment.IsQQFace || segment.IsMarketFace)
+                kinds.Add(MessageContentKind.Sticker);
+            if (message.SubMessageType != SubMessageType.Sticker &&
+                MessageMediaSegmentClassifier.IsRenderableImageSegment(message.MessageType, message.SubMessageType, segment))
+                kinds.Add(MessageContentKind.Image);
+            if (MessageMediaSegmentClassifier.IsVideoSegment(message.MessageType, segment))
+                kinds.Add(MessageContentKind.Video);
+            if (MessageMediaSegmentClassifier.IsVoiceSegment(message.MessageType, segment))
+                kinds.Add(MessageContentKind.Voice);
+            if (segment.Type == MessageSegmentType.File)
+                kinds.Add(MessageContentKind.File);
+            if (segment.Type == MessageSegmentType.System || segment.SystemHint is not null)
+                kinds.Add(MessageContentKind.System);
+            if (segment.Type is MessageSegmentType.App or MessageSegmentType.RichMedia or MessageSegmentType.Xml or MessageSegmentType.Dynamic ||
+                QqNtRichCardSegmentFactory.CreateRichCardSegment(segment) is not null)
+                kinds.Add(MessageContentKind.Card);
+        }
+    }
+
+    private static void AddPCQQKinds(HashSet<MessageContentKind> kinds, MessageRecord message)
+    {
+        var parsed = PCQQMessageContentParser.Parse(message.Content);
+        foreach (var segment in parsed.Segments)
+        {
+            switch (segment.Type)
+            {
+                case PCQQMessageSegmentType.Text when !string.IsNullOrWhiteSpace(segment.Text):
+                    kinds.Add(MessageContentKind.Text);
+                    AddLinkKind(kinds, segment.Text);
+                    break;
+                case PCQQMessageSegmentType.Face:
+                    kinds.Add(MessageContentKind.Sticker);
+                    break;
+                case PCQQMessageSegmentType.Image:
+                    kinds.Add(MessageContentKind.Image);
+                    break;
+            }
+        }
+
+        if (kinds.Count == 0 &&
+            !string.IsNullOrWhiteSpace(parsed.DisplayText) &&
+            !string.Equals(parsed.DisplayText, "[PCQQ消息]", StringComparison.Ordinal))
+        {
+            kinds.Add(MessageContentKind.Text);
+            AddLinkKind(kinds, parsed.DisplayText);
+        }
+    }
+
+    private static void AddAndroidMobileQQKinds(HashSet<MessageContentKind> kinds, MessageRecord message)
+    {
+        var payload = AndroidMobileQQMessagePayload.FromContent(message.Content);
+        if (payload is null)
+            return;
+
+        foreach (var part in payload.Parts)
+        {
+            switch (part.Type)
+            {
+                case AndroidMobileQQMessagePartType.Text when !string.IsNullOrWhiteSpace(part.Text):
+                    kinds.Add(MessageContentKind.Text);
+                    AddLinkKind(kinds, part.Text);
+                    break;
+                case AndroidMobileQQMessagePartType.Face:
+                    kinds.Add(MessageContentKind.Sticker);
+                    break;
+                case AndroidMobileQQMessagePartType.Image:
+                    kinds.Add(MessageContentKind.Image);
+                    break;
+                case AndroidMobileQQMessagePartType.Unsupported:
+                    kinds.Add(MessageContentKind.Other);
+                    break;
+            }
+        }
+
+        if (kinds.Count == 0 && !string.IsNullOrWhiteSpace(payload.DisplayText))
+            kinds.Add(MessageContentKind.Text);
+        AddLinkKind(kinds, payload.DisplayText);
+    }
+
+    private static void AddIcalinguaKinds(HashSet<MessageContentKind> kinds, MessageRecord message)
+    {
+        var payload = IcalinguaMessagePayload.FromContent(message.Content);
+        if (payload is null)
+            return;
+
+        if (payload.System)
+            kinds.Add(MessageContentKind.System);
+        if (!payload.System &&
+            MiniAppCardParser.TryParse(payload.Code, out var miniApp) &&
+            miniApp is not null)
+        {
+            kinds.Add(MessageContentKind.Card);
+        }
+
+        var text = IcalinguaMessageReader.CreateDisplayMessageText(payload.Content, payload.MiraiJson, payload.Code);
+        if (!string.IsNullOrWhiteSpace(text) && !IsIcalinguaMediaPlaceholderOnly(text))
+        {
+            kinds.Add(MessageContentKind.Text);
+            AddLinkKind(kinds, text);
+        }
+
+        foreach (var file in payload.Files)
+        {
+            var type = file.Type ?? string.Empty;
+            if (type.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                kinds.Add(file.IsFace ? MessageContentKind.Sticker : MessageContentKind.Image);
+            }
+            else if (type.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+            {
+                kinds.Add(MessageContentKind.Video);
+            }
+            else if (type.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            {
+                kinds.Add(MessageContentKind.Voice);
+            }
+            else
+            {
+                kinds.Add(MessageContentKind.File);
+            }
+        }
+
+        if (kinds.Count == 0 && !string.IsNullOrWhiteSpace(payload.PreviewText))
+            kinds.Add(MessageContentKind.Text);
+        AddLinkKind(kinds, payload.PreviewText);
+    }
+
+    private static void AddLinkKind(HashSet<MessageContentKind> kinds, string? text)
+    {
+        if (HasPlainUrl(text))
+            kinds.Add(MessageContentKind.Link);
+    }
+
+    private static bool HasPlainUrl(string? text)
+    {
+        return !string.IsNullOrWhiteSpace(text) &&
+               (text.Contains("http://", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("https://", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("www.", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsKnownQqNtFallbackText(MessageRecord message, string text)
+    {
+        return QQMessageDisplayText.TryGetFallbackText(message.MessageType, message.SubMessageType, out var fallbackText) &&
+               string.Equals(text, fallbackText, StringComparison.Ordinal);
+    }
+
+    private static bool IsIcalinguaMediaPlaceholderOnly(string text)
+    {
+        var trimmed = text.Trim();
+        return string.Equals(trimmed, "[Image]", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(trimmed, "[Sticker]", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+internal static class MessageTextFilterMatcher
+{
+    public static bool Matches(AvaQQGroup conversation, MessageRecord message, string? filterText)
+    {
+        var query = filterText?.Trim();
+        return string.IsNullOrWhiteSpace(query) ||
+               CreateSearchText(conversation, message).Contains(query, StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private static string CreateSearchText(AvaQQGroup conversation, MessageRecord message)
+    {
+        if (ConversationTypeClassifier.IsPCQQ(conversation))
+            return PCQQMessageContentParser.GetDisplayText(message.Content);
+
+        if (ConversationTypeClassifier.IsAndroidMobileQQ(conversation))
+            return AndroidMobileQQMessagePayload.FromContent(message.Content)?.DisplayText ?? string.Empty;
+
+        if (ConversationTypeClassifier.IsIcalingua(conversation))
+        {
+            var payload = IcalinguaMessagePayload.FromContent(message.Content);
+            if (payload is null)
+                return string.Empty;
+
+            var displayText = IcalinguaMessageReader.CreateDisplayMessageText(payload.Content, payload.MiraiJson, payload.Code);
+            return string.Join(' ', displayText, payload.PreviewText).Trim();
+        }
+
+        if (QqNtMessageContentParser.TryParse(message.Content) is { } content)
+            return QQMessageDisplayText.CreateText(content, message.MessageType, message.SubMessageType);
+
+        return QQMessageDisplayText.CreateText(message.Content, message.MessageType, message.SubMessageType);
     }
 }
 

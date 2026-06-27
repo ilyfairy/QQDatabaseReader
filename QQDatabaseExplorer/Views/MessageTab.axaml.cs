@@ -1112,9 +1112,12 @@ public partial class MessageTab : UserControl
             }
         };
 
+        var menuItems = new List<Control> { copyQqIdMenuItem, copyGroupNickNameMenuItem };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+
         var contextMenu = new ContextMenu
         {
-            ItemsSource = new Control[] { copyQqIdMenuItem, copyGroupNickNameMenuItem },
+            ItemsSource = menuItems,
         };
         ContextMenuHelper.Open(control, contextMenu);
     }
@@ -1166,7 +1169,7 @@ public partial class MessageTab : UserControl
         }
 
         e.Handled = true;
-        OpenCopyContextMenu(control, MessageCopyPayload.FromMessage(message), message.ProtobufBase64);
+        OpenCopyContextMenu(control, MessageCopyPayload.FromMessage(message), message.ProtobufBase64, message: message);
     }
 
     private void SystemHintSourceName_ContextRequested(object? sender, ContextRequestedEventArgs e)
@@ -1421,7 +1424,7 @@ public partial class MessageTab : UserControl
         var mentionUin = TryGetMentionUinFromContextRequest(textBlock, message, e);
         if (selectedPayload.HasContent)
         {
-            OpenCopyContextMenu(menuOwner, selectedPayload, message.ProtobufBase64, mentionUin);
+            OpenCopyContextMenu(menuOwner, selectedPayload, message.ProtobufBase64, mentionUin, message);
             return;
         }
 
@@ -1455,7 +1458,7 @@ public partial class MessageTab : UserControl
             return;
         }
 
-        OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64, mentionUin);
+        OpenCopyContextMenu(menuOwner, MessageCopyPayload.FromMessage(message), message.ProtobufBase64, mentionUin, message);
     }
 
     private void OpenMiniAppContextMenu(
@@ -1512,14 +1515,20 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[]
+        var menuItems = new List<Control>
         {
             copyMessageMenuItem,
             copyLinkMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
-        };
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
         ContextMenuHelper.Open(owner, contextMenu);
     }
 
@@ -1531,7 +1540,7 @@ public partial class MessageTab : UserControl
     {
         if (!imageSegment.IsImageAvailable)
         {
-            OpenCopyContextMenu(owner, MessageCopyPayload.FromMessage(message), protobufBase64);
+            OpenCopyContextMenu(owner, MessageCopyPayload.FromMessage(message), protobufBase64, message: message);
             return;
         }
 
@@ -1580,15 +1589,21 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[]
+        var menuItems = new List<Control>
         {
             copyMessageMenuItem,
             copyImageMenuItem,
             locateFileMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
-        };
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
         ContextMenuHelper.Open(owner, contextMenu);
     }
 
@@ -1635,14 +1650,20 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[]
+        var menuItems = new List<Control>
         {
             copyMessageMenuItem,
             locateFileMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
-        };
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
         ContextMenuHelper.Open(owner, contextMenu);
     }
 
@@ -1707,16 +1728,22 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[]
+        var menuItems = new List<Control>
         {
             copyMessageMenuItem,
             copyVideoMenuItem,
             openVideoMenuItem,
             locateFileMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
-        };
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
         ContextMenuHelper.Open(owner, contextMenu);
     }
 
@@ -1772,15 +1799,21 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = new Control[]
+        var menuItems = new List<Control>
         {
             copyMessageMenuItem,
             copyFileMenuItem,
             locateFileMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
             new Separator(),
             copyProtobufMenuItem,
             analyzeProtobufMenuItem,
-        };
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
         ContextMenuHelper.Open(owner, contextMenu);
     }
 
@@ -1799,7 +1832,8 @@ public partial class MessageTab : UserControl
         Control owner,
         MessageCopyPayload copyPayload,
         string? protobufBase64,
-        string? mentionUin = null)
+        string? mentionUin = null,
+        AvaQQMessage? message = null)
     {
         var contextMenu = new ContextMenu();
         var copyMenuItem = new MenuItem
@@ -1848,11 +1882,40 @@ public partial class MessageTab : UserControl
             }
         };
 
-        contextMenu.ItemsSource = IsNumericId(mentionUin)
-            ? new Control[] { copyMenuItem, copyMentionUinMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem }
-            : [copyMenuItem, new Separator(), copyProtobufMenuItem, analyzeProtobufMenuItem];
+        var menuItems = new List<Control> { copyMenuItem };
+        if (IsNumericId(mentionUin))
+            menuItems.Add(copyMentionUinMenuItem);
+
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        ]);
+
+        contextMenu.ItemsSource = menuItems;
 
         ContextMenuHelper.Open(owner, contextMenu);
+    }
+
+    private void AddClearFilterAndJumpMenuItem(List<Control> menuItems, AvaQQMessage? message)
+    {
+        if (!_viewModel.CanClearMessageFilterAndJumpToMessage(message))
+            return;
+
+        var menuItem = new MenuItem
+        {
+            Header = "清除筛选并跳转",
+        };
+        menuItem.Click += async (_, _) =>
+        {
+            if (message is not null)
+                await _viewModel.ClearMessageFilterAndJumpToMessageAsync(message);
+        };
+
+        menuItems.Add(new Separator());
+        menuItems.Add(menuItem);
     }
 
     private void OpenSystemHintNameContextMenu(
@@ -1907,16 +1970,22 @@ public partial class MessageTab : UserControl
             }
         };
 
+        var menuItems = new List<Control>
+        {
+            copyMessageMenuItem,
+            copyQqIdMenuItem,
+        };
+        AddClearFilterAndJumpMenuItem(menuItems, message);
+        menuItems.AddRange(
+        [
+            new Separator(),
+            copyProtobufMenuItem,
+            analyzeProtobufMenuItem,
+        ]);
+
         var contextMenu = new ContextMenu
         {
-            ItemsSource = new Control[]
-            {
-                copyMessageMenuItem,
-                copyQqIdMenuItem,
-                new Separator(),
-                copyProtobufMenuItem,
-                analyzeProtobufMenuItem,
-            },
+            ItemsSource = menuItems,
         };
         ContextMenuHelper.Open(owner, contextMenu);
     }

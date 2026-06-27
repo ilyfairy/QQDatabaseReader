@@ -16,6 +16,7 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     private readonly ObservableCollection<MessageSenderFilterOption> _allSenderCandidates = [];
     private readonly Dictionary<int, MessageDateFilterOption> _dateOptionsByDay = [];
     private readonly HashSet<int> _selectedDayStartTimes = [];
+    private readonly HashSet<MessageContentKind> _selectedContentKinds = [];
     private DateTimeOffset? _firstAvailableMonth;
     private DateTimeOffset? _lastAvailableMonth;
 
@@ -32,6 +33,8 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
 
     public ObservableCollection<MessageDateFilterCell> DateCells { get; } = [];
 
+    public ObservableCollection<MessageContentKindFilterOption> ContentKindOptions { get; } = [];
+
     public MessageFilterCriteria? ResultFilter { get; private set; }
 
     [ObservableProperty]
@@ -46,9 +49,14 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     [ObservableProperty]
     public partial string SenderSearchText { get; set; } = string.Empty;
 
+    [ObservableProperty]
+    public partial string FilterText { get; set; } = string.Empty;
+
     public bool HasSelectedSenders => SelectedSenders.Count > 0;
 
     public bool HasSelectedDates => _selectedDayStartTimes.Count > 0;
+
+    public bool HasSelectedContentKinds => _selectedContentKinds.Count > 0;
 
     public bool CanShowPreviousMonth => _firstAvailableMonth is not null && VisibleMonth > _firstAvailableMonth;
 
@@ -74,6 +82,13 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
                 _selectedDayStartTimes.Add(dayStartTime);
         }
 
+        _selectedContentKinds.Clear();
+        foreach (var kind in request.CurrentFilter.ContentKinds)
+        {
+            _selectedContentKinds.Add(kind);
+        }
+        FilterText = request.CurrentFilter.Text;
+
         VisibleMonth = ResolveInitialVisibleMonth();
 
         _allSenderCandidates.Clear();
@@ -93,9 +108,11 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
         }
 
         RefreshSenderCandidates();
+        RefreshContentKindOptions();
         RefreshDateCells();
         OnPropertyChanged(nameof(HasSelectedSenders));
         OnPropertyChanged(nameof(HasSelectedDates));
+        OnPropertyChanged(nameof(HasSelectedContentKinds));
     }
 
     partial void OnSenderSearchTextChanged(string value)
@@ -183,12 +200,16 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     public void ClearAll()
     {
         _selectedDayStartTimes.Clear();
+        _selectedContentKinds.Clear();
         SelectedSenders.Clear();
         SenderSearchText = string.Empty;
+        FilterText = string.Empty;
         RefreshSenderCandidates();
+        RefreshContentKindOptions();
         RefreshDateCells();
         OnPropertyChanged(nameof(HasSelectedSenders));
         OnPropertyChanged(nameof(HasSelectedDates));
+        OnPropertyChanged(nameof(HasSelectedContentKinds));
     }
 
     [RelayCommand]
@@ -223,13 +244,26 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    public void ToggleContentKind(MessageContentKindFilterOption? option)
+    {
+        if (option is null)
+            return;
+
+        if (!_selectedContentKinds.Add(option.Kind))
+            _selectedContentKinds.Remove(option.Kind);
+
+        RefreshContentKindOptions();
+        OnPropertyChanged(nameof(HasSelectedContentKinds));
+    }
+
+    [RelayCommand]
     public void Apply()
     {
         var senderIds = IsGroupConversation
             ? SelectedSenders.Select(sender => sender.SenderId)
             : [];
 
-        ResultFilter = MessageFilterCriteria.CreateForSelectedDays(_selectedDayStartTimes, senderIds);
+        ResultFilter = MessageFilterCriteria.CreateForSelectedDays(_selectedDayStartTimes, senderIds, _selectedContentKinds, FilterText);
         _dialogService.Close(ViewModelToken);
     }
 
@@ -318,6 +352,18 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
         }
     }
 
+    private void RefreshContentKindOptions()
+    {
+        ContentKindOptions.Clear();
+        foreach (var kind in Enum.GetValues<MessageContentKind>())
+        {
+            ContentKindOptions.Add(new MessageContentKindFilterOption(
+                kind,
+                MessageContentKindText.GetDisplayName(kind),
+                _selectedContentKinds.Contains(kind)));
+        }
+    }
+
     private void RefreshAvailableMonthRange()
     {
         if (_dateOptionsByDay.Count == 0)
@@ -337,3 +383,8 @@ public partial class MessageFilterDialogViewModel : ViewModelBase
         return new DateTimeOffset(new DateTime(localDate.Year, localDate.Month, 1, 0, 0, 0, DateTimeKind.Local));
     }
 }
+
+public sealed record MessageContentKindFilterOption(
+    MessageContentKind Kind,
+    string DisplayName,
+    bool IsSelected);

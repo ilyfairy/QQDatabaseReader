@@ -129,6 +129,27 @@ public partial class MessageTabViewModel
             loadVersion);
     }
 
+    public bool CanClearMessageFilterAndJumpToMessage(AvaQQMessage? message)
+    {
+        return message is { MessageId: not 0, MessageSeq: > 0 } &&
+               HasMessageFilter &&
+               SelectedGroup is { } conversation &&
+               string.Equals(conversation.ConversationKey, message.ConversationKey, StringComparison.Ordinal);
+    }
+
+    public async Task ClearMessageFilterAndJumpToMessageAsync(AvaQQMessage message)
+    {
+        if (!CanClearMessageFilterAndJumpToMessage(message) ||
+            SelectedGroup is not { } conversation)
+        {
+            return;
+        }
+
+        ClearMessageFilter(conversation);
+        var loadVersion = _messageLoadVersion.BeginNext();
+        await LoadMessagesAroundAsync(conversation, message.MessageId, message.MessageSeq, loadVersion);
+    }
+
     private async Task JumpToReplyMessageInConversationAsync(AvaQQGroup conversation, AvaReplyMessage reply)
     {
         if (ConversationTypeClassifier.IsIcalingua(conversation))

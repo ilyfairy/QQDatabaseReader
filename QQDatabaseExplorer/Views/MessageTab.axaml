@@ -528,6 +528,17 @@
                 <Border
                     Grid.Row="0"
                     Classes="MessagePagingIndicator"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding ShowMessageEmptyState}">
+                    <TextBlock
+                        FontSize="12"
+                        Foreground="#666"
+                        Text="没有符合条件的消息" />
+                </Border>
+
+                <Border
+                    Grid.Row="0"
+                    Classes="MessagePagingIndicator"
                     Margin="0,12,0,0"
                     VerticalAlignment="Top"
                     IsVisible="{Binding IsLoadingPrevious}">
@@ -567,13 +578,18 @@
                         <Binding Path="SelectedGroup" Converter="{x:Static ObjectConverters.IsNotNull}" />
                     </Border.IsVisible>
                     <Grid ColumnDefinitions="* Auto" ColumnSpacing="12">
-                        <TextBlock
+                        <StackPanel
                             Grid.Column="0"
                             VerticalAlignment="Center"
-                            FontSize="12"
-                            Foreground="#666"
-                            IsVisible="{Binding HasMessageFilter}"
-                            Text="{Binding MessageFilterSummary}" />
+                            Orientation="Horizontal"
+                            Spacing="10">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="12"
+                                Foreground="#666"
+                                IsVisible="{Binding HasMessageFilter}"
+                                Text="{Binding MessageFilterSummary}" />
+                        </StackPanel>
                         <StackPanel
                             Grid.Column="1"
                             Orientation="Horizontal"

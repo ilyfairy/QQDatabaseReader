@@ -57,10 +57,14 @@ internal static class PreparedDatabaseConfigLoader
             }
 
             if (!string.IsNullOrWhiteSpace(config.GroupMessageFtsDbPath))
-                groupMessageFtsDatabase = CreateGroupMessageFtsDatabase(config.GroupMessageFtsDbPath, config.GroupMessageFtsDbPassword);
+                groupMessageFtsDatabase = CreateGroupMessageFtsDatabase(
+                    config.GroupMessageFtsDbPath,
+                    config.GroupMessageFtsDbPassword);
 
             if (!string.IsNullOrWhiteSpace(config.BuddyMessageFtsDbPath))
-                buddyMessageFtsDatabase = CreateBuddyMessageFtsDatabase(config.BuddyMessageFtsDbPath, config.BuddyMessageFtsDbPassword);
+                buddyMessageFtsDatabase = CreateBuddyMessageFtsDatabase(
+                    config.BuddyMessageFtsDbPath,
+                    config.BuddyMessageFtsDbPassword);
 
             var ntDatabases = new PreparedNtDatabaseGroup(
                 groupInfoDatabase,
@@ -239,7 +243,7 @@ internal static class PreparedDatabaseConfigLoader
 
     private static QQGroupMessageFtsReader CreateGroupMessageFtsDatabase(string databasePath, string? password)
     {
-        var database = password is null
+        var database = string.IsNullOrWhiteSpace(password)
             ? new QQGroupMessageFtsReader(databasePath)
             : new QQGroupMessageFtsReader(databasePath, password);
         database.Initialize();
@@ -248,7 +252,7 @@ internal static class PreparedDatabaseConfigLoader
 
     private static QQGroupMessageFtsReader CreateBuddyMessageFtsDatabase(string databasePath, string? password)
     {
-        var database = password is null
+        var database = string.IsNullOrWhiteSpace(password)
             ? new QQGroupMessageFtsReader(databasePath, contentTableName: "buddy_msg_fts")
             : new QQGroupMessageFtsReader(databasePath, password, contentTableName: "buddy_msg_fts");
         database.Initialize();
