@@ -222,15 +222,15 @@ public sealed class AvaGroupMessageSearchGroup : ObservableObject
         {
             return ConversationType switch
             {
-                AvaConversationType.Group or AvaConversationType.PCQQGroup => $"群 {FirstNonEmpty(GroupName, GroupId == 0 ? null : GroupId.ToString())}",
-                AvaConversationType.Private => $"好友 {GetPrivateDisplayId()}",
-                AvaConversationType.PCQQPrivate => $"好友 {FirstNonEmpty(GroupName, PeerUin == 0 ? null : PeerUin.ToString())}",
-                AvaConversationType.AndroidMobileQQGroup => $"群 {FirstNonEmpty(GroupName, AndroidMobileQQPeerUin)}",
-                AvaConversationType.AndroidMobileQQPrivate => $"好友 {FirstNonEmpty(GroupName, AndroidMobileQQPeerUin)}",
+                AvaConversationType.Group or AvaConversationType.PCQQGroup => FirstNonEmpty(GroupName, GroupId == 0 ? null : GroupId.ToString()),
+                AvaConversationType.Private => GetPrivateDisplayId(),
+                AvaConversationType.PCQQPrivate => FirstNonEmpty(GroupName, PeerUin == 0 ? null : PeerUin.ToString()),
+                AvaConversationType.AndroidMobileQQGroup => FirstNonEmpty(GroupName, AndroidMobileQQPeerUin),
+                AvaConversationType.AndroidMobileQQPrivate => FirstNonEmpty(GroupName, AndroidMobileQQPeerUin),
                 AvaConversationType.Icalingua when IcalinguaRoomId < 0 =>
-                    $"群 {FirstNonEmpty(GroupName, (-IcalinguaRoomId).ToString())}",
+                    FirstNonEmpty(GroupName, (-IcalinguaRoomId).ToString()),
                 AvaConversationType.Icalingua when IcalinguaRoomId > 0 =>
-                    $"好友 {FirstNonEmpty(GroupName, IcalinguaRoomId.ToString())}",
+                    FirstNonEmpty(GroupName, IcalinguaRoomId.ToString()),
                 _ => FirstNonEmpty(GroupName, PeerUid, "未知会话"),
             };
         }

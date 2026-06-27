@@ -38,6 +38,8 @@ public partial class QQDatabaseService
 
     public QQGroupMessageFtsReader? GroupMessageFtsDatabase => _qqNtDatabases.GroupMessageFtsDatabase;
 
+    public QQGroupMessageFtsReader? BuddyMessageFtsDatabase => _qqNtDatabases.BuddyMessageFtsDatabase;
+
     public QQProfileInfoReader? ProfileInfoDatabase => _qqNtDatabases.ProfileInfoDatabase;
 
     public string? NtDataPath => _qqNtDatabases.NtDataPath;

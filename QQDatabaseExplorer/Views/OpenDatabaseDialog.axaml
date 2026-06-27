@@ -86,6 +86,20 @@
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding GroupMessageFtsDbKey}" />
                         </DockPanel>
+                        <DockPanel ToolTip.Tip="buddy_msg_fts.db，用于搜索私聊消息">
+                            <TextBlock Width="152" Text="buddy_msg_fts.db:" VerticalAlignment="Center" />
+                            <Button
+                                DockPanel.Dock="Right"
+                                Margin="8,0,0,0"
+                                Content="选择"
+                                Tag="buddy_msg_fts.db"
+                                Click="PickNtBuddyMessageFtsDbButton_Click" />
+                            <TextBox Text="{Binding NtBuddyMessageFtsDbPath}" />
+                        </DockPanel>
+                        <DockPanel ToolTip.Tip="buddy_msg_fts.db 密钥">
+                            <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding BuddyMessageFtsDbKey}" />
+                        </DockPanel>
                         <DockPanel ToolTip.Tip="{Binding NtDataPathToolTip}">
                             <TextBlock Width="152" Text="{Binding NtDataPathLabel}" VerticalAlignment="Center" />
                             <Button

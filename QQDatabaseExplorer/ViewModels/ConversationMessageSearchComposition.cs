@@ -29,14 +29,18 @@ internal sealed class ConversationMessageSearchProviderFactory
     }
 
     public bool HasSearchDatabase =>
-        _databaseService.GroupMessageFtsDatabase is not null ||
+        HasQqNtFtsDatabase ||
         _databaseService.IcalinguaMessageDatabases is not null ||
         _databaseService.PCQQMessageDatabase is not null ||
         _databaseService.AndroidMobileQQMessageDatabase is not null;
 
-    public string ReadyStatusText => _databaseService.GroupMessageFtsDatabase is not null
+    public string ReadyStatusText => HasQqNtFtsDatabase
         ? "输入关键词，支持中文、拼音、首字母、URL"
         : "输入关键词，搜索聊天记录";
+
+    private bool HasQqNtFtsDatabase =>
+        _databaseService.GroupMessageFtsDatabase is not null ||
+        _databaseService.BuddyMessageFtsDatabase is not null;
 
     public bool ShouldRefreshFor(IQQDatabase database)
     {
@@ -48,7 +52,7 @@ internal sealed class ConversationMessageSearchProviderFactory
 
     public SearchDatabaseKind GetPreferredKind()
     {
-        if (_databaseService.GroupMessageFtsDatabase is not null)
+        if (HasQqNtFtsDatabase)
             return SearchDatabaseKind.GroupMessageFts;
 
         if (_databaseService.IcalinguaMessageDatabases is not null)
@@ -67,7 +71,7 @@ internal sealed class ConversationMessageSearchProviderFactory
     {
         return kind switch
         {
-            SearchDatabaseKind.GroupMessageFts => _databaseService.GroupMessageFtsDatabase is not null,
+            SearchDatabaseKind.GroupMessageFts => HasQqNtFtsDatabase,
             SearchDatabaseKind.Icalingua => _databaseService.IcalinguaMessageDatabases is not null,
             SearchDatabaseKind.PCQQ => _databaseService.PCQQMessageDatabase is not null,
             SearchDatabaseKind.AndroidMobileQQ => _databaseService.AndroidMobileQQMessageDatabase is not null,
@@ -85,8 +89,11 @@ internal sealed class ConversationMessageSearchProviderFactory
     {
         return kind switch
         {
-            SearchDatabaseKind.GroupMessageFts when _databaseService.GroupMessageFtsDatabase is { } ftsDatabase =>
-                new QqNtFtsMessageSearchProvider(ftsDatabase, _qqNtSearchMetadataLoader),
+            SearchDatabaseKind.GroupMessageFts =>
+                new QqNtFtsMessageSearchProvider(
+                    _databaseService.GroupMessageFtsDatabase,
+                    _databaseService.BuddyMessageFtsDatabase,
+                    _qqNtSearchMetadataLoader),
             SearchDatabaseKind.Icalingua when _databaseService.IcalinguaMessageDatabases is { } icalinguaDatabase =>
                 new IcalinguaMessageSearchProvider(icalinguaDatabase),
             SearchDatabaseKind.PCQQ when _databaseService.PCQQMessageDatabase is { } pcqqDatabase =>
@@ -240,8 +247,7 @@ internal sealed class ConversationMessageSearchWorkflow
         return visibleResults
             .Select(result =>
             {
-                return result.GroupId != 0 &&
-                    senderInfos.TryGetValue(new SearchMessageKey(result.GroupId, result.MessageSeq), out var senderInfo)
+                return senderInfos.TryGetValue(new SearchMessageKey(result.ConversationType, result.GroupId, result.PrivateConversationId, result.MessageSeq), out var senderInfo)
                     ? ApplySenderInfo(result, senderInfo)
                     : result;
             })
@@ -314,6 +320,7 @@ internal sealed class ConversationMessageSearchWorkflow
     {
         return new AvaGroupMessageSearchResult
         {
+            ConversationType = result.ConversationType,
             MessageId = result.MessageId,
             MessageSeq = result.MessageSeq,
             MessageTime = result.MessageTime,
@@ -321,6 +328,9 @@ internal sealed class ConversationMessageSearchWorkflow
             PrivateConversationId = result.PrivateConversationId,
             PeerUin = result.PeerUin,
             IcalinguaRoomId = result.IcalinguaRoomId,
+            PCQQTableName = result.PCQQTableName,
+            AndroidMobileQQTableName = result.AndroidMobileQQTableName,
+            AndroidMobileQQPeerUin = result.AndroidMobileQQPeerUin,
             GroupName = result.GroupName,
             PeerUid = result.PeerUid,
             SenderUid = result.SenderUid,

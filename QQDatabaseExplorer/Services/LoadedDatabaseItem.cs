@@ -14,6 +14,7 @@ public enum LoadedDatabaseItemKind
     GroupInfoDb,
     ProfileInfoDb,
     GroupMessageFtsDb,
+    BuddyMessageFtsDb,
     NtDataPath,
     MobileQQPath,
     AndroidQQNtChatPicPath,

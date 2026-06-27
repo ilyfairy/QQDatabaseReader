@@ -12,19 +12,21 @@ internal sealed record QQNtDatabaseRuntimeGroup(
     QQMessageReader? MessageDatabase,
     QQAndroidMessageReader? AndroidMessageDatabase,
     QQGroupMessageFtsReader? GroupMessageFtsDatabase,
+    QQGroupMessageFtsReader? BuddyMessageFtsDatabase,
     string? NtDataPath,
     string? AndroidMobileQQPath,
     string? AndroidChatPicPath,
     string? AndroidNtUid,
     string? AndroidRand)
 {
-    public static QQNtDatabaseRuntimeGroup Empty { get; } = new(null, null, null, null, null, null, null, null, null, null);
+    public static QQNtDatabaseRuntimeGroup Empty { get; } = new(null, null, null, null, null, null, null, null, null, null, null);
 
     public bool HasDatabases =>
         MessageDatabase is not null ||
         AndroidMessageDatabase is not null ||
         GroupInfoDatabase is not null ||
         GroupMessageFtsDatabase is not null ||
+        BuddyMessageFtsDatabase is not null ||
         ProfileInfoDatabase is not null;
 
     public IEnumerable<IQQDatabase> DatabasesForRemoval
@@ -33,6 +35,8 @@ internal sealed record QQNtDatabaseRuntimeGroup(
         {
             if (GroupMessageFtsDatabase is not null)
                 yield return GroupMessageFtsDatabase;
+            if (BuddyMessageFtsDatabase is not null)
+                yield return BuddyMessageFtsDatabase;
             if (ProfileInfoDatabase is not null)
                 yield return ProfileInfoDatabase;
             if (MessageDatabase is not null)
@@ -54,6 +58,7 @@ internal sealed record QQNtDatabaseRuntimeGroup(
                 prepared.MessageDatabase,
                 prepared.AndroidMessageDatabase,
                 prepared.GroupMessageFtsDatabase,
+                prepared.BuddyMessageFtsDatabase,
                 prepared.NtDataPath,
                 prepared.AndroidMobileQQPath,
                 prepared.AndroidChatPicPath,
@@ -74,6 +79,11 @@ internal sealed record QQNtDatabaseRuntimeGroup(
     public QQNtDatabaseRuntimeGroup WithGroupMessageFtsDatabase(QQGroupMessageFtsReader database)
     {
         return this with { GroupMessageFtsDatabase = database };
+    }
+
+    public QQNtDatabaseRuntimeGroup WithBuddyMessageFtsDatabase(QQGroupMessageFtsReader database)
+    {
+        return this with { BuddyMessageFtsDatabase = database };
     }
 
     public QQNtDatabaseRuntimeGroup WithMessageDatabase(QQMessageReader database, string? ntDataPath)
@@ -113,6 +123,11 @@ internal sealed record QQNtDatabaseRuntimeGroup(
         return this with { GroupMessageFtsDatabase = null };
     }
 
+    public QQNtDatabaseRuntimeGroup WithoutBuddyMessageFtsDatabase()
+    {
+        return this with { BuddyMessageFtsDatabase = null };
+    }
+
     public QQNtDatabaseRuntimeGroup WithoutMessageDatabase()
     {
         return this with
@@ -148,6 +163,8 @@ internal sealed record QQNtDatabaseRuntimeGroup(
             GroupInfoDbPassword = GroupInfoDatabase?.RawDatabase.CipherPassword,
             GroupMessageFtsDbPath = GroupMessageFtsDatabase?.RawDatabase.DatabaseFilePath,
             GroupMessageFtsDbPassword = GroupMessageFtsDatabase?.RawDatabase.CipherPassword,
+            BuddyMessageFtsDbPath = BuddyMessageFtsDatabase?.RawDatabase.DatabaseFilePath,
+            BuddyMessageFtsDbPassword = BuddyMessageFtsDatabase?.RawDatabase.CipherPassword,
             ProfileInfoDbPath = ProfileInfoDatabase?.RawDatabase.DatabaseFilePath,
             ProfileInfoDbPassword = ProfileInfoDatabase?.RawDatabase.CipherPassword,
         };
@@ -169,6 +186,8 @@ internal sealed record QQNtDatabaseRuntimeGroup(
                     GroupInfoDbPassword = qqnt.GroupInfoDbPassword,
                     GroupMessageFtsDbPath = qqnt.GroupMessageFtsDbPath,
                     GroupMessageFtsDbPassword = qqnt.GroupMessageFtsDbPassword,
+                    BuddyMessageFtsDbPath = qqnt.BuddyMessageFtsDbPath,
+                    BuddyMessageFtsDbPassword = qqnt.BuddyMessageFtsDbPassword,
                     ProfileInfoDbPath = qqnt.ProfileInfoDbPath,
                     ProfileInfoDbPassword = qqnt.ProfileInfoDbPassword,
                 },

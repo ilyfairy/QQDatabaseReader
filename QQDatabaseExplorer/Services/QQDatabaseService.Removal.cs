@@ -107,6 +107,13 @@ public partial class QQDatabaseService
             return true;
         }
 
+        if (qqDatabase.Equals(BuddyMessageFtsDatabase))
+        {
+            _qqNtDatabases = _qqNtDatabases.WithoutBuddyMessageFtsDatabase();
+            ClearQQNTConfigItem(LoadedDatabaseItemKind.BuddyMessageFtsDb);
+            return true;
+        }
+
         if (qqDatabase.Equals(ProfileInfoDatabase))
         {
             _qqNtDatabases = _qqNtDatabases.WithoutProfileInfoDatabase();
@@ -192,6 +199,7 @@ public partial class QQDatabaseService
             case LoadedDatabaseItemKind.GroupInfoDb:
             case LoadedDatabaseItemKind.ProfileInfoDb:
             case LoadedDatabaseItemKind.GroupMessageFtsDb:
+            case LoadedDatabaseItemKind.BuddyMessageFtsDb:
                 ClearQQNTConfigItem(item.Kind);
                 break;
         }

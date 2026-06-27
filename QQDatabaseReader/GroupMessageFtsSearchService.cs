@@ -9,16 +9,23 @@ namespace QQDatabaseReader;
 
 public sealed class GroupMessageFtsSearchService
 {
+    private const string DefaultContentTableName = "group_msg_fts";
     private const int DetailLookupBatchSize = 500;
     private const int GroupFilterScanPageSize = 5000;
     private const int GroupFilterScanMultiplier = 50;
     private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
     private readonly QQGroupMessageFtsDbContext _dbContext;
+    private readonly string _contentTableName;
+    private readonly string _ftsTableName;
     private readonly object _gate = new();
 
-    public GroupMessageFtsSearchService(QQGroupMessageFtsDbContext dbContext)
+    public GroupMessageFtsSearchService(
+        QQGroupMessageFtsDbContext dbContext,
+        string contentTableName = DefaultContentTableName)
     {
         _dbContext = dbContext;
+        _contentTableName = ValidateTableName(contentTableName);
+        _ftsTableName = _contentTableName + "_fts";
     }
 
     public IReadOnlyList<GroupMessageFtsSearchResult> Search(GroupMessageFtsSearchRequest request)
@@ -120,7 +127,7 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static IReadOnlyList<GroupMessageFtsSearchResult> SearchNewest(
+    private IReadOnlyList<GroupMessageFtsSearchResult> SearchNewest(
         DbConnection connection,
         string matchQuery,
         GroupMessageFtsSearchRequest request,
@@ -167,7 +174,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static IReadOnlyList<GroupMessageFtsSearchResult> SearchByRank(
+    private IReadOnlyList<GroupMessageFtsSearchResult> SearchByRank(
         DbConnection connection,
         string matchQuery,
         GroupMessageFtsSearchRequest request,
@@ -200,7 +207,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static IReadOnlyList<long> ReadAllMatchRowIds(
+    private IReadOnlyList<long> ReadAllMatchRowIds(
         DbConnection connection,
         string matchQuery,
         long? beforeRowId)
@@ -221,7 +228,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static IReadOnlyList<long> ReadMatchRowIds(
+    private IReadOnlyList<long> ReadMatchRowIds(
         DbConnection connection,
         string matchQuery,
         long? beforeRowId,
@@ -246,7 +253,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static IReadOnlyList<GroupMessageFtsSearchResult> LoadSearchResultsByRowIds(
+    private IReadOnlyList<GroupMessageFtsSearchResult> LoadSearchResultsByRowIds(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         bool includeUnreadableRows)
@@ -277,7 +284,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static IReadOnlyList<GroupMessageFtsMatchScanRow> LoadMatchScanRowsByRowIds(
+    private IReadOnlyList<GroupMessageFtsMatchScanRow> LoadMatchScanRowsByRowIds(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         bool includeUnreadableRows)
@@ -308,7 +315,7 @@ public sealed class GroupMessageFtsSearchService
         return results;
     }
 
-    private static void ReadSearchResultBatch(
+    private void ReadSearchResultBatch(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         Dictionary<long, GroupMessageFtsSearchResult> rowMap)
@@ -325,7 +332,7 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static void RepairMissingSearchResultRows(
+    private void RepairMissingSearchResultRows(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         Dictionary<long, GroupMessageFtsSearchResult> rowMap)
@@ -339,7 +346,7 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static void ReadMatchScanBatch(
+    private void ReadMatchScanBatch(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         Dictionary<long, GroupMessageFtsMatchScanRow> rowMap)
@@ -363,7 +370,7 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static void RepairMissingMatchScanRows(
+    private void RepairMissingMatchScanRows(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
         Dictionary<long, GroupMessageFtsMatchScanRow> rowMap)
@@ -377,7 +384,7 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
-    private static long CountConversationMatches(
+    private long CountConversationMatches(
         DbConnection connection,
         string matchQuery,
         uint? groupId,
@@ -495,12 +502,12 @@ public sealed class GroupMessageFtsSearchService
         };
     }
 
-    private static string CreateRowIdSearchSql(bool hasBeforeRowId)
+    private string CreateRowIdSearchSql(bool hasBeforeRowId)
     {
-        var sql = new StringBuilder("""
+        var sql = new StringBuilder($"""
 SELECT rowid
-FROM group_msg_fts_fts
-WHERE group_msg_fts_fts MATCH $query
+FROM {_ftsTableName}
+WHERE {_ftsTableName} MATCH $query
 
 """);
 
@@ -517,7 +524,7 @@ WHERE group_msg_fts_fts MATCH $query
         return sql.ToString();
     }
 
-    private static string CreateDetailLookupSql(int count)
+    private string CreateDetailLookupSql(int count)
     {
         return $"""
 SELECT
@@ -536,17 +543,17 @@ SELECT
     [41705],
     [41706],
     [41707]
-FROM group_msg_fts
+FROM {_contentTableName}
 WHERE rowid IN ({CreateRowIdParameterList(count)})
 """;
     }
 
-    private static string CreateGroupLookupSql(int count)
+    private string CreateGroupLookupSql(int count)
     {
         return $"""
 SELECT rowid, [40021], [40027]
        , [40010]
-FROM group_msg_fts
+FROM {_contentTableName}
 WHERE rowid IN ({CreateRowIdParameterList(count)})
 """;
     }
@@ -564,9 +571,9 @@ WHERE rowid IN ({CreateRowIdParameterList(count)})
         }
     }
 
-    private static string CreateRankSearchSql(GroupMessageFtsSearchRequest request)
+    private string CreateRankSearchSql(GroupMessageFtsSearchRequest request)
     {
-        var sql = new StringBuilder("""
+        var sql = new StringBuilder($"""
 SELECT
     rowid,
     [40001],
@@ -584,8 +591,8 @@ SELECT
     [41706],
     [41707],
     rank
-FROM group_msg_fts_fts
-WHERE group_msg_fts_fts MATCH $query
+FROM {_ftsTableName}
+WHERE {_ftsTableName} MATCH $query
 
 """);
 
@@ -635,12 +642,12 @@ WHERE group_msg_fts_fts MATCH $query
         };
     }
 
-    private static string CreateCountSql()
+    private string CreateCountSql()
     {
-        return """
+        return $"""
 SELECT count(*)
-FROM group_msg_fts_fts
-WHERE group_msg_fts_fts MATCH $query
+FROM {_ftsTableName}
+WHERE {_ftsTableName} MATCH $query
 
 """;
     }
@@ -655,6 +662,25 @@ WHERE group_msg_fts_fts MATCH $query
         return terms.Length == 0
             ? "\"\""
             : string.Join(" ", terms);
+    }
+
+    private static string ValidateTableName(string tableName)
+    {
+        if (string.IsNullOrWhiteSpace(tableName))
+            throw new ArgumentException("FTS table name cannot be empty.", nameof(tableName));
+
+        foreach (var item in tableName)
+        {
+            if (item is not (>= 'a' and <= 'z') &&
+                item is not (>= 'A' and <= 'Z') &&
+                item is not (>= '0' and <= '9') &&
+                item != '_')
+            {
+                throw new ArgumentException($"Invalid FTS table name: {tableName}", nameof(tableName));
+            }
+        }
+
+        return tableName;
     }
 
     private static void AddParameter(DbCommand command, string name, object value)

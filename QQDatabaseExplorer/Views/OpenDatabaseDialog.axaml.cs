@@ -153,6 +153,12 @@ public partial class OpenDatabaseDialog : Window
             ViewModel.UsePickedNtGroupMessageFtsDbPath(filePath);
     }
 
+    private async void PickNtBuddyMessageFtsDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (await PickDatabaseFileAsync("选择 buddy_msg_fts.db") is { } filePath)
+            ViewModel.UsePickedNtBuddyMessageFtsDbPath(filePath);
+    }
+
     private async void PickNtProfileInfoDbButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (await PickDatabaseFileAsync("选择 profile_info.db") is { } filePath)

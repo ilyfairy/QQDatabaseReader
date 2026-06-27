@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -18,6 +19,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     private readonly ConversationMessageSearchProviderFactory _searchProviderFactory;
     private readonly ConversationMessageSearchWorkflow _searchWorkflow;
     private readonly ConversationSearchResultNavigator _resultNavigator;
+    private readonly MessageTabViewModel _messageTabViewModel;
     private readonly ObservableList<AvaGroupMessageSearchGroup> _groups = new();
     private readonly ObservableList<AvaGroupMessageSearchResult> _results = new();
     private readonly ConversationMessageSearchResultStore _resultStore;
@@ -26,6 +28,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     private bool _isLoadingMore;
     private bool _suppressSelectedGroupRefresh;
     private int _lastVisibleResultCount;
+    private string? _visibleGroupKey;
 
     public NotifyCollectionChangedSynchronizedViewList<AvaGroupMessageSearchGroup> Groups { get; }
     public NotifyCollectionChangedSynchronizedViewList<AvaGroupMessageSearchResult> Results { get; }
@@ -62,6 +65,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         MessageTabViewModel messageTabViewModel,
         MainViewModel mainViewModel)
     {
+        _messageTabViewModel = messageTabViewModel;
         _resultNavigator = new ConversationSearchResultNavigator(messageTabViewModel, mainViewModel);
         _resultStore = new ConversationMessageSearchResultStore(_groups);
         Groups = _groups.ToNotifyCollectionChanged();
@@ -88,6 +92,11 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     public async Task OpenResultInMessageTabAndClearFilterAsync(AvaGroupMessageSearchResult result)
     {
         await _resultNavigator.OpenAsync(result, clearMessageFilter: true);
+    }
+
+    public Task<MessageCopyPayload> CreateSearchResultCopyPayloadAsync(AvaGroupMessageSearchResult result)
+    {
+        return _messageTabViewModel.CreateSearchResultCopyPayloadAsync(result);
     }
 
     partial void OnIsSearchingChanged(bool value)
@@ -266,7 +275,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     private void ResetSearchResultState()
     {
         _resultStore.Clear();
-        _results.Clear();
+        ClearVisibleResults();
         _lastVisibleResultCount = 0;
         OnPropertyChanged(nameof(ShowSearchOverlay));
         OnPropertyChanged(nameof(ShowInlineSearchProgress));
@@ -281,12 +290,15 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
 
     private async Task RefreshVisibleResultsAsync(AvaGroupMessageSearchGroup? selectedGroup, int version)
     {
-        _results.Clear();
-        _lastVisibleResultCount = 0;
-        OnPropertyChanged(nameof(ShowSearchOverlay));
-        OnPropertyChanged(nameof(ShowInlineSearchProgress));
         if (selectedGroup is null)
+        {
+            ClearVisibleResults();
             return;
+        }
+
+        var selectedGroupKey = ConversationMessageSearchResultStore.GetGroupKey(selectedGroup);
+        if (!string.Equals(_visibleGroupKey, selectedGroupKey, StringComparison.Ordinal))
+            ClearVisibleResults(selectedGroupKey);
 
         if (_searchWorkflow.ShouldLoadConversationPage(selectedGroup, _searchSession.DatabaseKind))
         {
@@ -324,8 +336,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         if (!_versionTracker.IsCurrentVisibleResultsRefresh(version, SelectedGroup, selectedGroup))
             return;
 
-        _results.Clear();
-        _results.AddRange(enrichedResults);
+        ApplyVisibleResults(enrichedResults);
         _lastVisibleResultCount = _results.Count;
         OnPropertyChanged(nameof(ShowSearchOverlay));
         OnPropertyChanged(nameof(ShowInlineSearchProgress));
@@ -414,6 +425,65 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         }
 
         await RefreshVisibleResultsAsync(SelectedGroup, _versionTracker.BeginVisibleResultsRefresh());
+    }
+
+    private void ClearVisibleResults(string? visibleGroupKey = null)
+    {
+        _results.Clear();
+        _lastVisibleResultCount = 0;
+        _visibleGroupKey = visibleGroupKey;
+        OnPropertyChanged(nameof(ShowSearchOverlay));
+        OnPropertyChanged(nameof(ShowInlineSearchProgress));
+    }
+
+    private void ApplyVisibleResults(IReadOnlyList<AvaGroupMessageSearchResult> results)
+    {
+        if (_results.Count <= results.Count && HasSameResultPrefix(results))
+        {
+            for (var index = 0; index < _results.Count; index++)
+            {
+                if (!HasSameResultDisplay(_results[index], results[index]))
+                    _results[index] = results[index];
+            }
+
+            _results.AddRange(results.Skip(_results.Count));
+            return;
+        }
+
+        _results.Clear();
+        _results.AddRange(results);
+    }
+
+    private bool HasSameResultPrefix(IReadOnlyList<AvaGroupMessageSearchResult> results)
+    {
+        for (var index = 0; index < _results.Count; index++)
+        {
+            if (!IsSameResult(_results[index], results[index]))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsSameResult(AvaGroupMessageSearchResult left, AvaGroupMessageSearchResult right)
+    {
+        return left.ConversationType == right.ConversationType &&
+            left.GroupId == right.GroupId &&
+            left.PrivateConversationId == right.PrivateConversationId &&
+            left.IcalinguaRoomId == right.IcalinguaRoomId &&
+            left.PeerUin == right.PeerUin &&
+            left.MessageId == right.MessageId &&
+            left.MessageSeq == right.MessageSeq;
+    }
+
+    private static bool HasSameResultDisplay(AvaGroupMessageSearchResult left, AvaGroupMessageSearchResult right)
+    {
+        return left.SenderId == right.SenderId &&
+            string.Equals(left.SenderName, right.SenderName, StringComparison.Ordinal) &&
+            string.Equals(left.SenderUid, right.SenderUid, StringComparison.Ordinal) &&
+            string.Equals(left.GroupName, right.GroupName, StringComparison.Ordinal) &&
+            string.Equals(left.PeerUid, right.PeerUid, StringComparison.Ordinal) &&
+            string.Equals(left.PreviewText, right.PreviewText, StringComparison.Ordinal);
     }
 
 }

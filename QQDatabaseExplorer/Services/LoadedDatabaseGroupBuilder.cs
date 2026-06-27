@@ -199,6 +199,7 @@ internal static class LoadedDatabaseGroupBuilder
         AddDisplayItem(items, "group_info.db", qqnt.GroupInfoDbPath, qqNtDatabases.GroupInfoDatabase, LoadedDatabaseItemKind.GroupInfoDb);
         AddDisplayItem(items, "profile_info.db", qqnt.ProfileInfoDbPath, qqNtDatabases.ProfileInfoDatabase, LoadedDatabaseItemKind.ProfileInfoDb);
         AddDisplayItem(items, "group_msg_fts.db", qqnt.GroupMessageFtsDbPath, qqNtDatabases.GroupMessageFtsDatabase, LoadedDatabaseItemKind.GroupMessageFtsDb);
+        AddDisplayItem(items, "buddy_msg_fts.db", qqnt.BuddyMessageFtsDbPath, qqNtDatabases.BuddyMessageFtsDatabase, LoadedDatabaseItemKind.BuddyMessageFtsDb);
 
         if (config.Type is DatabasePlatformType.AndroidQQNT && config.AndroidQQNT is { } android)
         {
@@ -226,7 +227,9 @@ internal static class LoadedDatabaseGroupBuilder
         if (database.ProfileInfoDatabase is not null)
             items.Add(new LoadedDatabaseItem(database.ProfileInfoDatabase));
         if (database.GroupMessageFtsDatabase is not null)
-            items.Add(new LoadedDatabaseItem(database.GroupMessageFtsDatabase));
+            items.Add(new LoadedDatabaseItem("group_msg_fts.db", database.GroupMessageFtsDatabase.DatabaseFilePath, database.GroupMessageFtsDatabase, LoadedDatabaseItemKind.GroupMessageFtsDb));
+        if (database.BuddyMessageFtsDatabase is not null)
+            items.Add(new LoadedDatabaseItem("buddy_msg_fts.db", database.BuddyMessageFtsDatabase.DatabaseFilePath, database.BuddyMessageFtsDatabase, LoadedDatabaseItemKind.BuddyMessageFtsDb));
         if (!string.IsNullOrWhiteSpace(database.AndroidMobileQQPath))
             items.Add(new LoadedDatabaseItem("MobileQQ", database.AndroidMobileQQPath, null, LoadedDatabaseItemKind.MobileQQPath));
         if (!string.IsNullOrWhiteSpace(database.AndroidChatPicPath))

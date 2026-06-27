@@ -63,6 +63,10 @@ public partial class QQDatabaseService
                 qqnt.GroupMessageFtsDbPath = null;
                 qqnt.GroupMessageFtsDbPassword = null;
                 break;
+            case LoadedDatabaseItemKind.BuddyMessageFtsDb:
+                qqnt.BuddyMessageFtsDbPath = null;
+                qqnt.BuddyMessageFtsDbPassword = null;
+                break;
             case LoadedDatabaseItemKind.NtDataPath:
                 qqnt.NtDataPath = null;
                 break;

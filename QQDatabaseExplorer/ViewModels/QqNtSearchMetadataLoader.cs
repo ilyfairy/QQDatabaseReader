@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
+using QQDatabaseExplorer.ViewModels.MessageTab;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
 
@@ -12,6 +13,7 @@ internal sealed class QqNtSearchMetadataLoader
     private readonly QQDatabaseService _qqDatabaseService;
     private readonly object _messageDatabaseGate = new();
     private readonly object _groupInfoDatabaseGate = new();
+    private ProfileInfoNameCache? _profileInfoNames;
 
     public QqNtSearchMetadataLoader(QQDatabaseService qqDatabaseService)
     {
@@ -118,48 +120,11 @@ internal sealed class QqNtSearchMetadataLoader
         if (messageDatabase is null || results.Count == 0)
             return new Dictionary<SearchMessageKey, SearchSenderInfo>();
 
-        var groupIds = results
-            .Select(result => result.GroupId)
-            .Where(groupId => groupId != 0)
-            .Distinct()
-            .ToArray();
-        var messageSeqs = results
-            .Select(result => result.MessageSeq)
-            .Where(messageSeq => messageSeq > 0)
-            .Distinct()
-            .ToArray();
-
-        if (groupIds.Length == 0 || messageSeqs.Length == 0)
-            return new Dictionary<SearchMessageKey, SearchSenderInfo>();
-
         var senderInfos = new Dictionary<SearchMessageKey, SearchSenderInfo>();
         lock (_messageDatabaseGate)
         {
-            foreach (var messageSeqBatch in messageSeqs.Chunk(500))
-            {
-                var messages = messageDatabase.DbContext.GroupMessages
-                    .Where(message => groupIds.Contains(message.GroupId))
-                    .Where(message => messageSeqBatch.Contains(message.MessageSeq))
-                    .Select(message => new
-                    {
-                        message.GroupId,
-                        message.MessageSeq,
-                        message.SenderId,
-                        message.SendMemberName,
-                        message.SendNickName,
-                    })
-                    .ToList();
-
-                foreach (var message in messages)
-                {
-                    var key = new SearchMessageKey(message.GroupId, message.MessageSeq);
-                    senderInfos.TryAdd(
-                        key,
-                        new SearchSenderInfo(
-                            message.SenderId,
-                            FirstNonEmpty(message.SendMemberName, message.SendNickName)));
-                }
-            }
+            AddGroupSenderInfos(messageDatabase, results, senderInfos);
+            AddPrivateSenderInfos(messageDatabase, results, senderInfos);
         }
 
         return senderInfos;
@@ -237,6 +202,106 @@ internal sealed class QqNtSearchMetadataLoader
         }
     }
 
+    private static void AddGroupSenderInfos(
+        QQMessageReader messageDatabase,
+        IReadOnlyCollection<AvaGroupMessageSearchResult> results,
+        Dictionary<SearchMessageKey, SearchSenderInfo> senderInfos)
+    {
+        var groupIds = results
+            .Where(static result => result.ConversationType == AvaConversationType.Group)
+            .Select(static result => result.GroupId)
+            .Where(static groupId => groupId != 0)
+            .Distinct()
+            .ToArray();
+        var messageSeqs = results
+            .Where(static result => result.ConversationType == AvaConversationType.Group)
+            .Select(static result => result.MessageSeq)
+            .Where(static messageSeq => messageSeq > 0)
+            .Distinct()
+            .ToArray();
+
+        if (groupIds.Length == 0 || messageSeqs.Length == 0)
+            return;
+
+        foreach (var messageSeqBatch in messageSeqs.Chunk(500))
+        {
+            var messages = messageDatabase.DbContext.GroupMessages
+                .Where(message => groupIds.Contains(message.GroupId))
+                .Where(message => messageSeqBatch.Contains(message.MessageSeq))
+                .Select(message => new
+                {
+                    message.GroupId,
+                    message.MessageSeq,
+                    message.SenderId,
+                    message.SendMemberName,
+                    message.SendNickName,
+                })
+                .ToList();
+
+            foreach (var message in messages)
+            {
+                var key = new SearchMessageKey(AvaConversationType.Group, message.GroupId, 0, message.MessageSeq);
+                senderInfos.TryAdd(
+                    key,
+                    new SearchSenderInfo(
+                        message.SenderId,
+                        FirstNonEmpty(message.SendMemberName, message.SendNickName)));
+            }
+        }
+    }
+
+    private void AddPrivateSenderInfos(
+        QQMessageReader messageDatabase,
+        IReadOnlyCollection<AvaGroupMessageSearchResult> results,
+        Dictionary<SearchMessageKey, SearchSenderInfo> senderInfos)
+    {
+        var conversationIds = results
+            .Where(static result => result.ConversationType == AvaConversationType.Private)
+            .Select(static result => result.PrivateConversationId)
+            .Where(static conversationId => conversationId != 0)
+            .Distinct()
+            .ToArray();
+        var messageSeqs = results
+            .Where(static result => result.ConversationType == AvaConversationType.Private)
+            .Select(static result => result.MessageSeq)
+            .Where(static messageSeq => messageSeq > 0)
+            .Distinct()
+            .ToArray();
+
+        if (conversationIds.Length == 0 || messageSeqs.Length == 0)
+            return;
+
+        foreach (var messageSeqBatch in messageSeqs.Chunk(500))
+        {
+            var messages = messageDatabase.DbContext.PrivateMessages
+                .Where(message => conversationIds.Contains(message.ConversationId))
+                .Where(message => messageSeqBatch.Contains(message.MessageSeq))
+                .Select(message => new
+                {
+                    message.ConversationId,
+                    message.MessageSeq,
+                    message.SenderId,
+                    message.SenderUid,
+                    message.SendMemberName,
+                    message.SendNickName,
+                })
+                .ToList();
+
+            foreach (var message in messages)
+            {
+                var key = new SearchMessageKey(AvaConversationType.Private, 0, message.ConversationId, message.MessageSeq);
+                senderInfos.TryAdd(
+                    key,
+                    new SearchSenderInfo(
+                        message.SenderId,
+                        FirstNonEmpty(
+                            message.SendMemberName,
+                            message.SendNickName,
+                            ResolveProfileDisplayName(message.SenderId, message.SenderUid, string.Empty))));
+            }
+        }
+    }
+
     private static void AddPrivateConversationIdsByPeerUin(
         IQueryable<PrivateMessage> messages,
         uint peerUin,
@@ -255,7 +320,7 @@ internal sealed class QqNtSearchMetadataLoader
         }
     }
 
-    private static void AddPrivateConversationInfos(
+    private void AddPrivateConversationInfos(
         IQueryable<PrivateMessage> messages,
         IReadOnlyCollection<long> conversationIds,
         Dictionary<long, PrivateConversationInfo> result)
@@ -271,18 +336,40 @@ internal sealed class QqNtSearchMetadataLoader
                     ConversationId = group.Key,
                     PeerUin = group.Max(message => message.PeerUin),
                     PeerUid = group.Max(message => message.PeerUid),
-                    Name = group.Max(message => message.SendNickName),
+                    Name = string.Empty,
                 })
                 .ToList();
 
             foreach (var row in rows)
             {
+                var name = ResolveProfileDisplayName(row.PeerUin, row.PeerUid, string.Empty);
                 result[row.ConversationId] = new PrivateConversationInfo(
                     row.PeerUin,
                     row.PeerUid,
-                    row.Name);
+                    name);
             }
         }
+    }
+
+    private string ResolveProfileDisplayName(uint uin, string? ntUid, string fallback)
+    {
+        var cache = GetProfileInfoNameCache();
+        return cache.TryGetName(uin, ntUid, out var name)
+            ? name
+            : fallback;
+    }
+
+    private ProfileInfoNameCache GetProfileInfoNameCache()
+    {
+        var database = _qqDatabaseService.ProfileInfoDatabase;
+        if (_profileInfoNames is { } cache &&
+            ReferenceEquals(cache.Database, database))
+        {
+            return cache;
+        }
+
+        _profileInfoNames = ProfileInfoNameCache.Create(database);
+        return _profileInfoNames;
     }
 
     private static string? FirstNonEmpty(params string?[] values)

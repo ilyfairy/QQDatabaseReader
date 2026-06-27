@@ -5,7 +5,11 @@ using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.ViewModels;
 
-internal readonly record struct SearchMessageKey(uint GroupId, long MessageSeq);
+internal readonly record struct SearchMessageKey(
+    AvaConversationType ConversationType,
+    uint GroupId,
+    long PrivateConversationId,
+    long MessageSeq);
 
 internal readonly record struct SearchSenderInfo(uint SenderId, string? Name);
 
@@ -16,6 +20,7 @@ internal sealed record SearchPage(
 
 internal sealed record SearchCursor(
     long? QqNtBeforeRowId = null,
+    long? QqNtBuddyBeforeRowId = null,
     IcalinguaMessageSearchCursor? IcalinguaCursor = null,
     PCQQMessageSearchCursor? PCQQCursor = null,
     AndroidMobileQQMessageSearchCursor? AndroidMobileQQCursor = null,

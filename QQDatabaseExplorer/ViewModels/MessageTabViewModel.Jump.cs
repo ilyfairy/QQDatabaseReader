@@ -8,6 +8,33 @@ namespace QQDatabaseExplorer.ViewModels;
 
 public partial class MessageTabViewModel
 {
+    public async Task<MessageCopyPayload> CreateSearchResultCopyPayloadAsync(AvaGroupMessageSearchResult result)
+    {
+        if (!result.CanLocate)
+            return MessageCopyPayload.Empty;
+
+        var conversation = CreateSearchResultConversation(result);
+        if (conversation is null || !_databaseAvailability.HasMessageDatabase(conversation))
+            return MessageCopyPayload.Empty;
+
+        var page = await _messageDatabaseQueryRunner.RunAsync(() =>
+        {
+            var targetMessage = LoadSearchResultTargetMessage(conversation, result);
+            return targetMessage is null
+                ? null
+                : _messagePageLoader.CreatePage(conversation, [targetMessage], 1);
+        });
+        if (page is null)
+            return MessageCopyPayload.Empty;
+
+        var messages = await _messagePageDisplayBuilder.CreateAsync(conversation, page);
+        var message = messages.FirstOrDefault(message => IsSearchResultTargetMessage(message, result)) ??
+                      messages.FirstOrDefault();
+        return message is null
+            ? MessageCopyPayload.Empty
+            : MessageCopyPayload.FromMessage(message);
+    }
+
     public async Task JumpToReplyMessageAsync(AvaQQMessage sourceMessage)
     {
         if (sourceMessage.Reply is not { } reply)
@@ -478,6 +505,96 @@ public partial class MessageTabViewModel
         _messageFilterState.Clear(conversation);
         if (SelectedGroup?.ConversationKey == conversation.ConversationKey)
             MessageFilter = MessageFilterCriteria.Empty;
+    }
+
+    private MessageRecord? LoadSearchResultTargetMessage(
+        AvaQQGroup conversation,
+        AvaGroupMessageSearchResult result)
+    {
+        if (conversation.ConversationType == AvaConversationType.Group)
+        {
+            return _databaseAvailability.HasQQNtMessageDatabase
+                ? _jumpTargetResolver.ResolveGroupTarget(result.GroupId, result.MessageId, result.MessageSeq)
+                : null;
+        }
+
+        if (conversation.ConversationType == AvaConversationType.Private)
+        {
+            return _databaseAvailability.HasQQNtMessageDatabase
+                ? _jumpTargetResolver.ResolvePrivateTarget(
+                    result.PrivateConversationId,
+                    [result.MessageId],
+                    [],
+                    [result.MessageSeq])
+                : null;
+        }
+
+        var query = new MessageTimelineQuery(new QQDatabaseServiceMessageDatabaseSource(_qqDatabaseService));
+        return query.LoadMessageById(conversation, result.MessageSeq, result.MessageId, MessageFilterCriteria.Empty);
+    }
+
+    private static AvaQQGroup? CreateSearchResultConversation(AvaGroupMessageSearchResult result)
+    {
+        return result.ConversationType switch
+        {
+            AvaConversationType.Group when result.GroupId != 0 => new AvaQQGroup
+            {
+                ConversationType = AvaConversationType.Group,
+                GroupId = result.GroupId,
+                GroupName = result.GroupName,
+            },
+            AvaConversationType.Private when result.PrivateConversationId != 0 => new AvaQQGroup
+            {
+                ConversationType = AvaConversationType.Private,
+                PrivateConversationId = result.PrivateConversationId,
+                PrivateUin = result.PeerUin,
+                PrivateUid = result.PeerUid,
+                GroupName = result.GroupName,
+            },
+            AvaConversationType.PCQQGroup when result.GroupId != 0 && !string.IsNullOrWhiteSpace(result.PCQQTableName) => new AvaQQGroup
+            {
+                ConversationType = AvaConversationType.PCQQGroup,
+                GroupId = result.GroupId,
+                PCQQTableName = result.PCQQTableName,
+                GroupName = result.GroupName,
+            },
+            AvaConversationType.PCQQPrivate when result.PeerUin != 0 && !string.IsNullOrWhiteSpace(result.PCQQTableName) => new AvaQQGroup
+            {
+                ConversationType = AvaConversationType.PCQQPrivate,
+                PrivateUin = result.PeerUin,
+                PCQQTableName = result.PCQQTableName,
+                GroupName = result.GroupName,
+            },
+            AvaConversationType.AndroidMobileQQGroup or AvaConversationType.AndroidMobileQQPrivate
+                when !string.IsNullOrWhiteSpace(result.AndroidMobileQQPeerUin) &&
+                     !string.IsNullOrWhiteSpace(result.AndroidMobileQQTableName) => new AvaQQGroup
+            {
+                ConversationType = result.ConversationType,
+                GroupId = result.GroupId,
+                PrivateUin = result.PeerUin,
+                AndroidMobileQQTableName = result.AndroidMobileQQTableName,
+                AndroidMobileQQPeerUin = result.AndroidMobileQQPeerUin,
+                GroupName = result.GroupName,
+            },
+            AvaConversationType.Icalingua when result.IcalinguaRoomId != 0 => new AvaQQGroup
+            {
+                ConversationType = AvaConversationType.Icalingua,
+                IcalinguaRoomId = result.IcalinguaRoomId,
+                GroupName = result.GroupName,
+            },
+            _ => null,
+        };
+    }
+
+    private static bool IsSearchResultTargetMessage(AvaQQMessage message, AvaGroupMessageSearchResult result)
+    {
+        return message.MessageId == result.MessageId ||
+               message.MessageSeq == result.MessageSeq &&
+               result.ConversationType switch
+               {
+                   AvaConversationType.PCQQGroup or AvaConversationType.PCQQPrivate => message.MessageId == result.MessageId,
+                   _ => true,
+               };
     }
 
     private bool IsActiveConversationKey(string? conversationKey)

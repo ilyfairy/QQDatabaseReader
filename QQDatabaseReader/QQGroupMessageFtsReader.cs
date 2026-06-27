@@ -8,6 +8,9 @@ namespace QQDatabaseReader;
 
 public class QQGroupMessageFtsReader : IQQDatabase
 {
+    private const string DefaultContentTableName = "group_msg_fts";
+    private readonly string _contentTableName;
+
     public QQGroupMessageFtsDbContext DbContext { get; private set; } = null!;
     public GroupMessageFtsSearchService SearchService { get; private set; } = null!;
 
@@ -15,9 +18,13 @@ public class QQGroupMessageFtsReader : IQQDatabase
     public QQDatabaseType DatabaseType => QQDatabaseType.GroupMessageFts;
     public string DatabaseFilePath => RawDatabase.DatabaseFilePath;
 
-    public QQGroupMessageFtsReader(string databaseFilePath, bool useVFS = false)
+    public QQGroupMessageFtsReader(
+        string databaseFilePath,
+        bool useVFS = false,
+        string contentTableName = DefaultContentTableName)
     {
         RawDatabase = new(databaseFilePath, useVFS);
+        _contentTableName = contentTableName;
     }
 
     public QQGroupMessageFtsReader(
@@ -27,9 +34,11 @@ public class QQGroupMessageFtsReader : IQQDatabase
         HashAlgorithmName? cipherHmacAlgorithm = null,
         int cipherPageSize = 4096,
         int cipherKdfIter = 4000,
-        bool useVFS = true)
+        bool useVFS = true,
+        string contentTableName = DefaultContentTableName)
     {
         RawDatabase = new(databaseFilePath, cipherPassword, cipherKdfAlgorithm, cipherHmacAlgorithm, cipherPageSize, cipherKdfIter, useVFS);
+        _contentTableName = contentTableName;
     }
 
     public void Initialize()
@@ -41,7 +50,7 @@ public class QQGroupMessageFtsReader : IQQDatabase
         var optionsBuilder = new DbContextOptionsBuilder<QQGroupMessageFtsDbContext>();
         optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
         DbContext = new QQGroupMessageFtsDbContext(optionsBuilder.Options);
-        SearchService = new GroupMessageFtsSearchService(DbContext);
+        SearchService = new GroupMessageFtsSearchService(DbContext, _contentTableName);
     }
 
     public IReadOnlyList<GroupMessageFtsSearchResult> Search(GroupMessageFtsSearchRequest request)

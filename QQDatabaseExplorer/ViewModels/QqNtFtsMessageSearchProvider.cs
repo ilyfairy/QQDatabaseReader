@@ -9,14 +9,17 @@ namespace QQDatabaseExplorer.ViewModels;
 internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchProvider
 {
     private const int SearchPageSize = 100;
-    private readonly QQGroupMessageFtsReader _ftsDatabase;
+    private readonly QQGroupMessageFtsReader? _groupFtsDatabase;
+    private readonly QQGroupMessageFtsReader? _buddyFtsDatabase;
     private readonly QqNtSearchMetadataLoader _metadataLoader;
 
     public QqNtFtsMessageSearchProvider(
-        QQGroupMessageFtsReader ftsDatabase,
+        QQGroupMessageFtsReader? groupFtsDatabase,
+        QQGroupMessageFtsReader? buddyFtsDatabase,
         QqNtSearchMetadataLoader metadataLoader)
     {
-        _ftsDatabase = ftsDatabase;
+        _groupFtsDatabase = groupFtsDatabase;
+        _buddyFtsDatabase = buddyFtsDatabase;
         _metadataLoader = metadataLoader;
     }
 
@@ -32,6 +35,8 @@ internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchP
             filter.GroupOrPeerId,
             filter.GroupOrPeerId,
             filter.PrivateConversationIds,
+            searchGroupMessages: true,
+            searchBuddyMessages: true,
             cursor);
     }
 
@@ -43,8 +48,10 @@ internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchP
         return SearchPage(
             query,
             GetSelectedGroupFilter(conversation),
-            null,
+            conversation.PeerUin == 0 ? null : conversation.PeerUin,
             conversation.PrivateConversationId == 0 ? [] : [conversation.PrivateConversationId],
+            searchGroupMessages: conversation.ConversationType == AvaConversationType.Group,
+            searchBuddyMessages: conversation.ConversationType == AvaConversationType.Private,
             cursor);
     }
 
@@ -53,16 +60,19 @@ internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchP
         uint? groupId,
         uint? peerUin,
         IReadOnlyList<long> privateConversationIds,
+        bool searchGroupMessages,
+        bool searchBuddyMessages,
         SearchCursor? cursor)
     {
-        var results = _ftsDatabase.Search(new GroupMessageFtsSearchRequest(
+        var searchPage = SearchFtsDatabases(
             query,
             groupId,
-            SearchPageSize,
-            Order: GroupMessageFtsSearchOrder.Newest,
-            BeforeRowId: cursor?.QqNtBeforeRowId,
-            PrivateConversationIds: privateConversationIds,
-            PeerUin: peerUin));
+            peerUin,
+            privateConversationIds,
+            searchGroupMessages,
+            searchBuddyMessages,
+            cursor);
+        var results = searchPage.Results;
 
         var groupIds = results
             .Select(QqNtSearchMetadataLoader.GetSearchResultGroupId)
@@ -80,8 +90,82 @@ internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchP
 
         return new SearchPage(
             viewResults,
-            results.Count == SearchPageSize,
-            results.LastOrDefault() is { } lastResult ? new SearchCursor(QqNtBeforeRowId: lastResult.RowId) : null);
+            searchPage.HasMore,
+            searchPage.NextCursor);
+    }
+
+    private QqNtFtsPage SearchFtsDatabases(
+        string query,
+        uint? groupId,
+        uint? peerUin,
+        IReadOnlyList<long> privateConversationIds,
+        bool searchGroupMessages,
+        bool searchBuddyMessages,
+        SearchCursor? cursor)
+    {
+        var groupResults = searchGroupMessages
+            ? SearchGroupFts(query, groupId, cursor?.QqNtBeforeRowId)
+            : [];
+        var buddyResults = searchBuddyMessages
+            ? SearchBuddyFts(query, peerUin, privateConversationIds, cursor?.QqNtBuddyBeforeRowId)
+            : [];
+        if (groupResults.Count == 0 && buddyResults.Count == 0)
+            return new QqNtFtsPage([], false, null);
+
+        var mergedResults = groupResults
+            .Concat(buddyResults)
+            .OrderByDescending(static result => result.MessageTime)
+            .ThenByDescending(static result => result.MessageId)
+            .ThenByDescending(static result => result.RowId)
+            .ToList();
+
+        var lastGroupRowId = groupResults.Count == 0 ? null : (long?)groupResults[^1].RowId;
+        var lastBuddyRowId = buddyResults.Count == 0 ? null : (long?)buddyResults[^1].RowId;
+        var nextGroupCursor = lastGroupRowId ?? cursor?.QqNtBeforeRowId;
+        var nextBuddyCursor = lastBuddyRowId ?? cursor?.QqNtBuddyBeforeRowId;
+        var hasMore =
+            groupResults.Count == SearchPageSize ||
+            buddyResults.Count == SearchPageSize;
+
+        return new QqNtFtsPage(
+            mergedResults,
+            hasMore,
+            hasMore ? new SearchCursor(QqNtBeforeRowId: nextGroupCursor, QqNtBuddyBeforeRowId: nextBuddyCursor) : null);
+    }
+
+    private IReadOnlyList<GroupMessageFtsSearchResult> SearchGroupFts(
+        string query,
+        uint? groupId,
+        long? beforeRowId)
+    {
+        if (_groupFtsDatabase is null)
+            return [];
+
+        return _groupFtsDatabase.Search(new GroupMessageFtsSearchRequest(
+            query,
+            groupId,
+            SearchPageSize,
+            Order: GroupMessageFtsSearchOrder.Newest,
+            BeforeRowId: beforeRowId));
+    }
+
+    private IReadOnlyList<GroupMessageFtsSearchResult> SearchBuddyFts(
+        string query,
+        uint? peerUin,
+        IReadOnlyList<long> privateConversationIds,
+        long? beforeRowId)
+    {
+        if (_buddyFtsDatabase is null)
+            return [];
+
+        return _buddyFtsDatabase.Search(new GroupMessageFtsSearchRequest(
+            query,
+            GroupId: null,
+            Limit: SearchPageSize,
+            Order: GroupMessageFtsSearchOrder.Newest,
+            BeforeRowId: beforeRowId,
+            PrivateConversationIds: privateConversationIds,
+            PeerUin: peerUin));
     }
 
     private static uint? GetSelectedGroupFilter(AvaGroupMessageSearchGroup group)
@@ -89,3 +173,8 @@ internal sealed class QqNtFtsMessageSearchProvider : IConversationMessageSearchP
         return group.GroupId == 0 ? null : group.GroupId;
     }
 }
+
+internal sealed record QqNtFtsPage(
+    List<GroupMessageFtsSearchResult> Results,
+    bool HasMore,
+    SearchCursor? NextCursor);

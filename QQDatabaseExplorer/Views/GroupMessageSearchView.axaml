@@ -115,7 +115,11 @@
                     SelectionMode="Single">
                     <ListBox.DataTemplates>
                         <DataTemplate DataType="models:AvaGroupMessageSearchGroup">
-                            <Grid ColumnDefinitions="44 *" Margin="10,8">
+                            <Grid
+                                ColumnDefinitions="44 *"
+                                Margin="10,8"
+                                Background="Transparent"
+                                ContextRequested="SearchGroupItem_ContextRequested">
                                 <Grid Width="44" Height="44" VerticalAlignment="Center">
                                     <Border Background="#FFE8EAF0" CornerRadius="22" />
                                     <controls:AvatarImage

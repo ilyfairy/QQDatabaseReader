@@ -15,6 +15,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     private const string NtMessageDbFileName = "nt_msg.db";
     private const string NtGroupInfoDbFileName = "group_info.db";
     private const string NtGroupMessageFtsDbFileName = "group_msg_fts.db";
+    private const string NtBuddyMessageFtsDbFileName = "buddy_msg_fts.db";
     private const string NtProfileInfoDbFileName = "profile_info.db";
     private const string PCQQMessageDbFileName = "Msg3.0.db";
     private const string PCQQInfoDbFileName = "Info.db";
@@ -33,6 +34,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string NtGroupMessageFtsDbPath { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string NtBuddyMessageFtsDbPath { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial string NtProfileInfoDbPath { get; set; } = string.Empty;
@@ -66,6 +70,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string GroupMessageFtsDbKey { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string BuddyMessageFtsDbKey { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial string ProfileInfoDbKey { get; set; } = string.Empty;
@@ -171,6 +178,10 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         {
             NtGroupMessageFtsDbPath = databaseFilePath;
         }
+        else if (string.Equals(fileName, NtBuddyMessageFtsDbFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            NtBuddyMessageFtsDbPath = databaseFilePath;
+        }
         else if (string.Equals(fileName, NtProfileInfoDbFileName, StringComparison.OrdinalIgnoreCase))
         {
             NtProfileInfoDbPath = databaseFilePath;
@@ -249,6 +260,11 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     {
         NtGroupMessageFtsDbPath = databaseFilePath;
         TryCompleteNtDatabasePaths(databaseFilePath, NtGroupMessageFtsDbFileName);
+    }
+
+    public void UsePickedNtBuddyMessageFtsDbPath(string databaseFilePath)
+    {
+        NtBuddyMessageFtsDbPath = databaseFilePath;
     }
 
     public void UsePickedNtProfileInfoDbPath(string databaseFilePath)
@@ -394,6 +410,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(NtMessageDbPath) &&
             string.IsNullOrWhiteSpace(NtGroupInfoDbPath) &&
             string.IsNullOrWhiteSpace(NtGroupMessageFtsDbPath) &&
+            string.IsNullOrWhiteSpace(NtBuddyMessageFtsDbPath) &&
             string.IsNullOrWhiteSpace(NtProfileInfoDbPath))
         {
             await _dialogService.ShowMessageBox("请至少填写一个 QQNT 数据库路径", "错误", ViewModelToken);
@@ -403,7 +420,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         return await ValidateOptionalFileAsync(NtGroupInfoDbPath, "group_info.db 文件不存在") &&
                await ValidateOptionalFileAsync(NtProfileInfoDbPath, "profile_info.db 文件不存在") &&
                await ValidateOptionalFileAsync(NtMessageDbPath, "nt_msg.db 文件不存在") &&
-               await ValidateOptionalFileAsync(NtGroupMessageFtsDbPath, "group_msg_fts.db 文件不存在");
+               await ValidateOptionalFileAsync(NtGroupMessageFtsDbPath, "group_msg_fts.db 文件不存在") &&
+               await ValidateOptionalFileAsync(NtBuddyMessageFtsDbPath, "buddy_msg_fts.db 文件不存在");
     }
 
     private async Task<bool> ValidateRequiredFileAsync(string path, string emptyMessage, string missingMessage)
@@ -609,6 +627,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         GroupInfoDbKey = config.GroupInfoDbPassword ?? string.Empty;
         NtGroupMessageFtsDbPath = config.GroupMessageFtsDbPath ?? string.Empty;
         GroupMessageFtsDbKey = config.GroupMessageFtsDbPassword ?? string.Empty;
+        NtBuddyMessageFtsDbPath = config.BuddyMessageFtsDbPath ?? string.Empty;
+        BuddyMessageFtsDbKey = config.BuddyMessageFtsDbPassword ?? string.Empty;
         NtProfileInfoDbPath = config.ProfileInfoDbPath ?? string.Empty;
         ProfileInfoDbKey = config.ProfileInfoDbPassword ?? string.Empty;
         NtDataPath = config.NtDataPath ?? string.Empty;
@@ -662,6 +682,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             GroupInfoDbPassword = EmptyToNull(GroupInfoDbKey),
             GroupMessageFtsDbPath = EmptyToNull(NtGroupMessageFtsDbPath),
             GroupMessageFtsDbPassword = EmptyToNull(GroupMessageFtsDbKey),
+            BuddyMessageFtsDbPath = EmptyToNull(NtBuddyMessageFtsDbPath),
+            BuddyMessageFtsDbPassword = EmptyToNull(BuddyMessageFtsDbKey),
             ProfileInfoDbPath = EmptyToNull(NtProfileInfoDbPath),
             ProfileInfoDbPassword = EmptyToNull(ProfileInfoDbKey),
         };
@@ -689,6 +711,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 GroupInfoDbPassword = config.GroupInfoDbPassword,
                 GroupMessageFtsDbPath = config.GroupMessageFtsDbPath,
                 GroupMessageFtsDbPassword = config.GroupMessageFtsDbPassword,
+                BuddyMessageFtsDbPath = config.BuddyMessageFtsDbPath,
+                BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                 ProfileInfoDbPath = config.ProfileInfoDbPath,
                 ProfileInfoDbPassword = config.ProfileInfoDbPassword,
                 NtUid = EmptyToNull(NtUid),

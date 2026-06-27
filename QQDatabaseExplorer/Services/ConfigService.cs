@@ -164,6 +164,8 @@ public class ConfigService
                         GroupInfoDbPassword = config.AndroidQQNT.GroupInfoDbPassword,
                         GroupMessageFtsDbPath = CreatePortablePath(config.AndroidQQNT.GroupMessageFtsDbPath, configDirectory),
                         GroupMessageFtsDbPassword = config.AndroidQQNT.GroupMessageFtsDbPassword,
+                        BuddyMessageFtsDbPath = CreatePortablePath(config.AndroidQQNT.BuddyMessageFtsDbPath, configDirectory),
+                        BuddyMessageFtsDbPassword = config.AndroidQQNT.BuddyMessageFtsDbPassword,
                         ProfileInfoDbPath = CreatePortablePath(config.AndroidQQNT.ProfileInfoDbPath, configDirectory),
                         ProfileInfoDbPassword = config.AndroidQQNT.ProfileInfoDbPassword,
                     },
@@ -206,6 +208,8 @@ public class ConfigService
                         GroupInfoDbPassword = config.QQNT.GroupInfoDbPassword,
                         GroupMessageFtsDbPath = CreatePortablePath(config.QQNT.GroupMessageFtsDbPath, configDirectory),
                         GroupMessageFtsDbPassword = config.QQNT.GroupMessageFtsDbPassword,
+                        BuddyMessageFtsDbPath = CreatePortablePath(config.QQNT.BuddyMessageFtsDbPath, configDirectory),
+                        BuddyMessageFtsDbPassword = config.QQNT.BuddyMessageFtsDbPassword,
                         ProfileInfoDbPath = CreatePortablePath(config.QQNT.ProfileInfoDbPath, configDirectory),
                         ProfileInfoDbPassword = config.QQNT.ProfileInfoDbPassword,
                     },
@@ -263,6 +267,7 @@ public class ConfigService
         config.MessageDbPath = ResolveConfigPath(config.MessageDbPath, configDirectory);
         config.GroupInfoDbPath = ResolveConfigPath(config.GroupInfoDbPath, configDirectory);
         config.GroupMessageFtsDbPath = ResolveConfigPath(config.GroupMessageFtsDbPath, configDirectory);
+        config.BuddyMessageFtsDbPath = ResolveConfigPath(config.BuddyMessageFtsDbPath, configDirectory);
         config.ProfileInfoDbPath = ResolveConfigPath(config.ProfileInfoDbPath, configDirectory);
     }
 

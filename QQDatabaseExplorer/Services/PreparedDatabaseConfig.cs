@@ -14,6 +14,7 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
         QQMessageReader? messageDatabase,
         QQAndroidMessageReader? androidMessageDatabase,
         QQGroupMessageFtsReader? groupMessageFtsDatabase,
+        QQGroupMessageFtsReader? buddyMessageFtsDatabase,
         string? ntDataPath,
         string? androidMobileQQPath,
         string? androidChatPicPath,
@@ -25,6 +26,7 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
         MessageDatabase = messageDatabase;
         AndroidMessageDatabase = androidMessageDatabase;
         GroupMessageFtsDatabase = groupMessageFtsDatabase;
+        BuddyMessageFtsDatabase = buddyMessageFtsDatabase;
         NtDataPath = ntDataPath;
         AndroidMobileQQPath = androidMobileQQPath;
         AndroidChatPicPath = androidChatPicPath;
@@ -41,6 +43,8 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
     public QQAndroidMessageReader? AndroidMessageDatabase { get; }
 
     public QQGroupMessageFtsReader? GroupMessageFtsDatabase { get; }
+
+    public QQGroupMessageFtsReader? BuddyMessageFtsDatabase { get; }
 
     public string? NtDataPath { get; }
 
@@ -66,11 +70,14 @@ internal sealed class PreparedNtDatabaseGroup : IDisposable
                 yield return AndroidMessageDatabase;
             if (GroupMessageFtsDatabase is not null)
                 yield return GroupMessageFtsDatabase;
+            if (BuddyMessageFtsDatabase is not null)
+                yield return BuddyMessageFtsDatabase;
         }
     }
 
     public void Dispose()
     {
+        BuddyMessageFtsDatabase?.Dispose();
         GroupMessageFtsDatabase?.Dispose();
         ProfileInfoDatabase?.Dispose();
         MessageDatabase?.Dispose();
@@ -122,6 +129,8 @@ internal sealed class PreparedDatabaseConfig : IDisposable
     public QQAndroidMessageReader? AndroidMessageDatabase => NtDatabaseGroup?.AndroidMessageDatabase;
 
     public QQGroupMessageFtsReader? GroupMessageFtsDatabase => NtDatabaseGroup?.GroupMessageFtsDatabase;
+
+    public QQGroupMessageFtsReader? BuddyMessageFtsDatabase => NtDatabaseGroup?.BuddyMessageFtsDatabase;
 
     public PCQQMessageReader? PCQQMessageDatabase { get; }
 

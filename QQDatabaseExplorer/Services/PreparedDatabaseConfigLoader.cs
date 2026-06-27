@@ -36,6 +36,7 @@ internal static class PreparedDatabaseConfigLoader
         QQMessageReader? messageDatabase = null;
         QQAndroidMessageReader? androidMessageDatabase = null;
         QQGroupMessageFtsReader? groupMessageFtsDatabase = null;
+        QQGroupMessageFtsReader? buddyMessageFtsDatabase = null;
 
         try
         {
@@ -58,12 +59,16 @@ internal static class PreparedDatabaseConfigLoader
             if (!string.IsNullOrWhiteSpace(config.GroupMessageFtsDbPath))
                 groupMessageFtsDatabase = CreateGroupMessageFtsDatabase(config.GroupMessageFtsDbPath, config.GroupMessageFtsDbPassword);
 
+            if (!string.IsNullOrWhiteSpace(config.BuddyMessageFtsDbPath))
+                buddyMessageFtsDatabase = CreateBuddyMessageFtsDatabase(config.BuddyMessageFtsDbPath, config.BuddyMessageFtsDbPassword);
+
             var ntDatabases = new PreparedNtDatabaseGroup(
                 groupInfoDatabase,
                 profileInfoDatabase,
                 messageDatabase,
                 androidMessageDatabase,
                 groupMessageFtsDatabase,
+                buddyMessageFtsDatabase,
                 config.NtDataPath,
                 config is AndroidQQNTDatabaseConfig android ? android.MobileQQPath : null,
                 config is AndroidQQNTDatabaseConfig androidConfig ? androidConfig.ChatPicPath : null,
@@ -74,6 +79,7 @@ internal static class PreparedDatabaseConfigLoader
             messageDatabase = null;
             androidMessageDatabase = null;
             groupMessageFtsDatabase = null;
+            buddyMessageFtsDatabase = null;
 
             return new PreparedDatabaseConfig(
                 platformType,
@@ -94,6 +100,7 @@ internal static class PreparedDatabaseConfigLoader
             messageDatabase?.Dispose();
             androidMessageDatabase?.Dispose();
             groupMessageFtsDatabase?.Dispose();
+            buddyMessageFtsDatabase?.Dispose();
             throw;
         }
     }
@@ -239,6 +246,15 @@ internal static class PreparedDatabaseConfigLoader
         return database;
     }
 
+    private static QQGroupMessageFtsReader CreateBuddyMessageFtsDatabase(string databasePath, string? password)
+    {
+        var database = password is null
+            ? new QQGroupMessageFtsReader(databasePath, contentTableName: "buddy_msg_fts")
+            : new QQGroupMessageFtsReader(databasePath, password, contentTableName: "buddy_msg_fts");
+        database.Initialize();
+        return database;
+    }
+
     private static PCQQMessageReader CreatePCQQMessageDatabase(
         string databasePath,
         string key,
@@ -285,6 +301,8 @@ internal static class PreparedDatabaseConfigLoader
                     GroupInfoDbPassword = config.GroupInfoDbPassword,
                     GroupMessageFtsDbPath = config.GroupMessageFtsDbPath,
                     GroupMessageFtsDbPassword = config.GroupMessageFtsDbPassword,
+                    BuddyMessageFtsDbPath = config.BuddyMessageFtsDbPath,
+                    BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                     ProfileInfoDbPath = config.ProfileInfoDbPath,
                     ProfileInfoDbPassword = config.ProfileInfoDbPassword,
                 },
@@ -303,6 +321,8 @@ internal static class PreparedDatabaseConfigLoader
                 GroupInfoDbPassword = config.GroupInfoDbPassword,
                 GroupMessageFtsDbPath = config.GroupMessageFtsDbPath,
                 GroupMessageFtsDbPassword = config.GroupMessageFtsDbPassword,
+                BuddyMessageFtsDbPath = config.BuddyMessageFtsDbPath,
+                BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                 ProfileInfoDbPath = config.ProfileInfoDbPath,
                 ProfileInfoDbPassword = config.ProfileInfoDbPassword,
             },

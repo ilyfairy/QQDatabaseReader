@@ -56,6 +56,10 @@ public class QQNTDatabaseConfig
 
     public string? GroupMessageFtsDbPassword { get; set; }
 
+    public string? BuddyMessageFtsDbPath { get; set; }
+
+    public string? BuddyMessageFtsDbPassword { get; set; }
+
     public string? ProfileInfoDbPath { get; set; }
 
     public string? ProfileInfoDbPassword { get; set; }
