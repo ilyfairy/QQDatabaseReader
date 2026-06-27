@@ -393,6 +393,23 @@ public partial class QQMessageReader
                 currentMessage.SystemHint.Json = json;
                 ApplyJsonSystemHint(currentMessage, json);
             }
+            else if (key == 48541 && WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
+            {
+                var lengthPosition = input.Position;
+                try
+                {
+                    ReadMuteSystemHintField(currentMessage, input.ReadBytes().ToByteArray());
+                }
+                catch (InvalidProtocolBufferException)
+                {
+                    if (TryReadTruncatedLengthDelimitedPayload(segmentMessage, lengthPosition, out var payload))
+                    {
+                        ReadMuteSystemHintField(currentMessage, payload);
+                    }
+
+                    break;
+                }
+            }
             else if (key is 48275 or 48501 or 48503 or 48504 or 48505 or 48506 or 48507 or 48508 or 48511)
             {
                 ReadJoinGroupSystemHintField(currentMessage, key, tag, input);
@@ -635,6 +652,114 @@ public partial class QQMessageReader
         {
             hint.SetProperty("target_name", groupName);
         }
+    }
+
+    private static void ReadMuteSystemHintField(QQMessageSegment currentMessage, byte[] data)
+    {
+        var input = new CodedInputStream(data);
+        QQSystemHintParticipant? admin = null;
+        QQSystemHintParticipant? target = null;
+        long durationSeconds = 0;
+
+        try
+        {
+            while (!input.IsAtEnd)
+            {
+                var tag = input.ReadTag();
+                if (tag == 0)
+                    break;
+
+                var key = WireFormat.GetTagFieldNumber(tag);
+                var wireType = WireFormat.GetTagWireType(tag);
+                if ((key == 48521 || key == 48522) &&
+                    wireType == WireFormat.WireType.LengthDelimited)
+                {
+                    var participant = ReadMuteSystemHintParticipant(input.ReadBytes().ToByteArray());
+                    if (key == 48521)
+                        admin = participant;
+                    else
+                        target = participant;
+                    continue;
+                }
+
+                if (key == 48532 && wireType == WireFormat.WireType.Varint)
+                {
+                    durationSeconds = input.ReadInt64();
+                    continue;
+                }
+
+                if (!TrySkipLastField(input))
+                    break;
+            }
+        }
+        catch
+        {
+            // Keep any mute fields decoded before an unknown/truncated tail.
+        }
+
+        if (admin is null || target is null)
+            return;
+
+        var hint = currentMessage.SystemHint ??= new QQSystemHintMessage();
+        hint.Participants.Clear();
+        AddOrUpdateSystemHintParticipant(hint, target);
+        AddOrUpdateSystemHintParticipant(hint, admin);
+        var muteText = durationSeconds == 0
+            ? "解除禁言"
+            : $"禁言{FormatMuteDuration(durationSeconds)}";
+        hint.SetProperty("action_str", "被管理员");
+        hint.SetProperty("target_name", admin.Nickname);
+        hint.SetProperty("suffix_str", muteText);
+        hint.SetProperty("display_text", $"{target.Nickname}被管理员{admin.Nickname}{muteText}");
+    }
+
+    private static QQSystemHintParticipant ReadMuteSystemHintParticipant(byte[] data)
+    {
+        var input = new CodedInputStream(data);
+        string? uid = null;
+        string? nickname = null;
+
+        try
+        {
+            while (!input.IsAtEnd)
+            {
+                var tag = input.ReadTag();
+                if (tag == 0)
+                    break;
+
+                var key = WireFormat.GetTagFieldNumber(tag);
+                var wireType = WireFormat.GetTagWireType(tag);
+                if (key == 1000 && wireType == WireFormat.WireType.LengthDelimited)
+                {
+                    uid = input.ReadBytes().ToStringUtf8();
+                    continue;
+                }
+
+                if (key == 20002 && wireType == WireFormat.WireType.LengthDelimited)
+                {
+                    nickname = input.ReadBytes().ToStringUtf8();
+                    continue;
+                }
+
+                if (!TrySkipLastField(input))
+                    break;
+            }
+        }
+        catch
+        {
+            // Keep any participant fields decoded before an unknown/truncated tail.
+        }
+
+        return new QQSystemHintParticipant(
+            NormalizeSystemHintText(uid),
+            NormalizeSystemHintText(nickname));
+    }
+
+    private static string FormatMuteDuration(long seconds)
+    {
+        return seconds >= 60 && seconds % 60 == 0
+            ? $"{seconds / 60}分钟"
+            : $"{seconds}秒";
     }
 
     private static string FirstNonEmpty(params string?[] values)
@@ -1051,6 +1176,28 @@ public partial class QQMessageReader
         {
             return false;
         }
+    }
+
+    private static bool TryReadTruncatedLengthDelimitedPayload(
+        byte[] message,
+        long lengthPosition,
+        out byte[] payload)
+    {
+        payload = [];
+        if (lengthPosition < 0 || lengthPosition > message.Length)
+            return false;
+
+        var position = (int)lengthPosition;
+        if (!TryReadVarint32(message, ref position, out var length))
+            return false;
+
+        var remaining = message.Length - position;
+        if (remaining <= 0)
+            return false;
+
+        var safeLength = length <= remaining ? (int)length : remaining;
+        payload = message.AsSpan(position, safeLength).ToArray();
+        return payload.Length > 0;
     }
 
     private static void ReadReplyField(
