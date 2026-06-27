@@ -335,7 +335,15 @@ public partial class MessageTab : UserControl
                 }
 
                 var targetCenterY = relativeY + messageHeight / 2;
-                SetVerticalOffset((_messageScrollViewer?.Offset.Y ?? 0) + targetCenterY - viewportHeight / 2);
+                var targetOffsetY = (_messageScrollViewer?.Offset.Y ?? 0) + targetCenterY - viewportHeight / 2;
+                if (onlyWhenOutsideViewport && _messageScrollViewer is not null)
+                {
+                    await SmoothScrollToVerticalOffsetAsync(targetOffsetY);
+                }
+                else
+                {
+                    SetVerticalOffset(targetOffsetY);
+                }
             }
 
             FlashJumpTarget(item, requestId);
@@ -588,6 +596,32 @@ public partial class MessageTab : UserControl
 
         var maxOffset = _messageScrollViewer.Extent.Height - _messageScrollViewer.Viewport.Height;
         return double.IsFinite(maxOffset) ? Math.Max(0, maxOffset) : 0;
+    }
+
+    private double ClampVerticalOffset(double offsetY)
+    {
+        return double.IsFinite(offsetY)
+            ? Math.Clamp(offsetY, 0, GetMaxVerticalOffset())
+            : 0;
+    }
+
+    private async Task SmoothScrollToVerticalOffsetAsync(double offsetY)
+    {
+        if (_messageScrollViewer is null)
+            return;
+
+        _scrollOffsetSuppressCount++;
+        try
+        {
+            SmoothScrollViewer.ScrollTo(
+                _messageScrollViewer,
+                _messageScrollViewer.Offset.WithY(ClampVerticalOffset(offsetY)));
+            await Task.Delay(TimeSpan.FromMilliseconds(240));
+        }
+        finally
+        {
+            _scrollOffsetSuppressCount--;
+        }
     }
 
     private void SetVerticalOffset(double offsetY)
