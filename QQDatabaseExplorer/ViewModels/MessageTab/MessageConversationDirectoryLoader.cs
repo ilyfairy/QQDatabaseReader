@@ -34,14 +34,18 @@ internal sealed class MessageConversationDirectoryLoader
     public List<ConversationLoadItem> LoadQQNtMessageConversations(QQMessageReader messageDatabase)
     {
         var items = QQNtRecentConversationCatalogReader.Read(messageDatabase).ToList();
-        items.AddRange(MessageTableConversationCatalogReader.ReadQQNtFallbackConversations(messageDatabase));
+        if (items.Count == 0)
+            items.AddRange(MessageTableConversationCatalogReader.ReadQQNtFallbackConversations(messageDatabase));
+
         return CreateConversationLoadItems(items);
     }
 
     public List<ConversationLoadItem> LoadAndroidQQNtMessageConversations(QQAndroidMessageReader messageDatabase)
     {
         var items = AndroidQQNtRecentConversationCatalogReader.Read(messageDatabase).ToList();
-        items.AddRange(MessageTableConversationCatalogReader.ReadAndroidQQNtFallbackConversations(messageDatabase));
+        if (items.Count == 0)
+            items.AddRange(MessageTableConversationCatalogReader.ReadAndroidQQNtFallbackConversations(messageDatabase));
+
         return CreateConversationLoadItems(items);
     }
 

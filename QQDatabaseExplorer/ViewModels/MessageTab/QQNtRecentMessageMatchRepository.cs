@@ -34,19 +34,39 @@ internal static class QQNtRecentMessageMatchRepository
         if (messageKeys.Count == 0)
             return new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
 
+        var keys = messageKeys
+            .Where(key => key.MessageId != 0 && !string.IsNullOrWhiteSpace(key.PeerUid))
+            .Distinct()
+            .ToArray();
+        if (keys.Length == 0)
+            return new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
+
+        var messageIds = keys
+            .Select(key => key.MessageId)
+            .Distinct()
+            .ToArray();
+        var messages = messageDatabase.DbContext.PrivateMessages
+            .Where(message => messageIds.Contains(message.MessageId))
+            .Where(message => message.MessageType != MessageType.Empty)
+            .AsEnumerable()
+            .Select(MessageRecordFactory.FromQQNtPrivate)
+            .ToDictionary(message => message.MessageId);
+
         var result = new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
-        foreach (var key in messageKeys.Distinct())
+        foreach (var key in keys)
         {
-            var latestMessage = FindPrivateMessageCandidate(messageDatabase, key);
-            var conversationMessage = latestMessage ?? FindLatestPrivateConversationMessage(messageDatabase, key.PeerUid);
-            if (conversationMessage is not { } message || message.PrivateConversationId == 0)
+            if (!messages.TryGetValue(key.MessageId, out var message) ||
+                message.PrivateConversationId == 0 ||
+                message.PeerUid != key.PeerUid)
+            {
                 continue;
+            }
 
             result[key] = new RecentPrivateMessageMatch(
                 message.PrivateConversationId,
                 message.PeerUin,
                 message.MessageTime,
-                latestMessage);
+                message);
         }
 
         return result;
@@ -114,89 +134,4 @@ internal static class QQNtRecentMessageMatchRepository
             .FirstOrDefault();
     }
 
-    private static MessageRecord? FindPrivateMessageCandidate(
-        QQMessageReader messageDatabase,
-        RecentPrivateMessageKey key)
-    {
-        if (string.IsNullOrWhiteSpace(key.PeerUid) ||
-            key.MessageId == 0 && key.MessageSeq == 0 && key.MessageRandom == 0)
-        {
-            return null;
-        }
-
-        var query = messageDatabase.DbContext.PrivateMessages
-            .Where(message => message.PeerUid == key.PeerUid)
-            .Where(message => message.MessageType != MessageType.Empty);
-
-        if (key.MessageId != 0)
-        {
-            var idMessage = query
-                .Where(message => message.MessageId == key.MessageId)
-                .Take(1)
-                .AsEnumerable()
-                .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-                .FirstOrDefault();
-            if (idMessage is not null)
-                return idMessage;
-        }
-
-        if (key.MessageSeq != 0 && key.MessageRandom != 0)
-        {
-            var exactMessage = query
-                .Where(message => message.MessageSeq == key.MessageSeq &&
-                                  message.MessageRandom == key.MessageRandom)
-                .OrderByDescending(message => message.MessageSeq)
-                .ThenByDescending(message => message.MessageId)
-                .Take(1)
-                .AsEnumerable()
-                .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-                .FirstOrDefault();
-            if (exactMessage is not null)
-                return exactMessage;
-        }
-
-        if (key.MessageRandom != 0)
-        {
-            var randomMessage = query
-                .Where(message => message.MessageRandom == key.MessageRandom)
-                .OrderByDescending(message => message.MessageSeq)
-                .ThenByDescending(message => message.MessageId)
-                .Take(1)
-                .AsEnumerable()
-                .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-                .FirstOrDefault();
-            if (randomMessage is not null)
-                return randomMessage;
-        }
-
-        if (key.MessageSeq == 0)
-            return null;
-
-        return query
-            .Where(message => message.MessageSeq == key.MessageSeq)
-            .OrderByDescending(message => message.MessageId)
-            .Take(1)
-            .AsEnumerable()
-            .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-            .FirstOrDefault();
-    }
-
-    private static MessageRecord? FindLatestPrivateConversationMessage(
-        QQMessageReader messageDatabase,
-        string peerUid)
-    {
-        if (string.IsNullOrWhiteSpace(peerUid))
-            return null;
-
-        return messageDatabase.DbContext.PrivateMessages
-            .Where(message => message.PeerUid == peerUid)
-            .Where(message => message.ConversationId != 0)
-            .Where(message => message.MessageType != MessageType.Empty)
-            .OrderByDescending(message => message.MessageSeq)
-            .ThenByDescending(message => message.MessageId)
-            .Take(1)
-            .AsEnumerable()
-            .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-            .FirstOrDefault();
-    }
 }

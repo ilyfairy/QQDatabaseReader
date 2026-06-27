@@ -17,6 +17,7 @@ internal static class QQNtRecentConversationCatalogReader
                 .OrderByDescending(v => v.SortTime == 0 ? v.LastTime : v.SortTime)
                 .Select(v => new
                 {
+                    v.LastMessageId,
                     v.ChatType,
                     v.PeerUin,
                     v.Uin,
@@ -39,7 +40,7 @@ internal static class QQNtRecentConversationCatalogReader
             var recentGroupMessageKeys = recentContacts
                 .Where(contact => contact.ChatType == ChatType.GroupMessage)
                 .Select(contact => ConversationCatalogValueHelpers.TryParseRecentGroupId(contact.PeerUin, out var groupId)
-                    ? new RecentGroupMessageKey(groupId, 0, contact.MessageSeq, contact.MessageRandom)
+                    ? new RecentGroupMessageKey(groupId, contact.LastMessageId, contact.MessageSeq, contact.MessageRandom)
                     : (RecentGroupMessageKey?)null)
                 .Where(key => key is not null)
                 .Select(key => key!.Value)
@@ -51,7 +52,7 @@ internal static class QQNtRecentConversationCatalogReader
             var recentPrivateMessageKeys = recentContacts
                 .Where(contact => contact.ChatType == ChatType.PrivateMessage)
                 .Where(contact => !string.IsNullOrWhiteSpace(contact.PeerUin))
-                .Select(contact => new RecentPrivateMessageKey(contact.PeerUin!, 0, contact.MessageSeq, contact.MessageRandom))
+                .Select(contact => new RecentPrivateMessageKey(contact.PeerUin!, contact.LastMessageId, contact.MessageSeq, contact.MessageRandom))
                 .ToList();
             var recentPrivateMessages = QQNtRecentMessageMatchRepository.ReadPrivateMessageMatches(
                 messageDatabase,
@@ -67,7 +68,7 @@ internal static class QQNtRecentConversationCatalogReader
                             : 0;
                         var messageKey = new RecentGroupMessageKey(
                             groupId,
-                            0,
+                            contact.LastMessageId,
                             contact.MessageSeq,
                             contact.MessageRandom);
                         var latestMessage = recentGroupMessages.TryGetValue(messageKey, out var matchedMessage)
@@ -97,7 +98,7 @@ internal static class QQNtRecentConversationCatalogReader
                     {
                         var messageKey = new RecentPrivateMessageKey(
                             contact.PeerUin,
-                            0,
+                            contact.LastMessageId,
                             contact.MessageSeq,
                             contact.MessageRandom);
                         if (!recentPrivateMessages.TryGetValue(messageKey, out var privateMessage))

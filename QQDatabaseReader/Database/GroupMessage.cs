@@ -184,6 +184,12 @@ public class GroupMessage
 public class RecentContact
 {
     /// <summary>
+    /// 最近一条消息的消息 ID，对应消息表 40001 主键。
+    /// </summary>
+    [Column("40001")]
+    public long LastMessageId { get; set; }
+
+    /// <summary>
     /// 最近联系人主分类。QQNT 对 40055 + 40021 建了唯一索引。
     /// </summary>
     [Column("40055")]
