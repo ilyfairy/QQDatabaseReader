@@ -1121,6 +1121,8 @@ public sealed class ChatExportService
     {
         private readonly string _exportRoot;
         private readonly Dictionary<string, string> _copiedFiles = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _copiedFilesByHash = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _copiedImagesByHash = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string?> _downloadedAvatars = new(StringComparer.OrdinalIgnoreCase);
         private readonly ChatExportContentOptions _options;
         private static readonly HttpClient AvatarHttpClient = CreateAvatarHttpClient();
@@ -1230,18 +1232,27 @@ public sealed class ChatExportService
             try
             {
                 var fullPath = Path.GetFullPath(sourcePath);
-                if (_copiedFiles.TryGetValue(fullPath, out var copiedRelativePath))
+                var pathKey = CreateResourceKey(relativeDirectory, fullPath);
+                if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
                     return copiedRelativePath;
+
+                var fileKey = CreateResourceKey(relativeDirectory, ComputeFileHash(fullPath));
+                if (_copiedFilesByHash.TryGetValue(fileKey, out var existingRelativePath))
+                {
+                    _copiedFiles[pathKey] = existingRelativePath;
+                    return existingRelativePath;
+                }
 
                 var targetDirectory = Path.Combine(_exportRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(targetDirectory);
 
-                var fileName = CreateUniqueFileName(fullPath);
+                var fileName = CreateResourceFileName(fullPath, targetDirectory);
                 var targetPath = Path.Combine(targetDirectory, fileName);
                 File.Copy(fullPath, targetPath, overwrite: true);
 
                 var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
-                _copiedFiles[fullPath] = relativePath;
+                _copiedFiles[pathKey] = relativePath;
+                _copiedFilesByHash[fileKey] = relativePath;
                 return relativePath;
             }
             catch
@@ -1258,29 +1269,75 @@ public sealed class ChatExportService
             try
             {
                 var fullPath = Path.GetFullPath(sourcePath);
-                if (!LocalImageFile.IsMarketFaceEncodedGifImage(fullPath))
-                    return Copy(fullPath, relativeDirectory);
-
-                if (_copiedFiles.TryGetValue(fullPath, out var copiedRelativePath))
+                var pathKey = CreateResourceKey(relativeDirectory, fullPath);
+                if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
                     return copiedRelativePath;
 
-                var bytes = LocalImageFile.ReadDisplayBytes(fullPath);
-                var extension = GetImageFileExtension(bytes, null) ?? ".gif";
+                var isEncodedMarketFace = LocalImageFile.IsMarketFaceEncodedGifImage(fullPath);
+                var bytes = isEncodedMarketFace ? LocalImageFile.ReadDisplayBytes(fullPath) : null;
+                var imageHash = bytes is null
+                    ? ComputeFileHash(fullPath)
+                    : Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                var imageKey = CreateResourceKey(relativeDirectory, imageHash);
+                if (_copiedImagesByHash.TryGetValue(imageKey, out var existingRelativePath))
+                {
+                    _copiedFiles[pathKey] = existingRelativePath;
+                    return existingRelativePath;
+                }
+
                 var targetDirectory = Path.Combine(_exportRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(targetDirectory);
 
-                var fileName = CreateUniqueFileName(fullPath, extension);
+                var extension = bytes is null
+                    ? GetImageFileExtension(fullPath) ?? Path.GetExtension(fullPath)
+                    : GetImageFileExtension(bytes, null) ?? Path.GetExtension(fullPath);
+                var fileName = $"{imageHash}{extension}";
                 var targetPath = Path.Combine(targetDirectory, fileName);
-                File.WriteAllBytes(targetPath, bytes);
+                if (bytes is null)
+                    File.Copy(fullPath, targetPath, overwrite: true);
+                else
+                    File.WriteAllBytes(targetPath, bytes);
 
                 var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
-                _copiedFiles[fullPath] = relativePath;
+                _copiedFiles[pathKey] = relativePath;
+                _copiedImagesByHash[imageKey] = relativePath;
                 return relativePath;
             }
             catch
             {
                 return null;
             }
+        }
+
+        private static string ComputeFileHash(string fullPath)
+        {
+            using var stream = File.OpenRead(fullPath);
+            return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
+
+        private static string? GetImageFileExtension(string fullPath)
+        {
+            Span<byte> header = stackalloc byte[12];
+            using var stream = File.OpenRead(fullPath);
+            var read = stream.Read(header);
+            return GetImageFileExtension(header[..read].ToArray(), null);
+        }
+
+        private static string CreateResourceKey(string relativeDirectory, string value)
+        {
+            return $"{relativeDirectory}|{value}";
+        }
+
+        private static string CreateResourceFileName(string fullPath, string targetDirectory)
+        {
+            var fileName = SanitizeFileName(Path.GetFileName(fullPath));
+            if (string.IsNullOrWhiteSpace(fileName))
+                fileName = CreateUniqueFileName(fullPath);
+
+            if (!File.Exists(Path.Combine(targetDirectory, fileName)))
+                return fileName;
+
+            return CreateUniqueFileName(fullPath);
         }
 
         private static string CreateUniqueFileName(string fullPath, string? extensionOverride = null)
