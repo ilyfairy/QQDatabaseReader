@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -117,9 +118,14 @@ public class DialogService : IDialogService
 
     public async Task ShowChatExportDialog(AvaQQGroup conversation, ViewModelToken? ownerToken = null)
     {
+        await ShowChatExportDialog([conversation], ownerToken);
+    }
+
+    public async Task ShowChatExportDialog(IReadOnlyList<AvaQQGroup> conversations, ViewModelToken? ownerToken = null)
+    {
         using var scope = _serviceProvider.CreateScope();
         var viewModel = scope.ServiceProvider.GetRequiredService<ChatExportDialogViewModel>();
-        viewModel.Initialize(conversation);
+        viewModel.Initialize(conversations);
 
         var dialog = scope.ServiceProvider.GetRequiredService<ChatExportDialog>();
         await ShowDialog(dialog, ownerToken);

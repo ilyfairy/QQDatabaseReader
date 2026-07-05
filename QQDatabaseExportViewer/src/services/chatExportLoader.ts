@@ -1,4 +1,4 @@
-import type { ChatExportDocument, ChatExportMessage } from '@/types/chat-export'
+import type { ChatExportChat, ChatExportDocument, ChatExportMessage } from '@/types/chat-export'
 
 export async function loadChatExport(): Promise<ChatExportDocument> {
   const existing = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT__
@@ -24,25 +24,26 @@ export async function loadChatExportFromFile(file: File): Promise<ChatExportDocu
   return JSON.parse(text) as ChatExportDocument
 }
 
-const chunkPromises = new Map<number, Promise<ChatExportMessage[]>>()
+const chunkPromises = new Map<string, Promise<ChatExportMessage[]>>()
 
-export async function loadMessageChunk(document: ChatExportDocument, messageIndex: number) {
-  if (document.messages) {
-    return document.messages
+export async function loadMessageChunk(source: ChatExportDocument | ChatExportChat, messageIndex: number) {
+  if (source.messages) {
+    return source.messages
   }
 
-  const chunk = document.messageChunks?.find((item) =>
+  const chunk = source.messageChunks?.find((item) =>
     messageIndex >= item.start && messageIndex < item.start + item.count,
   )
   if (!chunk) {
     return []
   }
 
-  let promise = chunkPromises.get(chunk.index)
+  const chunkKey = chunk.key ?? String(chunk.index)
+  let promise = chunkPromises.get(chunkKey)
   if (!promise) {
-    promise = loadMessageChunkScript(chunk.index, chunk.path)
-    chunkPromises.set(chunk.index, promise)
-    promise.finally(() => chunkPromises.delete(chunk.index))
+    promise = loadMessageChunkScript(chunkKey, chunk.path)
+    chunkPromises.set(chunkKey, promise)
+    promise.finally(() => chunkPromises.delete(chunkKey))
   }
 
   return promise
@@ -59,10 +60,10 @@ async function loadChatExportScript() {
   })
 }
 
-async function loadMessageChunkScript(index: number, path: string) {
-  const existing = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[index]
+async function loadMessageChunkScript(key: string, path: string) {
+  const existing = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[key]
   if (existing) {
-    delete window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[index]
+    delete window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[key]
     return existing
   }
 
@@ -81,7 +82,7 @@ async function loadMessageChunkScript(index: number, path: string) {
     document.head.append(script)
   })
 
-  const messages = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[index] ?? []
-  delete window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[index]
+  const messages = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[key] ?? []
+  delete window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?.[key]
   return messages
 }

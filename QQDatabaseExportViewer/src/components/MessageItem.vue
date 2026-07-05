@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import type { ChatExportMedia, ChatExportMessage, ChatExportSegment } from '@/types/chat-export'
 
-defineProps<{
+const props = defineProps<{
   message: ChatExportMessage
   compact?: boolean
   showSource?: boolean
+  sourceLabel?: string
   highlighted?: boolean
 }>()
 
 const emit = defineEmits<{
-  replyClick: [reply: NonNullable<ChatExportMessage['reply']>]
+  replyClick: [reply: NonNullable<ChatExportMessage['reply']>, sourceMessage?: ChatExportMessage]
 }>()
 
 function assetUrl(path?: string | null) {
@@ -83,6 +84,10 @@ function isBlockFlowMessage(message: ChatExportMessage) {
 }
 
 function sourceLabel(message: ChatExportMessage) {
+  if (props.sourceLabel) {
+    return props.sourceLabel
+  }
+
   switch (message.raw.conversationType) {
     case 'Group':
     case 'Private':
@@ -200,7 +205,7 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
             type="button"
             class="reply"
             tabindex="-1"
-            @click="emit('replyClick', message.reply)"
+            @click="emit('replyClick', message.reply, message)"
           >
             <div class="reply-sender">{{ message.reply.senderName }}</div>
             <div class="reply-text">{{ message.reply.previewText }}</div>
@@ -330,7 +335,7 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
               :key="forwarded.key"
               :message="forwarded"
               compact
-              @reply-click="emit('replyClick', $event)"
+              @reply-click="(reply, sourceMessage) => emit('replyClick', reply, sourceMessage)"
             />
           </details>
         </div>

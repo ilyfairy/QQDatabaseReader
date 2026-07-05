@@ -75,33 +75,44 @@ public sealed class ChatExportService
         if (isJsonOnly)
             document = RemoveAvatarUrls(document);
 
-        string primaryOutputPath;
-        if (isJsonOnly)
-        {
-            progress?.Report(new ChatExportProgress("写入数据", "保存 chat.json", 0, 1));
-            primaryOutputPath = await WriteJsonOnlyDataAsync(exportRoot, document, cancellationToken);
-        }
-        else
-        {
-            progress?.Report(new ChatExportProgress("复制查看器", "写入离线查看器", 0, 1));
-            await CopyViewerAsync(exportRoot, cancellationToken);
-            progress?.Report(new ChatExportProgress("写入数据", "保存 resources/chat-data.js", 0, 1));
-            await WriteViewerDataAsync(exportRoot, document, cancellationToken);
-
-            if (options.Format == ChatExportFormat.Mhtml)
-            {
-                progress?.Report(new ChatExportProgress("打包 MHTML", "打包查看器、数据和资源", 0, 1));
-                primaryOutputPath = await WriteMhtmlAsync(exportRoot, progress, cancellationToken);
-                DeleteMhtmlStagingFiles(exportRoot, primaryOutputPath);
-            }
-            else
-            {
-                primaryOutputPath = Path.Combine(exportRoot, "index.html");
-            }
-        }
+        var primaryOutputPath = await WriteExportAsync(exportRoot, document, options.Format, progress, cancellationToken);
 
         progress?.Report(new ChatExportProgress("完成", "聊天记录导出完成", 1, 1));
         return new ChatExportResult(exportRoot, primaryOutputPath, document.Metadata.MessageCount, sources.Count);
+    }
+
+    public async Task<ChatExportResult> ExportMergedAsync(
+        IReadOnlyList<ChatExportConversationExport> conversations,
+        string parentDirectory,
+        ChatExportOptions options,
+        IProgress<ChatExportProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(parentDirectory))
+            throw new ArgumentException("Export directory is empty.", nameof(parentDirectory));
+        if (conversations.Count == 0)
+            throw new ArgumentException("Export conversations are empty.", nameof(conversations));
+
+        progress?.Report(new ChatExportProgress("准备导出", "创建导出目录", 0, 1));
+        var exportRoot = CreateMergedExportRoot(parentDirectory, conversations.Select(static item => item.Conversation));
+        Directory.CreateDirectory(exportRoot);
+
+        var isJsonOnly = options.Format == ChatExportFormat.Json;
+        var totalMessages = conversations.Sum(static conversation => conversation.Sources.Sum(static source => source.Messages.Count));
+        progress?.Report(new ChatExportProgress("整理消息", "转换聊天记录数据", 0, totalMessages));
+        var mediaStore = new ExportMediaStore(exportRoot, isJsonOnly ? ChatExportContentOptions.None : options.Content);
+        var document = CreateMergedDocument(conversations, mediaStore, progress, cancellationToken);
+        if (isJsonOnly)
+            document = RemoveAvatarUrls(document);
+
+        var primaryOutputPath = await WriteExportAsync(exportRoot, document, options.Format, progress, cancellationToken);
+
+        progress?.Report(new ChatExportProgress("完成", "聊天记录导出完成", 1, 1));
+        return new ChatExportResult(
+            exportRoot,
+            primaryOutputPath,
+            document.Metadata.MessageCount,
+            conversations.Sum(static conversation => conversation.Sources.Count));
     }
 
     private static ChatExportDocument CreateDocument(
@@ -144,6 +155,7 @@ public sealed class ChatExportService
             }
         }
 
+        var exportConversation = CreateConversation(conversation, sources, mediaStore);
         return new ChatExportDocument(
             SchemaVersion,
             new ChatExportMetadata(
@@ -151,9 +163,87 @@ public sealed class ChatExportService
                 ExporterName,
                 ViewerName,
                 exportedMessages.Length),
-            CreateConversation(conversation, sources, mediaStore),
+            exportConversation,
+            [exportConversation],
             participants,
             exportedMessages);
+    }
+
+    private static ChatExportDocument CreateMergedDocument(
+        IReadOnlyList<ChatExportConversationExport> conversations,
+        ExportMediaStore mediaStore,
+        IProgress<ChatExportProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var documents = new ChatExportDocument[conversations.Count];
+        for (var i = 0; i < conversations.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var conversation = conversations[i];
+            progress?.Report(new ChatExportProgress(
+                "整理消息",
+                $"{conversation.Conversation.DisplayName} ({i + 1}/{conversations.Count})",
+                i,
+                conversations.Count));
+            documents[i] = CreateDocument(conversation.Conversation, conversation.Sources, mediaStore, null, cancellationToken);
+        }
+
+        var participants = documents
+            .SelectMany(static document => document.Participants)
+            .GroupBy(static participant => participant.Key, StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .OrderBy(static participant => participant.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(static participant => participant.Uin)
+            .ToArray();
+        var exportConversations = documents
+            .Select(static document => document.Conversation)
+            .DistinctBy(static conversation => conversation.Key, StringComparer.Ordinal)
+            .ToArray();
+        var chats = documents
+            .Select(static document => new ChatExportChat(
+                document.Conversation.Key,
+                document.Conversation,
+                document.Participants,
+                document.Metadata.MessageCount,
+                document.Messages))
+            .ToArray();
+
+        return new ChatExportDocument(
+            SchemaVersion,
+            new ChatExportMetadata(
+                DateTimeOffset.Now,
+                ExporterName,
+                ViewerName,
+                chats.Sum(static chat => chat.MessageCount)),
+            CreateMergedConversation(exportConversations),
+            exportConversations,
+            participants,
+            null,
+            Chats: chats);
+    }
+
+    private static ChatExportConversation CreateMergedConversation(IReadOnlyList<ChatExportConversation> conversations)
+    {
+        var sources = conversations
+            .SelectMany(static conversation => conversation.Sources)
+            .DistinctBy(static source => source.Key, StringComparer.Ordinal)
+            .ToArray();
+
+        return new ChatExportConversation(
+            "merged:" + string.Join("|", conversations.Select(static conversation => conversation.Key)),
+            conversations.FirstOrDefault()?.Type ?? AvaConversationType.Group,
+            conversations.Count == 1 ? conversations[0].Title : $"合并聊天记录 ({conversations.Count} 个聊天)",
+            null,
+            null,
+            "merged",
+            conversations.Count.ToString(CultureInfo.InvariantCulture),
+            sources,
+            0,
+            0,
+            0,
+            null,
+            null,
+            0);
     }
 
     private static ChatExportConversation CreateConversation(
@@ -530,14 +620,51 @@ public sealed class ChatExportService
         var resourceDirectory = Path.Combine(exportRoot, ExportResourceDirectory);
         Directory.CreateDirectory(resourceDirectory);
 
-        var chunks = await WriteViewerMessageChunksAsync(resourceDirectory, document.Messages ?? [], cancellationToken);
-        var manifest = document with
+        ChatExportDocument manifest;
+        if (document.Chats is { Count: > 0 } chats)
         {
-            Messages = null,
-            MessageChunks = chunks,
-            TimelineDates = CreateTimelineDates(document.Messages ?? []),
-            MessageIndex = CreateMessageIndex(document.Messages ?? []),
-        };
+            var exportedChats = new ChatExportChat[chats.Count];
+            for (var i = 0; i < chats.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var chat = chats[i];
+                var messages = chat.Messages ?? [];
+                var chunks = await WriteViewerMessageChunksAsync(
+                    resourceDirectory,
+                    messages,
+                    $"chat-{i:000}",
+                    cancellationToken);
+                exportedChats[i] = chat with
+                {
+                    Messages = null,
+                    MessageChunks = chunks,
+                    TimelineDates = CreateTimelineDates(messages),
+                    MessageIndex = CreateMessageIndex(messages),
+                };
+            }
+
+            manifest = document with
+            {
+                Messages = null,
+                MessageChunks = null,
+                TimelineDates = null,
+                MessageIndex = null,
+                Chats = exportedChats,
+            };
+        }
+        else
+        {
+            var messages = document.Messages ?? [];
+            var chunks = await WriteViewerMessageChunksAsync(resourceDirectory, messages, null, cancellationToken);
+            manifest = document with
+            {
+                Messages = null,
+                MessageChunks = chunks,
+                TimelineDates = CreateTimelineDates(messages),
+                MessageIndex = CreateMessageIndex(messages),
+            };
+        }
+
         var dataPath = Path.Combine(resourceDirectory, "chat-data.js");
         var json = JsonSerializer.Serialize(manifest, JsonOnlyContext.ChatExportDocument);
         var script = "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT__=" + json + ";";
@@ -547,12 +674,15 @@ public sealed class ChatExportService
     private static async Task<IReadOnlyList<ChatExportMessageChunk>> WriteViewerMessageChunksAsync(
         string resourceDirectory,
         IReadOnlyList<ChatExportMessage> messages,
+        string? chunkGroupKey,
         CancellationToken cancellationToken)
     {
         if (messages.Count == 0)
             return [];
 
-        var messageDirectory = Path.Combine(resourceDirectory, "messages");
+        var messageDirectory = string.IsNullOrWhiteSpace(chunkGroupKey)
+            ? Path.Combine(resourceDirectory, "messages")
+            : Path.Combine(resourceDirectory, "messages", chunkGroupKey);
         Directory.CreateDirectory(messageDirectory);
         var chunks = new List<ChatExportMessageChunk>((messages.Count + ViewerMessageChunkSize - 1) / ViewerMessageChunkSize);
         for (var start = 0; start < messages.Count; start += ViewerMessageChunkSize)
@@ -561,16 +691,23 @@ public sealed class ChatExportService
             var chunkIndex = chunks.Count;
             var count = Math.Min(ViewerMessageChunkSize, messages.Count - start);
             var chunkMessages = messages.Skip(start).Take(count).ToArray();
-            var relativePath = $"{ExportResourceDirectory}/messages/message-{chunkIndex:00000}.js";
+            var chunkKey = string.IsNullOrWhiteSpace(chunkGroupKey)
+                ? chunkIndex.ToString(CultureInfo.InvariantCulture)
+                : $"{chunkGroupKey}:{chunkIndex.ToString(CultureInfo.InvariantCulture)}";
+            var relativePath = string.IsNullOrWhiteSpace(chunkGroupKey)
+                ? $"{ExportResourceDirectory}/messages/message-{chunkIndex:00000}.js"
+                : $"{ExportResourceDirectory}/messages/{chunkGroupKey}/message-{chunkIndex:00000}.js";
             var chunkPath = Path.Combine(messageDirectory, $"message-{chunkIndex:00000}.js");
             var json = JsonSerializer.Serialize(chunkMessages, JsonContext.IReadOnlyListChatExportMessage);
             var script =
                 "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__=window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__||{};" +
-                $"window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__[{chunkIndex}]=" +
+                "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__[" +
+                JsonSerializer.Serialize(chunkKey, JsonOptions) +
+                "]=" +
                 json +
                 ";";
             await File.WriteAllTextAsync(chunkPath, script, new UTF8Encoding(false), cancellationToken);
-            chunks.Add(new ChatExportMessageChunk(chunkIndex, start, count, relativePath));
+            chunks.Add(new ChatExportMessageChunk(chunkIndex, chunkKey, start, count, relativePath));
         }
 
         return chunks;
@@ -605,20 +742,21 @@ public sealed class ChatExportService
 
     private static IReadOnlyList<ChatExportMessageIndex> CreateMessageIndex(IReadOnlyList<ChatExportMessage> messages)
     {
-        var messageSeqs = new HashSet<long>();
-        var messageIds = new HashSet<long>();
-        var messageRandoms = new HashSet<long>();
+        var messageSeqs = new HashSet<string>(StringComparer.Ordinal);
+        var messageIds = new HashSet<string>(StringComparer.Ordinal);
+        var messageRandoms = new HashSet<string>(StringComparer.Ordinal);
         foreach (var message in messages)
         {
             var reply = message.Reply;
             if (reply is null)
                 continue;
 
-            AddIfNotZero(messageSeqs, reply.MessageSeq);
-            AddIfNotZero(messageSeqs, reply.AlternateMessageSeq);
-            AddIfNotZero(messageIds, reply.MessageId);
-            AddIfNotZero(messageIds, reply.InternalMessageId);
-            AddIfNotZero(messageRandoms, reply.MessageRandom);
+            var conversationKey = message.Raw.ConversationKey;
+            AddIfNotZero(messageSeqs, conversationKey, reply.MessageSeq);
+            AddIfNotZero(messageSeqs, conversationKey, reply.AlternateMessageSeq);
+            AddIfNotZero(messageIds, conversationKey, reply.MessageId);
+            AddIfNotZero(messageIds, conversationKey, reply.InternalMessageId);
+            AddIfNotZero(messageRandoms, conversationKey, reply.MessageRandom);
         }
 
         if (messageSeqs.Count == 0 && messageIds.Count == 0 && messageRandoms.Count == 0)
@@ -628,9 +766,10 @@ public sealed class ChatExportService
         for (var index = 0; index < messages.Count; index++)
         {
             var message = messages[index];
-            if (!messageSeqs.Contains(message.MessageSeq) &&
-                !messageIds.Contains(message.MessageId) &&
-                !messageRandoms.Contains(message.MessageRandom))
+            var conversationKey = message.Raw.ConversationKey;
+            if (!messageSeqs.Contains(CreateMessageIndexKey(conversationKey, message.MessageSeq)) &&
+                !messageIds.Contains(CreateMessageIndexKey(conversationKey, message.MessageId)) &&
+                !messageRandoms.Contains(CreateMessageIndexKey(conversationKey, message.MessageRandom)))
             {
                 continue;
             }
@@ -638,6 +777,7 @@ public sealed class ChatExportService
             indexes.Add(new ChatExportMessageIndex(
                     index,
                     message.Key,
+                    message.Raw.ConversationKey,
                     message.MessageId,
                     message.MessageRandom,
                     message.MessageSeq));
@@ -646,10 +786,50 @@ public sealed class ChatExportService
         return indexes;
     }
 
-    private static void AddIfNotZero(HashSet<long> values, long value)
+    private static void AddIfNotZero(HashSet<string> values, string conversationKey, long value)
     {
         if (value != 0)
-            values.Add(value);
+            values.Add(CreateMessageIndexKey(conversationKey, value));
+    }
+
+    private static string CreateMessageIndexKey(string conversationKey, long value)
+    {
+        return $"{conversationKey}\0{value.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    private static async Task<string> WriteExportAsync(
+        string exportRoot,
+        ChatExportDocument document,
+        ChatExportFormat format,
+        IProgress<ChatExportProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (format == ChatExportFormat.Json)
+        {
+            progress?.Report(new ChatExportProgress("写入数据", "保存 chat.json", 0, 1));
+            return await WriteJsonOnlyDataAsync(exportRoot, document, cancellationToken);
+        }
+
+        if (format == ChatExportFormat.Markdown)
+        {
+            progress?.Report(new ChatExportProgress("写入 Markdown", "保存 chat.md", 0, 1));
+            return await WriteMarkdownAsync(exportRoot, document, cancellationToken);
+        }
+
+        progress?.Report(new ChatExportProgress("复制查看器", "写入离线查看器", 0, 1));
+        await CopyViewerAsync(exportRoot, cancellationToken);
+        progress?.Report(new ChatExportProgress("写入数据", "保存 resources/chat-data.js", 0, 1));
+        await WriteViewerDataAsync(exportRoot, document, cancellationToken);
+
+        if (format == ChatExportFormat.Mhtml)
+        {
+            progress?.Report(new ChatExportProgress("打包 MHTML", "打包查看器、数据和资源", 0, 1));
+            var mhtmlPath = await WriteMhtmlAsync(exportRoot, progress, cancellationToken);
+            DeleteMhtmlStagingFiles(exportRoot, mhtmlPath);
+            return mhtmlPath;
+        }
+
+        return Path.Combine(exportRoot, "index.html");
     }
 
     private static async Task<string> WriteJsonOnlyDataAsync(
@@ -670,15 +850,183 @@ public sealed class ChatExportService
         return jsonPath;
     }
 
+    private static async Task<string> WriteMarkdownAsync(
+        string exportRoot,
+        ChatExportDocument document,
+        CancellationToken cancellationToken)
+    {
+        var markdownPath = Path.Combine(exportRoot, "chat.md");
+        await using var stream = File.Create(markdownPath);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+
+        await writer.WriteLineAsync("# " + EscapeMarkdown(document.Conversation.Title));
+        await writer.WriteLineAsync();
+        await writer.WriteLineAsync($"- 消息数量: {document.Metadata.MessageCount.ToString(CultureInfo.InvariantCulture)}");
+        await writer.WriteLineAsync($"- 导出时间: {document.Metadata.ExportedAt.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
+        if (document.Conversations.Count > 1)
+        {
+            await writer.WriteLineAsync($"- 聊天数量: {document.Conversations.Count.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        await writer.WriteLineAsync();
+
+        if (document.Chats is { Count: > 0 } chats)
+        {
+            foreach (var chat in chats)
+            {
+                await writer.WriteLineAsync();
+                await writer.WriteLineAsync("## " + EscapeMarkdown(chat.Conversation.Title));
+                await writer.WriteLineAsync();
+                await WriteMarkdownMessagesAsync(writer, chat.Messages ?? [], cancellationToken);
+            }
+        }
+        else
+        {
+            await WriteMarkdownMessagesAsync(writer, document.Messages ?? [], cancellationToken);
+        }
+
+        return markdownPath;
+    }
+
+    private static async Task WriteMarkdownMessagesAsync(
+        StreamWriter writer,
+        IReadOnlyList<ChatExportMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        var previousDate = string.Empty;
+        foreach (var message in messages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var date = message.LocalTime.Length >= 10 ? message.LocalTime[..10] : "未知日期";
+            if (!string.Equals(date, previousDate, StringComparison.Ordinal))
+            {
+                await writer.WriteLineAsync();
+                await writer.WriteLineAsync("### " + EscapeMarkdown(date));
+                await writer.WriteLineAsync();
+                previousDate = date;
+            }
+
+            var prefix = $"[{message.LocalTime}] {message.Sender.DisplayName}: ";
+            await writer.WriteLineAsync(EscapeMarkdown(prefix) + CreateMarkdownContent(message));
+        }
+    }
+
+    private static string CreateMarkdownContent(ChatExportMessage message)
+    {
+        if (message.IsSystemHint)
+            return EscapeMarkdown(message.DisplayText);
+
+        var parts = new List<string>();
+        if (message.Reply is { } reply && !string.IsNullOrWhiteSpace(reply.PreviewText))
+            parts.Add($"> 回复 {EscapeMarkdown(reply.SenderName)}: {EscapeMarkdown(reply.PreviewText)}");
+
+        foreach (var segment in message.Segments)
+        {
+            if (segment.Media is { } media)
+            {
+                parts.Add(CreateMarkdownMedia(segment, media));
+                continue;
+            }
+
+            if (segment.MiniApp is { } miniApp)
+            {
+                var title = EscapeMarkdown(FirstNonEmpty(miniApp.Title, miniApp.AppName, "小程序"));
+                parts.Add(string.IsNullOrWhiteSpace(miniApp.JumpUrl)
+                    ? title
+                    : $"[{title}]({EscapeMarkdownUrl(miniApp.JumpUrl)})");
+                continue;
+            }
+
+            if (segment.SharedContact is { } sharedContact)
+            {
+                parts.Add(EscapeMarkdown($"{sharedContact.Tag} {sharedContact.Title} {sharedContact.Subtitle}".Trim()));
+                continue;
+            }
+
+            if (segment.ForwardedMessage is { } forwarded)
+            {
+                parts.Add(EscapeMarkdown($"[转发] {forwarded.Title} {forwarded.Footer}".Trim()));
+                continue;
+            }
+
+            var text = FirstNonEmpty(segment.DisplayText, segment.Text);
+            if (!string.IsNullOrWhiteSpace(text))
+                parts.Add(EscapeMarkdown(text));
+        }
+
+        if (message.ForwardedMessages.Count > 0)
+            parts.Add(EscapeMarkdown($"[合并转发: {message.ForwardedMessages.Count} 条]"));
+        if (message.Reactions.Count > 0)
+            parts.Add(EscapeMarkdown(string.Join(" ", message.Reactions.Select(static reaction => $"{reaction.DisplayText}×{reaction.Count}"))));
+
+        return parts.Count == 0
+            ? EscapeMarkdown(message.DisplayText)
+            : string.Join(" ", parts);
+    }
+
+    private static string CreateMarkdownMedia(ChatExportSegment segment, ChatExportMedia media)
+    {
+        var text = EscapeMarkdown(FirstNonEmpty(media.FileName, media.DisplayText, segment.DisplayText, segment.Text, media.Kind.ToString()));
+        if (string.IsNullOrWhiteSpace(media.RelativePath))
+            return EscapeMarkdown(FirstNonEmpty(media.DisplayText, segment.DisplayText, text));
+
+        var url = EscapeMarkdownUrl(media.RelativePath);
+        return media.Kind == ChatExportMediaKind.Image
+            ? $"![{text}]({url})"
+            : $"[{text}]({url})";
+    }
+
+    private static string EscapeMarkdown(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return string.Empty;
+
+        return value
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("[", "\\[", StringComparison.Ordinal)
+            .Replace("]", "\\]", StringComparison.Ordinal)
+            .Replace("(", "\\(", StringComparison.Ordinal)
+            .Replace(")", "\\)", StringComparison.Ordinal)
+            .Replace("#", "\\#", StringComparison.Ordinal)
+            .Replace("*", "\\*", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal)
+            .Replace("`", "\\`", StringComparison.Ordinal);
+    }
+
+    private static string EscapeMarkdownUrl(string value)
+    {
+        return value.Replace(" ", "%20", StringComparison.Ordinal);
+    }
+
     private static ChatExportDocument RemoveAvatarUrls(ChatExportDocument document)
     {
         return document with
         {
             Conversation = document.Conversation with { AvatarUrl = null },
+            Conversations = document.Conversations
+                .Select(static conversation => conversation with { AvatarUrl = null })
+                .ToArray(),
             Participants = document.Participants
                 .Select(static participant => participant with { AvatarUrl = null })
                 .ToArray(),
             Messages = document.Messages?
+                .Select(RemoveMessageAvatarUrls)
+                .ToArray(),
+            Chats = document.Chats?
+                .Select(RemoveChatAvatarUrls)
+                .ToArray(),
+        };
+    }
+
+    private static ChatExportChat RemoveChatAvatarUrls(ChatExportChat chat)
+    {
+        return chat with
+        {
+            Conversation = chat.Conversation with { AvatarUrl = null },
+            Participants = chat.Participants
+                .Select(static participant => participant with { AvatarUrl = null })
+                .ToArray(),
+            Messages = chat.Messages?
                 .Select(RemoveMessageAvatarUrls)
                 .ToArray(),
         };
@@ -1025,12 +1373,43 @@ public sealed class ChatExportService
 
     private static string CreateExportRoot(string parentDirectory, AvaQQGroup conversation)
     {
-        var title = SanitizeFileName(conversation.DisplayName);
+        return CreateExportRoot(parentDirectory, conversation.DisplayName);
+    }
+
+    private static string CreateMergedExportRoot(string parentDirectory, IEnumerable<AvaQQGroup> conversations)
+    {
+        var titles = conversations
+            .Select(static conversation => conversation.DisplayName)
+            .Where(static title => !string.IsNullOrWhiteSpace(title))
+            .Take(2)
+            .ToArray();
+        var title = titles.Length switch
+        {
+            0 => "合并聊天记录",
+            1 => $"合并_{titles[0]}",
+            _ => $"合并_{titles[0]}_等",
+        };
+
+        return CreateExportRoot(parentDirectory, title);
+    }
+
+    private static string CreateExportRoot(string parentDirectory, string titleValue)
+    {
+        var title = SanitizeFileName(titleValue);
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var directoryName = string.IsNullOrWhiteSpace(title)
             ? $"ChatExport_{timestamp}"
             : $"ChatExport_{title}_{timestamp}";
-        return Path.Combine(parentDirectory, directoryName);
+        var path = Path.Combine(parentDirectory, directoryName);
+        if (!Directory.Exists(path))
+            return path;
+
+        for (var i = 2;; i++)
+        {
+            var candidate = Path.Combine(parentDirectory, $"{directoryName}_{i}");
+            if (!Directory.Exists(candidate))
+                return candidate;
+        }
     }
 
     private static string CreateMessageKey(AvaQQMessage message)
@@ -1449,6 +1828,8 @@ public sealed class ChatExportService
 }
 
 public sealed record ChatExportSource(AvaQQGroup Conversation, IReadOnlyList<AvaQQMessage> Messages);
+
+public sealed record ChatExportConversationExport(AvaQQGroup Conversation, IReadOnlyList<ChatExportSource> Sources);
 
 public sealed record ChatExportResult(
     string ExportDirectory,

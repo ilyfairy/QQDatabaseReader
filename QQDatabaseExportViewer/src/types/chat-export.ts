@@ -27,7 +27,20 @@ export interface ChatExportDocument {
   schemaVersion: string
   metadata: ChatExportMetadata
   conversation: ChatExportConversation
+  conversations: ChatExportConversation[]
   participants: ChatExportParticipant[]
+  messages?: ChatExportMessage[] | null
+  messageChunks?: ChatExportMessageChunk[]
+  timelineDates?: ChatExportTimelineDate[]
+  messageIndex?: ChatExportMessageIndex[]
+  chats?: ChatExportChat[] | null
+}
+
+export interface ChatExportChat {
+  key: string
+  conversation: ChatExportConversation
+  participants: ChatExportParticipant[]
+  messageCount: number
   messages?: ChatExportMessage[] | null
   messageChunks?: ChatExportMessageChunk[]
   timelineDates?: ChatExportTimelineDate[]
@@ -36,6 +49,7 @@ export interface ChatExportDocument {
 
 export interface ChatExportMessageChunk {
   index: number
+  key?: string
   start: number
   count: number
   path: string
@@ -50,6 +64,7 @@ export interface ChatExportTimelineDate {
 export interface ChatExportMessageIndex {
   index: number
   key: string
+  conversationKey: string
   messageId: number
   messageRandom: number
   messageSeq: number
@@ -253,6 +268,6 @@ export interface ChatExportRawMessage {
 declare global {
   interface Window {
     __QQ_DATABASE_EXPLORER_CHAT_EXPORT__?: ChatExportDocument
-    __QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?: Record<number, ChatExportMessage[] | undefined>
+    __QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__?: Record<string, ChatExportMessage[] | undefined>
   }
 }

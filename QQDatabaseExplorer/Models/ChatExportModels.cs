@@ -8,7 +8,19 @@ public sealed record ChatExportDocument(
     string SchemaVersion,
     ChatExportMetadata Metadata,
     ChatExportConversation Conversation,
+    IReadOnlyList<ChatExportConversation> Conversations,
     IReadOnlyList<ChatExportParticipant> Participants,
+    IReadOnlyList<ChatExportMessage>? Messages,
+    IReadOnlyList<ChatExportMessageChunk>? MessageChunks = null,
+    IReadOnlyList<ChatExportTimelineDate>? TimelineDates = null,
+    IReadOnlyList<ChatExportMessageIndex>? MessageIndex = null,
+    IReadOnlyList<ChatExportChat>? Chats = null);
+
+public sealed record ChatExportChat(
+    string Key,
+    ChatExportConversation Conversation,
+    IReadOnlyList<ChatExportParticipant> Participants,
+    int MessageCount,
     IReadOnlyList<ChatExportMessage>? Messages,
     IReadOnlyList<ChatExportMessageChunk>? MessageChunks = null,
     IReadOnlyList<ChatExportTimelineDate>? TimelineDates = null,
@@ -16,6 +28,7 @@ public sealed record ChatExportDocument(
 
 public sealed record ChatExportMessageChunk(
     int Index,
+    string Key,
     int Start,
     int Count,
     string Path);
@@ -28,6 +41,7 @@ public sealed record ChatExportTimelineDate(
 public sealed record ChatExportMessageIndex(
     int Index,
     string Key,
+    string ConversationKey,
     long MessageId,
     long MessageRandom,
     long MessageSeq);
@@ -40,11 +54,13 @@ public sealed record ChatExportMetadata(
 
 public sealed record ChatExportOptions(
     ChatExportFormat Format,
-    ChatExportContentOptions Content)
+    ChatExportContentOptions Content,
+    ChatExportMode Mode = ChatExportMode.Separate)
 {
     public static ChatExportOptions Default { get; } = new(
         ChatExportFormat.Html,
-        ChatExportContentOptions.All);
+        ChatExportContentOptions.All,
+        ChatExportMode.Separate);
 }
 
 public sealed record ChatExportContentOptions(
@@ -76,7 +92,14 @@ public enum ChatExportFormat
 {
     Html,
     Mhtml,
+    Markdown,
     Json,
+}
+
+public enum ChatExportMode
+{
+    Separate,
+    Merged,
 }
 
 public sealed record ChatExportProgress(
@@ -272,5 +295,6 @@ public sealed record ChatExportRawMessage(
     WriteIndented = false,
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(ChatExportDocument))]
+[JsonSerializable(typeof(IReadOnlyList<ChatExportChat>))]
 [JsonSerializable(typeof(IReadOnlyList<ChatExportMessage>))]
 public sealed partial class ChatExportJsonContext : JsonSerializerContext;

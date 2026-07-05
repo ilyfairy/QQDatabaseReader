@@ -4,7 +4,16 @@ import { layout, measureNaturalWidth, prepareWithSegments } from '@chenglou/pret
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import MessageItem from '@/components/MessageItem.vue'
 import { loadChatExport, loadChatExportFromFile, loadMessageChunk } from '@/services/chatExportLoader'
-import type { ChatExportDocument, ChatExportMedia, ChatExportMessage, ChatExportMessageIndex, ChatExportReply, ChatExportSegment } from '@/types/chat-export'
+import type {
+  ChatExportChat,
+  ChatExportConversation,
+  ChatExportDocument,
+  ChatExportMedia,
+  ChatExportMessage,
+  ChatExportMessageIndex,
+  ChatExportReply,
+  ChatExportSegment,
+} from '@/types/chat-export'
 
 type TimelineRowMeta =
   | {
@@ -71,6 +80,11 @@ const preparedTextCacheLimit = 512
 const loadedMessageChunkLimit = 8
 const visibleMessageLoadDelayMilliseconds = 150
 const defaultTimelineContentWidth = maxBubbleOuterWidth + avatarHeight + messageColumnGap
+const defaultConversationListWidth = 280
+const minConversationListWidth = 180
+const maxConversationListWidth = 520
+const collapseConversationListThreshold = 128
+const collapsedConversationListWidth = 22
 
 type TextWhiteSpace = 'normal' | 'pre-wrap'
 
@@ -94,11 +108,15 @@ const errorMessage = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const timelineRef = ref<HTMLElement | null>(null)
 const timelineScrollRef = ref<HTMLDivElement | null>(null)
+const conversationListRef = ref<HTMLElement | null>(null)
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const isSearchOpen = ref(false)
 const isSettingsOpen = ref(false)
 const isVirtualizationEnabled = ref(true)
 const isLoadingAllMessages = ref(false)
+const conversationListWidth = ref(defaultConversationListWidth)
+const isConversationListCollapsed = ref(false)
+const isConversationListResizing = ref(false)
 const searchText = ref('')
 const searchHits = shallowRef<SearchHit[]>([])
 const activeSearchIndex = ref(-1)
@@ -106,27 +124,34 @@ const searchStatus = ref('')
 const isSearching = ref(false)
 const transientHighlightKey = ref('')
 const timelineContentWidth = ref(defaultTimelineContentWidth)
+const activeChatKey = ref('')
 
 let searchTimer = 0
 let visibleLoadTimer = 0
 let transientHighlightTimer = 0
 let searchRequestId = 0
+let activeChatLoadVersion = 0
 let timelineResizeObserver: ResizeObserver | null = null
+let conversationListResizeLeft = 0
+let conversationListWidthBeforeResize = defaultConversationListWidth
+let lastExpandedConversationListWidth = defaultConversationListWidth
+let documentResizeCursor = ''
+let documentResizeUserSelect = ''
 const messageCache = shallowRef(new Map<number, ChatExportMessage>())
 const rowSizeCache = shallowRef(new Map<number, number>())
-const loadingChunks = new Map<number, Promise<void>>()
-const loadedChunkRanges: Array<{ index: number; start: number; count: number }> = []
-const searchChunkCache = new Map<number, Promise<ChatExportMessage[]>>()
-const replyIndexBySeq = new Map<number, ChatExportMessageIndex>()
-const replyIndexByMessageId = new Map<number, ChatExportMessageIndex>()
-const replyIndexByRandom = new Map<number, ChatExportMessageIndex>()
+const loadingChunks = new Map<string, Promise<void>>()
+const loadedChunkRanges: Array<{ key: string; index: number; start: number; count: number }> = []
+const searchChunkCache = new Map<string, Promise<ChatExportMessage[]>>()
+const replyIndexBySeq = new Map<string, ChatExportMessageIndex>()
+const replyIndexByMessageId = new Map<string, ChatExportMessageIndex>()
+const replyIndexByRandom = new Map<string, ChatExportMessageIndex>()
 
 const rows = computed<TimelineRowMeta[]>(() => {
   const result: TimelineRowMeta[] = []
-  const data = documentData.value
-  const source = data?.messages ?? []
-  const count = data?.metadata.messageCount ?? source.length
-  const timelineDates = data?.timelineDates
+  const chat = activeChat.value
+  const source = chat?.messages ?? []
+  const count = chat?.messageCount ?? source.length
+  const timelineDates = chat?.timelineDates
 
   if (timelineDates?.length) {
     let dateIndex = 0
@@ -189,6 +214,51 @@ const hasSearch = computed(() => searchText.value.trim().length > 0)
 const currentHit = computed(() =>
   activeSearchIndex.value >= 0 ? searchHits.value[activeSearchIndex.value] : undefined,
 )
+const exportedChats = computed<ChatExportChat[]>(() => {
+  const data = documentData.value
+  if (!data) {
+    return []
+  }
+
+  if (data.chats?.length) {
+    return data.chats
+  }
+
+  return [createLegacyChat(data)]
+})
+const activeChat = computed(() =>
+  exportedChats.value.find((chat) => chat.key === activeChatKey.value) ?? exportedChats.value[0] ?? null,
+)
+const activeConversation = computed(() => activeChat.value?.conversation ?? documentData.value?.conversation ?? null)
+const activeMessageCount = computed(() => activeChat.value?.messageCount ?? 0)
+const isMergedExport = computed(() => exportedChats.value.length > 1 || documentData.value?.conversation.logicalType === 'merged')
+const viewerStyle = computed<Record<string, string>>(() => {
+  if (!isMergedExport.value) {
+    return {} as Record<string, string>
+  }
+
+  const width = isConversationListCollapsed.value ? collapsedConversationListWidth : conversationListWidth.value
+  return {
+    '--conversation-list-width': `${width}px`,
+  }
+})
+
+function createLegacyChat(data: ChatExportDocument): ChatExportChat {
+  return {
+    key: data.conversation.key,
+    conversation: data.conversation,
+    participants: data.participants,
+    messageCount: data.metadata.messageCount ?? data.messages?.length ?? 0,
+    messages: data.messages,
+    messageChunks: data.messageChunks,
+    timelineDates: data.timelineDates,
+    messageIndex: data.messageIndex,
+  }
+}
+
+function chunkCacheKey(chunk: { key?: string; index: number }) {
+  return chunk.key ?? String(chunk.index)
+}
 const rowVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(
   computed(() => ({
     count: rows.value.length,
@@ -233,6 +303,7 @@ onUnmounted(() => {
   window.clearTimeout(searchTimer)
   window.clearTimeout(visibleLoadTimer)
   window.clearTimeout(transientHighlightTimer)
+  finishConversationListResize()
   timelineResizeObserver?.disconnect()
 })
 
@@ -241,14 +312,40 @@ watch(searchText, () => {
 })
 
 async function afterDocumentLoaded() {
-  isVirtualizationEnabled.value = true
+  activeChatKey.value = exportedChats.value[0]?.key ?? ''
+  await activateChat(activeChatKey.value, false)
+}
+
+async function activateChat(chatKey: string, scrollToTop = true) {
+  const chat = exportedChats.value.find((item) => item.key === chatKey) ?? exportedChats.value[0]
+  if (!chat) {
+    return
+  }
+
+  activeChatKey.value = chat.key
+  activeChatLoadVersion += 1
+  searchRequestId += 1
   isSettingsOpen.value = false
   isLoadingAllMessages.value = false
+  searchText.value = ''
+  searchHits.value = []
+  activeSearchIndex.value = -1
+  searchStatus.value = ''
+  isSearching.value = false
+  transientHighlightKey.value = ''
   resetLoadedMessages()
   await nextTick()
   observeTimelineResize()
-  rowVirtualizer.value.scrollToOffset(0, { behavior: 'auto' })
-  await ensureVisibleMessagesLoaded()
+  if (scrollToTop) {
+    rowVirtualizer.value.scrollToOffset(0, { behavior: 'auto' })
+  } else {
+    rowVirtualizer.value.scrollToOffset(0, { behavior: 'auto' })
+  }
+  if (isVirtualizationEnabled.value) {
+    await ensureVisibleMessagesLoaded()
+  } else {
+    await loadFullTimelineForActiveChat(true)
+  }
 }
 
 function resetLoadedMessages() {
@@ -266,17 +363,18 @@ function rebuildReplyIndex() {
   replyIndexByMessageId.clear()
   replyIndexByRandom.clear()
 
-  const data = documentData.value
-  if (data?.messageIndex) {
-    for (const message of data.messageIndex) {
+  const chat = activeChat.value
+  if (chat?.messageIndex) {
+    for (const message of chat.messageIndex) {
       addReplyIndex(message)
     }
     return
   }
 
-  data?.messages?.forEach((message, index) => addReplyIndex({
+  chat?.messages?.forEach((message, index) => addReplyIndex({
     index,
     key: message.key,
+    conversationKey: message.raw.conversationKey,
     messageId: message.messageId,
     messageRandom: message.messageRandom,
     messageSeq: message.messageSeq,
@@ -284,15 +382,36 @@ function rebuildReplyIndex() {
 }
 
 function addReplyIndex(message: ChatExportMessageIndex) {
-  if (message.messageSeq !== 0 && !replyIndexBySeq.has(message.messageSeq)) {
-    replyIndexBySeq.set(message.messageSeq, message)
+  if (message.messageSeq !== 0) {
+    addReplyIndexValue(replyIndexBySeq, message.conversationKey, message.messageSeq, message)
   }
-  if (message.messageId !== 0 && !replyIndexByMessageId.has(message.messageId)) {
-    replyIndexByMessageId.set(message.messageId, message)
+  if (message.messageId !== 0) {
+    addReplyIndexValue(replyIndexByMessageId, message.conversationKey, message.messageId, message)
   }
-  if (message.messageRandom !== 0 && !replyIndexByRandom.has(message.messageRandom)) {
-    replyIndexByRandom.set(message.messageRandom, message)
+  if (message.messageRandom !== 0) {
+    addReplyIndexValue(replyIndexByRandom, message.conversationKey, message.messageRandom, message)
   }
+}
+
+function addReplyIndexValue(
+  map: Map<string, ChatExportMessageIndex>,
+  conversationKey: string,
+  value: number,
+  message: ChatExportMessageIndex,
+) {
+  const preciseKey = replyLookupKey(conversationKey, value)
+  if (!map.has(preciseKey)) {
+    map.set(preciseKey, message)
+  }
+
+  const fallbackKey = replyLookupKey('', value)
+  if (!map.has(fallbackKey)) {
+    map.set(fallbackKey, message)
+  }
+}
+
+function replyLookupKey(conversationKey: string | undefined, value: number) {
+  return `${conversationKey || '*'}:${value}`
 }
 
 watch(virtualRows, () => {
@@ -340,7 +459,7 @@ function materializeRow(index: number): TimelineRow | null {
 }
 
 function messageAt(messageIndex: number) {
-  return documentData.value?.messages?.[messageIndex] ?? messageCache.value.get(messageIndex)
+  return activeChat.value?.messages?.[messageIndex] ?? messageCache.value.get(messageIndex)
 }
 
 async function ensureVisibleMessagesLoaded() {
@@ -383,6 +502,10 @@ async function toggleVirtualization() {
 
 async function disableVirtualization() {
   isVirtualizationEnabled.value = false
+  await loadFullTimelineForActiveChat(true)
+}
+
+async function loadFullTimelineForActiveChat(scrollToTop: boolean) {
   isLoadingAllMessages.value = true
   window.clearTimeout(visibleLoadTimer)
   try {
@@ -394,7 +517,9 @@ async function disableVirtualization() {
       }
     }
     await nextTick()
-    timelineScrollElement()?.scrollTo({ top: 0, behavior: 'auto' })
+    if (scrollToTop) {
+      timelineScrollElement()?.scrollTo({ top: 0, behavior: 'auto' })
+    }
   } finally {
     isLoadingAllMessages.value = false
   }
@@ -410,20 +535,29 @@ function enableVirtualization() {
 }
 
 async function loadAllMessages() {
-  const data = documentData.value
-  const total = data?.metadata.messageCount ?? data?.messages?.length ?? 0
-  if (!data || total <= 0) {
+  const chat = activeChat.value
+  const total = chat?.messageCount ?? chat?.messages?.length ?? 0
+  if (!chat || total <= 0) {
     return
   }
 
-  if (data.messages) {
+  if (chat.messages) {
     return
   }
 
+  const loadVersion = activeChatLoadVersion
   for (let index = 0; index < total;) {
+    if (loadVersion !== activeChatLoadVersion) {
+      return
+    }
+
     const messageIndex = index
     await ensureMessageLoaded(messageIndex)
-    const chunk = data.messageChunks?.find((item) =>
+    if (loadVersion !== activeChatLoadVersion) {
+      return
+    }
+
+    const chunk = chat.messageChunks?.find((item) =>
       messageIndex >= item.start && messageIndex < item.start + item.count,
     )
     index += chunk ? Math.max(1, chunk.count - Math.max(0, messageIndex - chunk.start)) : 1
@@ -432,60 +566,75 @@ async function loadAllMessages() {
 }
 
 async function ensureMessageLoaded(messageIndex: number) {
-  const data = documentData.value
-  if (!data || data.messages?.[messageIndex] || messageCache.value.has(messageIndex)) {
+  const chat = activeChat.value
+  if (!chat || chat.messages?.[messageIndex] || messageCache.value.has(messageIndex)) {
     return
   }
 
-  const chunk = data.messageChunks?.find((item) =>
+  const chunk = chat.messageChunks?.find((item) =>
     messageIndex >= item.start && messageIndex < item.start + item.count,
   )
   if (!chunk) {
     return
   }
 
-  let loadTask = loadingChunks.get(chunk.index)
+  const cacheKey = chunkCacheKey(chunk)
+  let loadTask = loadingChunks.get(cacheKey)
   if (!loadTask) {
-    loadTask = loadMessageChunkIntoCache(data, chunk)
-    loadingChunks.set(chunk.index, loadTask)
-    loadTask.finally(() => loadingChunks.delete(chunk.index))
+    loadTask = loadMessageChunkIntoCache(chat, chunk, activeChatLoadVersion)
+    loadingChunks.set(cacheKey, loadTask)
+    loadTask.finally(() => {
+      if (loadingChunks.get(cacheKey) === loadTask) {
+        loadingChunks.delete(cacheKey)
+      }
+    })
   }
 
   await loadTask
 }
 
 async function loadMessagesForLookup(messageIndex: number) {
-  const data = documentData.value
-  if (!data) {
+  const chat = activeChat.value
+  if (!chat) {
     return []
   }
 
-  if (data.messages) {
-    return data.messages
+  if (chat.messages) {
+    return chat.messages
   }
 
-  const chunk = data.messageChunks?.find((item) =>
+  const chunk = chat.messageChunks?.find((item) =>
     messageIndex >= item.start && messageIndex < item.start + item.count,
   )
   if (!chunk) {
     return []
   }
 
-  let task = searchChunkCache.get(chunk.index)
+  const cacheKey = chunkCacheKey(chunk)
+  let task = searchChunkCache.get(cacheKey)
   if (!task) {
-    task = loadMessageChunk(data, chunk.start)
-    searchChunkCache.set(chunk.index, task)
-    task.finally(() => searchChunkCache.delete(chunk.index))
+    task = loadMessageChunk(chat, chunk.start)
+    searchChunkCache.set(cacheKey, task)
+    task.finally(() => {
+      if (searchChunkCache.get(cacheKey) === task) {
+        searchChunkCache.delete(cacheKey)
+      }
+    })
   }
 
   return task
 }
 
 async function loadMessageChunkIntoCache(
-  data: ChatExportDocument,
-  chunk: { index: number; start: number; count: number },
+  chat: ChatExportChat,
+  chunk: { key?: string; index: number; start: number; count: number },
+  loadVersion: number,
 ) {
-  const messages = await loadMessageChunk(data, chunk.start)
+  const messages = await loadMessageChunk(chat, chunk.start)
+  if (loadVersion !== activeChatLoadVersion) {
+    return
+  }
+
   const nextMessages = new Map(messageCache.value)
   for (let offset = 0; offset < messages.length; offset++) {
     const message = messages[offset]
@@ -501,14 +650,15 @@ async function loadMessageChunkIntoCache(
 
 function rememberLoadedChunk(
   cache: Map<number, ChatExportMessage>,
-  chunk: { index: number; start: number; count: number },
+  chunk: { key?: string; index: number; start: number; count: number },
 ) {
-  const existingIndex = loadedChunkRanges.findIndex((item) => item.index === chunk.index)
+  const cacheKey = chunkCacheKey(chunk)
+  const existingIndex = loadedChunkRanges.findIndex((item) => item.key === cacheKey)
   if (existingIndex >= 0) {
     loadedChunkRanges.splice(existingIndex, 1)
   }
 
-  loadedChunkRanges.push(chunk)
+  loadedChunkRanges.push({ ...chunk, key: cacheKey })
   if (!isVirtualizationEnabled.value) {
     return
   }
@@ -526,7 +676,7 @@ function rememberLoadedChunk(
 }
 
 function messageIndexToRowIndex(messageIndex: number) {
-  const timelineDates = documentData.value?.timelineDates
+  const timelineDates = activeChat.value?.timelineDates
   if (timelineDates?.length) {
     return messageIndex + countTimelineDatesBeforeOrAt(messageIndex, timelineDates)
   }
@@ -936,35 +1086,30 @@ function conversationTypeLabel(type: string) {
       : type
 }
 
-function logicalLabel(data: ChatExportDocument) {
-  if (!data.conversation.logicalId) {
-    return conversationTypeLabel(data.conversation.type)
+function logicalLabel(conversation: ChatExportConversation) {
+  if (!conversation.logicalId) {
+    return conversationTypeLabel(conversation.type)
   }
 
-  return data.conversation.logicalType === 'group'
-    ? `群号 ${data.conversation.logicalId}`
-    : data.conversation.logicalType === 'private'
-      ? `QQ号 ${data.conversation.logicalId}`
-      : data.conversation.logicalId
+  return conversation.logicalType === 'group'
+    ? `群号 ${conversation.logicalId}`
+    : conversation.logicalType === 'private'
+      ? `QQ号 ${conversation.logicalId}`
+      : conversation.logicalId
 }
 
-function formatExportedAt(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
+function sourceCountLabel(conversation: ChatExportConversation) {
+  const sourceCount = conversation.sources.length
+  return sourceCount > 1 ? `${sourceCount} 个数据库来源` : ''
+}
 
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-    .format(date)
-    .replaceAll('/', '-')
+function shouldShowSourceLabel() {
+  const conversation = activeConversation.value
+  return !!conversation && conversation.sources.length > 1
+}
+
+function messageSourceLabel(_message: ChatExportMessage) {
+  return undefined
 }
 
 function chooseChatJson() {
@@ -996,7 +1141,6 @@ async function loadSelectedChatJson(event: Event) {
 function createSearchText(message: ChatExportMessage) {
   const parts: Array<string | null | undefined> = [
     message.displayText,
-    message.sender.displayName,
     message.reply?.previewText,
     message.systemHint?.action,
     message.systemHint?.sourceName,
@@ -1059,15 +1203,15 @@ function runSearch() {
 }
 
 async function searchInBatches(requestId: number, query: string) {
-  const data = documentData.value
+  const chat = activeChat.value
   const normalizedQuery = normalizeSearchText(query)
-  if (!data || !normalizedQuery) {
+  if (!chat || !normalizedQuery) {
     applySearchResults(requestId, query, [])
     return
   }
 
   const hits: SearchHit[] = []
-  const total = data.metadata.messageCount ?? data.messages?.length ?? 0
+  const total = chat.messageCount ?? chat.messages?.length ?? 0
   for (let index = 0; index < total;) {
     if (requestId !== searchRequestId || query !== searchText.value.trim()) {
       isSearching.value = false
@@ -1080,10 +1224,10 @@ async function searchInBatches(requestId: number, query: string) {
       return
     }
 
-    const chunk = data.messageChunks?.find((item) =>
+    const chunk = chat.messageChunks?.find((item) =>
       index >= item.start && index < item.start + item.count,
     )
-    const baseIndex = data.messages ? 0 : chunk?.start ?? index
+    const baseIndex = chat.messages ? 0 : chunk?.start ?? index
     const startOffset = Math.max(0, index - baseIndex)
     for (let offset = startOffset; offset < messages.length && index < total; offset++, index++) {
       const message = messages[offset]
@@ -1223,8 +1367,8 @@ function jumpToSearchHit(index: number) {
   void jumpToMessageIndex(hit.index, hit.key)
 }
 
-async function jumpToReply(reply: ChatExportReply) {
-  const target = await findReplyTarget(reply)
+async function jumpToReply(reply: ChatExportReply, sourceMessage?: ChatExportMessage) {
+  const target = await findReplyTarget(reply, sourceMessage?.raw.conversationKey)
   if (target) {
     await jumpToMessageIndex(target.index, target.message.key, {
       behavior: target.wasLoaded ? 'smooth' : 'auto',
@@ -1233,19 +1377,19 @@ async function jumpToReply(reply: ChatExportReply) {
   }
 }
 
-async function findReplyTarget(reply: ChatExportReply) {
-  const data = documentData.value
-  const total = data?.metadata.messageCount ?? data?.messages?.length ?? 0
-  if (!data || total <= 0) {
+async function findReplyTarget(reply: ChatExportReply, conversationKey?: string) {
+  const chat = activeChat.value
+  const total = chat?.messageCount ?? chat?.messages?.length ?? 0
+  if (!chat || total <= 0) {
     return null
   }
 
   const indexedTarget =
-    (reply.messageSeq !== 0 ? replyIndexBySeq.get(reply.messageSeq) : undefined) ??
-    (reply.alternateMessageSeq !== 0 ? replyIndexBySeq.get(reply.alternateMessageSeq) : undefined) ??
-    (reply.messageId !== 0 ? replyIndexByMessageId.get(reply.messageId) : undefined) ??
-    (reply.internalMessageId !== 0 ? replyIndexByMessageId.get(reply.internalMessageId) : undefined) ??
-    (reply.messageRandom !== 0 ? replyIndexByRandom.get(reply.messageRandom) : undefined)
+    lookupReplyIndex(replyIndexBySeq, conversationKey, reply.messageSeq) ??
+    lookupReplyIndex(replyIndexBySeq, conversationKey, reply.alternateMessageSeq) ??
+    lookupReplyIndex(replyIndexByMessageId, conversationKey, reply.messageId) ??
+    lookupReplyIndex(replyIndexByMessageId, conversationKey, reply.internalMessageId) ??
+    lookupReplyIndex(replyIndexByRandom, conversationKey, reply.messageRandom)
   if (indexedTarget) {
     const wasLoaded = !!messageAt(indexedTarget.index)
     await ensureMessageLoaded(indexedTarget.index)
@@ -1257,14 +1401,14 @@ async function findReplyTarget(reply: ChatExportReply) {
 
   for (let index = 0; index < total;) {
     const messages = await loadMessagesForLookup(index)
-    const chunk = data.messageChunks?.find((item) =>
+    const chunk = chat.messageChunks?.find((item) =>
       index >= item.start && index < item.start + item.count,
     )
-    const baseIndex = data.messages ? 0 : chunk?.start ?? index
+    const baseIndex = chat.messages ? 0 : chunk?.start ?? index
 
     for (let offset = Math.max(0, index - baseIndex); offset < messages.length && index < total; offset++, index++) {
       const message = messages[offset]
-      if (message && isReplyTarget(message, reply)) {
+      if (message && isReplyTarget(message, reply, conversationKey)) {
         return { index, message, wasLoaded: !!messageAt(index) }
       }
     }
@@ -1279,6 +1423,18 @@ async function findReplyTarget(reply: ChatExportReply) {
   return null
 }
 
+function lookupReplyIndex(
+  map: Map<string, ChatExportMessageIndex>,
+  conversationKey: string | undefined,
+  value: number,
+) {
+  if (value === 0) {
+    return undefined
+  }
+
+  return map.get(replyLookupKey(conversationKey, value)) ?? map.get(replyLookupKey('', value))
+}
+
 function isReplyIndexTarget(
   message: Pick<ChatExportMessage, 'messageId' | 'messageRandom' | 'messageSeq'>,
   reply: ChatExportReply,
@@ -1290,8 +1446,8 @@ function isReplyIndexTarget(
     (reply.messageRandom !== 0 && message.messageRandom === reply.messageRandom)
 }
 
-function isReplyTarget(message: ChatExportMessage, reply: ChatExportReply) {
-  return isReplyIndexTarget(message, reply)
+function isReplyTarget(message: ChatExportMessage, reply: ChatExportReply, conversationKey?: string) {
+  return (!conversationKey || message.raw.conversationKey === conversationKey) && isReplyIndexTarget(message, reply)
 }
 
 function jumpToPreviousHit() {
@@ -1446,29 +1602,180 @@ function createPreview(text: string, query: string) {
   const preview = source.slice(start, start + limit)
   return `${start > 0 ? '...' : ''}${preview}${start + limit < source.length ? '...' : ''}`
 }
+
+function chatAvatarText(conversation: ChatExportConversation) {
+  return conversation.title.slice(0, 1)
+}
+
+function chatMessageCount(chat: ChatExportChat) {
+  return chat.messageCount ?? chat.messages?.length ?? 0
+}
+
+function selectChat(chat: ChatExportChat) {
+  if (chat.key === activeChatKey.value) {
+    return
+  }
+
+  void activateChat(chat.key)
+}
+
+function startConversationListResize(event: PointerEvent) {
+  if (event.button !== 0) {
+    return
+  }
+
+  const rect = conversationListRef.value?.getBoundingClientRect()
+  if (!rect) {
+    return
+  }
+
+  conversationListResizeLeft = rect.left
+  conversationListWidthBeforeResize = conversationListWidth.value
+  isConversationListResizing.value = true
+  setDocumentResizeCursor(true)
+  window.addEventListener('pointermove', resizeConversationList)
+  window.addEventListener('pointerup', finishConversationListResize)
+  window.addEventListener('pointercancel', finishConversationListResize)
+  event.preventDefault()
+}
+
+function resizeConversationList(event: PointerEvent) {
+  if (!isConversationListResizing.value) {
+    return
+  }
+
+  const rawWidth = event.clientX - conversationListResizeLeft
+  if (rawWidth <= collapseConversationListThreshold) {
+    collapseConversationList()
+    finishConversationListResize()
+    return
+  }
+
+  isConversationListCollapsed.value = false
+  conversationListWidth.value = Math.round(Math.min(maxConversationListWidth, Math.max(minConversationListWidth, rawWidth)))
+}
+
+function finishConversationListResize() {
+  if (!isConversationListResizing.value) {
+    return
+  }
+
+  isConversationListResizing.value = false
+  if (!isConversationListCollapsed.value) {
+    lastExpandedConversationListWidth = conversationListWidth.value
+  }
+  setDocumentResizeCursor(false)
+  window.removeEventListener('pointermove', resizeConversationList)
+  window.removeEventListener('pointerup', finishConversationListResize)
+  window.removeEventListener('pointercancel', finishConversationListResize)
+}
+
+function collapseConversationList() {
+  lastExpandedConversationListWidth = Math.max(minConversationListWidth, conversationListWidthBeforeResize)
+  isConversationListCollapsed.value = true
+}
+
+function expandConversationList() {
+  conversationListWidth.value = Math.round(Math.min(maxConversationListWidth, Math.max(minConversationListWidth, lastExpandedConversationListWidth)))
+  isConversationListCollapsed.value = false
+}
+
+function setDocumentResizeCursor(enabled: boolean) {
+  if (enabled) {
+    documentResizeCursor = document.body.style.cursor
+    documentResizeUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    return
+  }
+
+  document.body.style.cursor = documentResizeCursor
+  document.body.style.userSelect = documentResizeUserSelect
+}
 </script>
 
 <template>
-  <main v-if="documentData" class="viewer">
-    <header class="conversation-header">
+  <main
+    v-if="documentData"
+    class="viewer"
+    :class="{
+      'merged-viewer': isMergedExport,
+      'conversation-list-collapsed': isConversationListCollapsed,
+      'conversation-list-resizing': isConversationListResizing,
+    }"
+    :style="viewerStyle"
+  >
+    <aside v-if="isMergedExport" ref="conversationListRef" class="conversation-list">
+      <template v-if="!isConversationListCollapsed">
+        <div class="conversation-list-head">
+          <strong>聊天记录</strong>
+          <span>{{ exportedChats.length }} 个聊天</span>
+        </div>
+        <div class="conversation-list-scroll">
+          <button
+            v-for="chat in exportedChats"
+            :key="chat.key"
+            type="button"
+            class="conversation-list-item"
+            :class="{ active: chat.key === activeChatKey }"
+            @click="selectChat(chat)"
+          >
+            <span class="conversation-list-avatar">
+              <img
+                v-if="avatarUrl(chat.conversation.avatarPath, chat.conversation.avatarUrl)"
+                :src="avatarUrl(chat.conversation.avatarPath, chat.conversation.avatarUrl)"
+                loading="lazy"
+                decoding="async"
+                alt=""
+              />
+              <span v-else>{{ chatAvatarText(chat.conversation) }}</span>
+            </span>
+            <span class="conversation-list-main">
+              <strong>{{ chat.conversation.title }}</strong>
+              <small>{{ chatMessageCount(chat) }} 条消息</small>
+            </span>
+          </button>
+        </div>
+        <div
+          class="conversation-list-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖拽调整聊天列表宽度"
+          :aria-valuemin="minConversationListWidth"
+          :aria-valuemax="maxConversationListWidth"
+          :aria-valuenow="conversationListWidth"
+          title="拖拽调整宽度"
+          @pointerdown="startConversationListResize"
+        ></div>
+      </template>
+      <button
+        v-else
+        type="button"
+        class="conversation-list-expand"
+        aria-label="展开聊天列表"
+        title="展开聊天列表"
+        @click="expandConversationList"
+      ></button>
+    </aside>
+
+    <header v-if="activeConversation" class="conversation-header">
       <div class="conversation-avatar">
         <img
-          v-if="avatarUrl(documentData.conversation.avatarPath, documentData.conversation.avatarUrl)"
-          :src="avatarUrl(documentData.conversation.avatarPath, documentData.conversation.avatarUrl)"
+          v-if="avatarUrl(activeConversation.avatarPath, activeConversation.avatarUrl)"
+          :src="avatarUrl(activeConversation.avatarPath, activeConversation.avatarUrl)"
           loading="lazy"
           decoding="async"
           alt=""
         />
-        <span v-else>{{ documentData.conversation.title.slice(0, 1) }}</span>
+        <span v-else>{{ chatAvatarText(activeConversation) }}</span>
       </div>
       <div class="conversation-summary">
-        <h1>{{ documentData.conversation.title }}</h1>
+        <h1>{{ activeConversation.title }}</h1>
         <p>
-          {{ documentData.metadata.messageCount }} 条消息 · {{ logicalLabel(documentData) }} · 导出时间:
-          {{ formatExportedAt(documentData.metadata.exportedAt) }}
+          {{ activeMessageCount }} 条消息 · {{ logicalLabel(activeConversation) }}
         </p>
-        <p v-if="documentData.conversation.sources.length > 1">
-          {{ documentData.conversation.sources.length }} 个数据库来源
+        <p v-if="sourceCountLabel(activeConversation)">
+          {{ sourceCountLabel(activeConversation) }}
         </p>
       </div>
       <div class="header-actions">
@@ -1506,7 +1813,8 @@ function createPreview(text: string, query: string) {
             <MessageItem
               v-else
               :message="row.message"
-              :show-source="documentData.conversation.sources.length > 1"
+              :show-source="shouldShowSourceLabel()"
+              :source-label="messageSourceLabel(row.message)"
               :highlighted="currentHit?.key === row.message.key || transientHighlightKey === row.message.key"
               @reply-click="jumpToReply"
             />
@@ -1529,7 +1837,8 @@ function createPreview(text: string, query: string) {
             <MessageItem
               v-else
               :message="row.message"
-              :show-source="documentData.conversation.sources.length > 1"
+              :show-source="shouldShowSourceLabel()"
+              :source-label="messageSourceLabel(row.message)"
               :highlighted="currentHit?.key === row.message.key || transientHighlightKey === row.message.key"
               @reply-click="jumpToReply"
             />
@@ -1547,7 +1856,7 @@ function createPreview(text: string, query: string) {
       <button type="button" class="settings-toggle-button" :disabled="isLoadingAllMessages" @click="toggleVirtualization">
         {{ isVirtualizationEnabled ? '关闭虚拟化' : '开启虚拟化' }}
       </button>
-      <p v-if="!isVirtualizationEnabled">已全量加载聊天消息。</p>
+      <p v-if="!isVirtualizationEnabled">已关闭虚拟化，切换聊天后仍保持关闭。</p>
     </aside>
 
     <aside v-if="isSearchOpen" class="floating-search">

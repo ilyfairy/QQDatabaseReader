@@ -24,7 +24,7 @@ internal sealed class ConversationListState
 
     public string? ActiveConversationKey => _activeConversationKey;
 
-    public IReadOnlyList<AvaQQGroup> SelectedGroups => _groups
+    public IReadOnlyList<AvaQQGroup> SelectedGroups => _filteredGroups
         .Where(group => _selectedConversationKeys.Contains(group.ConversationKey))
         .ToArray();
 

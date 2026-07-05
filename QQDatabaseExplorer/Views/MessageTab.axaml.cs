@@ -1060,6 +1060,7 @@ public partial class MessageTab : UserControl
 
         e.Handled = true;
 
+        var exportConversations = GetContextExportConversations(group);
         var copyId = GetConversationCopyId(group);
         var copyIdMenuItem = new MenuItem
         {
@@ -1087,17 +1088,28 @@ public partial class MessageTab : UserControl
 
         var exportMenuItem = new MenuItem
         {
-            Header = "导出聊天记录",
-            IsEnabled = _viewModel.CanExportConversation(group),
+            Header = exportConversations.Count > 1 ? $"导出 {exportConversations.Count} 个聊天记录" : "导出聊天记录",
+            IsEnabled = exportConversations.Count > 0,
         };
         exportMenuItem.Click += async (_, _) => await App.Host.Services.GetRequiredService<IDialogService>()
-            .ShowChatExportDialog(group, _viewModel.ViewModelToken);
+            .ShowChatExportDialog(exportConversations, _viewModel.ViewModelToken);
 
         var contextMenu = new ContextMenu
         {
             ItemsSource = new Control[] { copyIdMenuItem, copyNameMenuItem, new Separator(), exportMenuItem },
         };
         ContextMenuHelper.Open(control, contextMenu);
+    }
+
+    private IReadOnlyList<AvaQQGroup> GetContextExportConversations(AvaQQGroup group)
+    {
+        var selectedGroups = _viewModel.SelectedGroups
+            .Where(_viewModel.CanExportConversation)
+            .ToArray();
+
+        return group.IsSelected && selectedGroups.Length > 0
+            ? selectedGroups
+            : _viewModel.CanExportConversation(group) ? [group] : [];
     }
 
     private static bool IsPrivateConversation(AvaConversationType conversationType)

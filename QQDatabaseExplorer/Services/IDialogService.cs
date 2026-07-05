@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader.Database;
@@ -24,6 +25,8 @@ public interface IDialogService
         ViewModelToken? ownerToken = null);
 
     Task ShowChatExportDialog(AvaQQGroup conversation, ViewModelToken? ownerToken = null);
+
+    Task ShowChatExportDialog(IReadOnlyList<AvaQQGroup> conversations, ViewModelToken? ownerToken = null);
 
     Task<string> ShowQQDebuggerWindow(ViewModelToken? ownerToken = null);
 

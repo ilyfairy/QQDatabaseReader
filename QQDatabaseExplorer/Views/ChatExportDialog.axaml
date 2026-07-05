@@ -19,7 +19,18 @@
                 HorizontalScrollBarVisibility="Disabled"
                 VerticalScrollBarVisibility="Auto">
                 <StackPanel Spacing="16">
-                    <TextBlock Foreground="#667085" Text="{Binding Conversation.DisplayName}" />
+                    <TextBlock Foreground="#667085" Text="{Binding ConversationSummary}" />
+
+                    <StackPanel Spacing="8" IsVisible="{Binding ShowExportMode}">
+                        <TextBlock Foreground="#555" Text="导出方式" />
+                        <ComboBox
+                            Width="180"
+                            HorizontalAlignment="Left"
+                            ItemsSource="{Binding ExportModes}"
+                            DisplayMemberBinding="{Binding Value}"
+                            SelectedValueBinding="{Binding Key}"
+                            SelectedValue="{Binding SelectedMode}" />
+                    </StackPanel>
 
                     <StackPanel Spacing="8">
                         <TextBlock Foreground="#555" Text="导出目录" />

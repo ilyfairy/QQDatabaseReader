@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ObservableCollections;
 using QQDatabaseExplorer.Controls;
@@ -44,6 +45,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly LatestMessagePreviewFactory _latestMessagePreviewFactory;
     private readonly MentionUinResolver _mentionUinResolver;
     private readonly ChatExportService _chatExportService;
+    private int _exportOperationVersion;
 
     public ViewModelToken ViewModelToken { get; } = new();
 
@@ -143,30 +145,16 @@ public partial class MessageTabViewModel : ViewModelBase
         if (!CanExportConversation(conversation))
             return null;
 
+        var exportOperationVersion = 0;
         try
         {
-            IsExportingConversation = true;
-            var exportSources = new List<ChatExportSource>();
-            var sourceConversations = GetExportConversations(conversation);
-            var sourceIndex = 0;
-            foreach (var sourceConversation in sourceConversations)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                sourceIndex++;
-                progress?.Report(new ChatExportProgress(
-                    "读取消息",
-                    $"{sourceConversation.DisplayName} ({sourceIndex}/{sourceConversations.Count})",
-                    sourceIndex - 1,
-                    sourceConversations.Count));
-                var page = await _messageDatabaseQueryRunner.RunAsync(() =>
-                    _messagePageLoader.CreatePage(
-                        sourceConversation,
-                        _messageTimelineFacade.LoadAllMessages(sourceConversation, ExportPageSize),
-                        ExportReplyLookupLimit));
-
-                var avaMessages = await _messagePageDisplayBuilder.CreateAsync(sourceConversation, page);
-                exportSources.Add(new ChatExportSource(sourceConversation, avaMessages));
-            }
+            exportOperationVersion = BeginExportOperation();
+            using var exportCancellationRegistration = RegisterExportCancellation(cancellationToken, exportOperationVersion);
+            var exportSources = await CreateExportSourcesAsync(
+                conversation,
+                progress,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             return await Task.Run(
                 async () => await _chatExportService.ExportAsync(
@@ -180,7 +168,59 @@ public partial class MessageTabViewModel : ViewModelBase
         }
         finally
         {
-            IsExportingConversation = false;
+            if (exportOperationVersion != 0)
+                EndExportOperation(exportOperationVersion);
+        }
+    }
+
+    public async Task<ChatExportResult?> ExportMergedConversationsAsync(
+        IReadOnlyList<AvaQQGroup> conversations,
+        string parentDirectory,
+        ChatExportOptions options,
+        IProgress<ChatExportProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var exportConversations = conversations
+            .Where(CanExportConversation)
+            .DistinctBy(static conversation => conversation.ConversationKey, StringComparer.Ordinal)
+            .ToArray();
+        if (exportConversations.Length == 0)
+            return null;
+
+        var exportOperationVersion = 0;
+        try
+        {
+            exportOperationVersion = BeginExportOperation();
+            using var exportCancellationRegistration = RegisterExportCancellation(cancellationToken, exportOperationVersion);
+            var exports = new List<ChatExportConversationExport>(exportConversations.Length);
+            for (var i = 0; i < exportConversations.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var conversation = exportConversations[i];
+                var conversationProgress = new Progress<ChatExportProgress>(item =>
+                    progress?.Report(PrefixExportProgress(item, conversation, i, exportConversations.Length)));
+                var sources = await CreateExportSourcesAsync(
+                    conversation,
+                    conversationProgress,
+                    cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                exports.Add(new ChatExportConversationExport(conversation, sources));
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return await Task.Run(
+                async () => await _chatExportService.ExportMergedAsync(
+                    exports,
+                    parentDirectory,
+                    options,
+                    progress,
+                    cancellationToken),
+                cancellationToken);
+        }
+        finally
+        {
+            if (exportOperationVersion != 0)
+                EndExportOperation(exportOperationVersion);
         }
     }
 
@@ -206,6 +246,83 @@ public partial class MessageTabViewModel : ViewModelBase
 
         var loadVersion = _messageLoadVersion.BeginNext();
         await LoadEarliestMessagesAsync(SelectedGroup, loadVersion);
+    }
+
+    private async Task<IReadOnlyList<ChatExportSource>> CreateExportSourcesAsync(
+        AvaQQGroup conversation,
+        IProgress<ChatExportProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var exportSources = new List<ChatExportSource>();
+        var sourceConversations = GetExportConversations(conversation);
+        var sourceIndex = 0;
+        foreach (var sourceConversation in sourceConversations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            sourceIndex++;
+            progress?.Report(new ChatExportProgress(
+                "读取消息",
+                $"{sourceConversation.DisplayName} ({sourceIndex}/{sourceConversations.Count})",
+                sourceIndex - 1,
+                sourceConversations.Count));
+            var page = await _messageDatabaseQueryRunner.RunAsync(() =>
+                _messagePageLoader.CreatePage(
+                    sourceConversation,
+                    _messageTimelineFacade.LoadAllMessages(sourceConversation, ExportPageSize),
+                    ExportReplyLookupLimit));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var avaMessages = await _messagePageDisplayBuilder.CreateAsync(sourceConversation, page);
+            cancellationToken.ThrowIfCancellationRequested();
+            exportSources.Add(new ChatExportSource(sourceConversation, avaMessages));
+        }
+
+        return exportSources;
+    }
+
+    private int BeginExportOperation()
+    {
+        var version = ++_exportOperationVersion;
+        IsExportingConversation = true;
+        return version;
+    }
+
+    private CancellationTokenRegistration RegisterExportCancellation(CancellationToken cancellationToken, int version)
+    {
+        return cancellationToken.Register(() =>
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (version == _exportOperationVersion)
+                    IsExportingConversation = false;
+            });
+        });
+    }
+
+    private void EndExportOperation(int version)
+    {
+        if (version == _exportOperationVersion)
+            IsExportingConversation = false;
+    }
+
+    private static ChatExportProgress PrefixExportProgress(
+        ChatExportProgress progress,
+        AvaQQGroup conversation,
+        int index,
+        int total)
+    {
+        if (total <= 1)
+            return progress;
+
+        var detail = string.IsNullOrWhiteSpace(progress.Detail) ||
+                     progress.Detail.StartsWith(conversation.DisplayName, StringComparison.CurrentCulture)
+            ? progress.Detail
+            : $"{conversation.DisplayName}: {progress.Detail}";
+        return progress with
+        {
+            Stage = $"{progress.Stage} ({index + 1}/{total})",
+            Detail = detail,
+        };
     }
 
     public void ScrollToMessage(long messageId)

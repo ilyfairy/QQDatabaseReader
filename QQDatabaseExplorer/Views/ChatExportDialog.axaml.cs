@@ -17,6 +17,7 @@ public partial class ChatExportDialog : Window
         DataContext = viewModel;
         viewModelTokenService.AutoRegister(viewModel.ViewModelToken, this);
         InitializeComponent();
+        Closing += (_, _) => ViewModel.CancelExport();
     }
 
     private async void ChooseOutputDirectory_Click(object? sender, RoutedEventArgs e)
@@ -43,12 +44,13 @@ public partial class ChatExportDialog : Window
             return;
         }
 
-        if (ViewModel.Result is { ExportDirectory: { Length: > 0 } exportDirectory })
-            ShellFileLocator.ShowDirectory(exportDirectory);
+        if (!string.IsNullOrWhiteSpace(ViewModel.ResultDirectory))
+            ShellFileLocator.ShowDirectory(ViewModel.ResultDirectory);
     }
 
     private void Close_Click(object? sender, RoutedEventArgs e)
     {
+        ViewModel.CancelExport();
         Close();
     }
 }

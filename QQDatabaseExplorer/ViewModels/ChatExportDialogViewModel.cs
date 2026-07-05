@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -12,6 +13,7 @@ namespace QQDatabaseExplorer.ViewModels;
 public partial class ChatExportDialogViewModel : ViewModelBase
 {
     private readonly MessageTabViewModel _messageTabViewModel;
+    private CancellationTokenSource? _exportCancellationTokenSource;
 
     public ChatExportDialogViewModel(MessageTabViewModel messageTabViewModel)
     {
@@ -22,13 +24,20 @@ public partial class ChatExportDialogViewModel : ViewModelBase
 
     public AvaQQGroup? Conversation { get; private set; }
 
+    public IReadOnlyList<AvaQQGroup> Conversations { get; private set; } = [];
+
     public ChatExportResult? Result { get; private set; }
+
+    public string? ResultDirectory { get; private set; }
 
     [ObservableProperty]
     public partial string OutputDirectory { get; set; } = string.Empty;
 
     [ObservableProperty]
     public partial ChatExportFormat SelectedFormat { get; set; } = ChatExportFormat.Html;
+
+    [ObservableProperty]
+    public partial ChatExportMode SelectedMode { get; set; } = ChatExportMode.Separate;
 
     [ObservableProperty]
     public partial bool IncludeAvatars { get; set; } = true;
@@ -66,7 +75,14 @@ public partial class ChatExportDialogViewModel : ViewModelBase
     [ObservableProperty]
     public partial string CompletedText { get; set; } = string.Empty;
 
-    public bool CanStartExport => Conversation is not null &&
+    public string ConversationSummary => Conversations.Count switch
+    {
+        0 => string.Empty,
+        1 => Conversations[0].DisplayName,
+        _ => $"已选择 {Conversations.Count} 个聊天",
+    };
+
+    public bool CanStartExport => Conversations.Count > 0 &&
                                   !IsExporting &&
                                   !string.IsNullOrWhiteSpace(OutputDirectory);
 
@@ -74,18 +90,28 @@ public partial class ChatExportDialogViewModel : ViewModelBase
     {
         { ChatExportFormat.Html, "HTML 文件夹" },
         { ChatExportFormat.Mhtml, "MHTML 单文件" },
+        { ChatExportFormat.Markdown, "Markdown" },
         { ChatExportFormat.Json, "仅 JSON 数据" },
     };
+
+    public Dictionary<ChatExportMode, string> ExportModes { get; } = new()
+    {
+        { ChatExportMode.Separate, "独立导出" },
+        { ChatExportMode.Merged, "合并导出" },
+    };
+
+    public bool ShowExportMode => Conversations.Count > 1;
 
     public string FormatDescription => SelectedFormat switch
     {
         ChatExportFormat.Html => "HTML 文件夹: index.html + resources",
         ChatExportFormat.Mhtml => "MHTML 单文件: index.mhtml",
+        ChatExportFormat.Markdown => "Markdown: chat.md + resources",
         ChatExportFormat.Json => "仅 JSON 数据: chat.json",
         _ => string.Empty,
     };
 
-    public bool ShowContentOptions => SelectedFormat is ChatExportFormat.Html or ChatExportFormat.Mhtml;
+    public bool ShowContentOptions => SelectedFormat is ChatExportFormat.Html or ChatExportFormat.Mhtml or ChatExportFormat.Markdown;
 
     public bool HasResult => Result is not null;
 
@@ -93,10 +119,21 @@ public partial class ChatExportDialogViewModel : ViewModelBase
 
     public void Initialize(AvaQQGroup conversation)
     {
-        Conversation = conversation;
+        Initialize([conversation]);
+    }
+
+    public void Initialize(IReadOnlyList<AvaQQGroup> conversations)
+    {
+        Conversations = conversations.Where(_messageTabViewModel.CanExportConversation).ToArray();
+        Conversation = Conversations.FirstOrDefault();
+        if (Conversations.Count <= 1)
+            SelectedMode = ChatExportMode.Separate;
         ProgressText = string.Empty;
         CompletedText = string.Empty;
         Result = null;
+        ResultDirectory = null;
+        OnPropertyChanged(nameof(ConversationSummary));
+        OnPropertyChanged(nameof(ShowExportMode));
         OnPropertyChanged(nameof(CanStartExport));
     }
 
@@ -124,12 +161,18 @@ public partial class ChatExportDialogViewModel : ViewModelBase
     [RelayCommand]
     public async Task StartExportAsync(CancellationToken cancellationToken = default)
     {
-        if (Conversation is null || string.IsNullOrWhiteSpace(OutputDirectory) || IsExporting)
+        if (Conversations.Count == 0 || string.IsNullOrWhiteSpace(OutputDirectory) || IsExporting)
             return;
+
+        _exportCancellationTokenSource?.Cancel();
+        _exportCancellationTokenSource?.Dispose();
+        var exportCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _exportCancellationTokenSource = exportCancellation;
 
         IsExporting = true;
         CompletedText = string.Empty;
         Result = null;
+        ResultDirectory = null;
         OnPropertyChanged(nameof(HasResult));
         ProgressValue = 0;
         ProgressCountText = string.Empty;
@@ -147,23 +190,105 @@ public partial class ChatExportDialogViewModel : ViewModelBase
                     IncludeVoice,
                     IncludeVideos,
                     IncludeFiles,
-                    IncludeFaceAssets));
+                    IncludeFaceAssets),
+                Conversations.Count > 1 ? SelectedMode : ChatExportMode.Separate);
 
-            Result = await _messageTabViewModel.ExportConversationAsync(
-                Conversation,
-                OutputDirectory,
-                options,
-                progress,
-                cancellationToken);
+            var exportedCount = 0;
+            var messageCount = 0;
+            if (options.Mode == ChatExportMode.Merged)
+            {
+                var result = await _messageTabViewModel.ExportMergedConversationsAsync(
+                    Conversations,
+                    OutputDirectory,
+                    options,
+                    progress,
+                    exportCancellation.Token);
+
+                if (result is not null)
+                {
+                    Result = result;
+                    exportedCount = 1;
+                    messageCount = result.MessageCount;
+                }
+            }
+            else
+            {
+                for (var i = 0; i < Conversations.Count; i++)
+                {
+                    var conversation = Conversations[i];
+                    var conversationProgress = new Progress<ChatExportProgress>(item =>
+                        UpdateProgress(PrefixProgress(item, conversation, i, Conversations.Count)));
+                    var result = await _messageTabViewModel.ExportConversationAsync(
+                        conversation,
+                        OutputDirectory,
+                        options,
+                        conversationProgress,
+                        exportCancellation.Token);
+
+                    if (result is null)
+                        continue;
+
+                    Result = result;
+                    exportedCount++;
+                    messageCount += result.MessageCount;
+                }
+            }
+
+            ResultDirectory = exportedCount > 1 ? OutputDirectory : Result?.ExportDirectory;
             OnPropertyChanged(nameof(HasResult));
-            CompletedText = Result is null
+            CompletedText = exportedCount == 0
                 ? string.Empty
-                : $"已导出 {Result.MessageCount} 条消息";
+                : options.Mode == ChatExportMode.Merged
+                    ? $"已合并导出 {Conversations.Count} 个聊天, 共 {messageCount} 条消息"
+                    : Conversations.Count == 1
+                    ? $"已导出 {messageCount} 条消息"
+                    : $"已导出 {exportedCount} 个聊天, 共 {messageCount} 条消息";
+        }
+        catch (OperationCanceledException) when (exportCancellation.IsCancellationRequested)
+        {
+            Result = null;
+            ResultDirectory = null;
+            OnPropertyChanged(nameof(HasResult));
+            ProgressText = "导出已取消";
+            ProgressCountText = string.Empty;
+            IsProgressIndeterminate = false;
+            ProgressValue = 0;
+            CompletedText = "导出已取消";
         }
         finally
         {
+            if (ReferenceEquals(_exportCancellationTokenSource, exportCancellation))
+                _exportCancellationTokenSource = null;
+
+            exportCancellation.Dispose();
             IsExporting = false;
         }
+    }
+
+    public void CancelExport()
+    {
+        if (_exportCancellationTokenSource is { IsCancellationRequested: false } cancellation)
+            cancellation.Cancel();
+    }
+
+    private static ChatExportProgress PrefixProgress(
+        ChatExportProgress progress,
+        AvaQQGroup conversation,
+        int index,
+        int total)
+    {
+        if (total <= 1)
+            return progress;
+
+        var detail = string.IsNullOrWhiteSpace(progress.Detail) ||
+                     progress.Detail.StartsWith(conversation.DisplayName, StringComparison.CurrentCulture)
+            ? progress.Detail
+            : $"{conversation.DisplayName}: {progress.Detail}";
+        return progress with
+        {
+            Stage = $"{progress.Stage} ({index + 1}/{total})",
+            Detail = detail,
+        };
     }
 
     private void UpdateProgress(ChatExportProgress progress)
