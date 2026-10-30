@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
@@ -22,48 +23,65 @@ internal sealed class IcalinguaMessageSearchProvider : IConversationMessageSearc
     public SearchPage SearchDiscovery(
         string query,
         ConversationSearchFilter filter,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
         return SearchPage(
             query,
             filter.IcalinguaRoomIds,
             cursor,
-            exactRoomId: false);
+            exactRoomId: false,
+            cancellationToken);
     }
 
     public SearchPage SearchConversation(
         string query,
         AvaGroupMessageSearchGroup conversation,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
         return SearchPage(
             query,
             [conversation.IcalinguaRoomId],
             cursor,
-            exactRoomId: true);
+            exactRoomId: true,
+            cancellationToken);
     }
 
     private SearchPage SearchPage(
         string query,
         IReadOnlyList<long> roomIds,
         SearchCursor? cursor,
-        bool exactRoomId)
+        bool exactRoomId,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var selectedRoomId = roomIds.Count == 1 ? roomIds[0] : 0;
-        var results = exactRoomId && selectedRoomId != 0
-            ? _database.SearchMessagesInRoom(selectedRoomId, query, cursor?.IcalinguaCursor, SearchPageSize)
-            : _database.SearchMessages(query, roomIds, SearchPageSize, cursor?.IcalinguaCursor);
+        var page = exactRoomId && selectedRoomId != 0
+            ? _database.SearchMessagesInRoomPage(
+                selectedRoomId,
+                query,
+                SearchPageSize,
+                cursor?.IcalinguaCursor,
+                cancellationToken)
+            : _database.SearchMessagesPage(
+                query,
+                roomIds,
+                SearchPageSize,
+                cursor?.IcalinguaCursor,
+                cancellationToken);
 
-        var conversations = _database.GetConversationsByRoomIds(results.Select(static result => result.RoomId));
-        var viewResults = results
+        var conversations = _database.GetConversationsByRoomIds(page.Messages.Select(static result => result.RoomId));
+        var viewResults = page.Messages
             .Select(result => CreateResult(result, conversations))
             .ToList();
+        cancellationToken.ThrowIfCancellationRequested();
 
         return new SearchPage(
             viewResults,
-            results.Count == SearchPageSize,
-            results.LastOrDefault() is { } lastResult
-                ? new SearchCursor(IcalinguaCursor: new IcalinguaMessageSearchCursor(lastResult.MessageSeq, lastResult.MessageId))
+            page.HasMore,
+            page.NextCursor is { } nextCursor
+                ? new SearchCursor(IcalinguaCursor: nextCursor)
                 : null);
     }
 

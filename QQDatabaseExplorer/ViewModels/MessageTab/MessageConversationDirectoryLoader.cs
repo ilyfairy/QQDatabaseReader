@@ -12,41 +12,42 @@ internal sealed class MessageConversationDirectoryLoader
     private readonly LatestMessagePreviewFactory _latestMessagePreviewFactory;
     private readonly MessageParticipantResolver _participantResolver;
     private readonly Func<IcalinguaMessageDatabaseSet?> _getIcalinguaMessageDatabases;
+    private readonly QQNtDatabaseQueryGate _qqNtDatabaseQueryGate;
 
     public MessageConversationDirectoryLoader(
         LatestMessagePreviewFactory latestMessagePreviewFactory,
         MessageParticipantResolver participantResolver,
-        Func<IcalinguaMessageDatabaseSet?> getIcalinguaMessageDatabases)
+        Func<IcalinguaMessageDatabaseSet?> getIcalinguaMessageDatabases,
+        QQNtDatabaseQueryGate qqNtDatabaseQueryGate)
     {
         _latestMessagePreviewFactory = latestMessagePreviewFactory;
         _participantResolver = participantResolver;
         _getIcalinguaMessageDatabases = getIcalinguaMessageDatabases;
+        _qqNtDatabaseQueryGate = qqNtDatabaseQueryGate;
     }
 
     public IReadOnlyList<GroupInfoLoadItem> LoadGroupInfoItems(QQGroupInfoReader groupDatabase)
     {
-        return groupDatabase.DbContext.GroupList
+        return _qqNtDatabaseQueryGate.Run(() => groupDatabase.DbContext.GroupList
             .Where(v => v.GroupId != 0)
             .Select(group => new GroupInfoLoadItem(group.GroupId, group.GroupName))
-            .ToList();
+            .ToList());
     }
 
     public List<ConversationLoadItem> LoadQQNtMessageConversations(QQMessageReader messageDatabase)
     {
-        var items = QQNtRecentConversationCatalogReader.Read(messageDatabase).ToList();
-        if (items.Count == 0)
-            items.AddRange(MessageTableConversationCatalogReader.ReadQQNtFallbackConversations(messageDatabase));
-
-        return CreateConversationLoadItems(items);
+        var catalogItems = _qqNtDatabaseQueryGate.Run(() =>
+            BoundedMessageTableConversationCatalogReader.ReadQQNtFallbackIfNeeded(messageDatabase) ??
+            QQNtRecentConversationCatalogReader.Read(messageDatabase));
+        return CreateConversationLoadItems(catalogItems);
     }
 
     public List<ConversationLoadItem> LoadAndroidQQNtMessageConversations(QQAndroidMessageReader messageDatabase)
     {
-        var items = AndroidQQNtRecentConversationCatalogReader.Read(messageDatabase).ToList();
-        if (items.Count == 0)
-            items.AddRange(MessageTableConversationCatalogReader.ReadAndroidQQNtFallbackConversations(messageDatabase));
-
-        return CreateConversationLoadItems(items);
+        var catalogItems = _qqNtDatabaseQueryGate.Run(() =>
+            BoundedMessageTableConversationCatalogReader.ReadAndroidQQNtFallbackIfNeeded(messageDatabase) ??
+            AndroidQQNtRecentConversationCatalogReader.Read(messageDatabase));
+        return CreateConversationLoadItems(catalogItems);
     }
 
     public IReadOnlyList<PCQQConversation> LoadPCQQMessageConversations(PCQQMessageReader messageDatabase)

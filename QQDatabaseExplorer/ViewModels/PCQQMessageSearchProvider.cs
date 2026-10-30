@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.ViewModels.MessageTab;
 using QQDatabaseReader;
@@ -10,6 +11,7 @@ namespace QQDatabaseExplorer.ViewModels;
 internal sealed class PCQQMessageSearchProvider : IConversationMessageSearchProvider
 {
     private const int SearchPageSize = 100;
+    private const int MaxSearchScanRowsPerPage = 5000;
     private readonly PCQQMessageReader _database;
     private readonly IReadOnlyList<PCQQConversation> _conversations;
 
@@ -24,41 +26,52 @@ internal sealed class PCQQMessageSearchProvider : IConversationMessageSearchProv
     public SearchPage SearchDiscovery(
         string query,
         ConversationSearchFilter filter,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
         return SearchPage(
             query,
             GetFilteredConversations(filter),
-            cursor);
+            cursor,
+            cancellationToken);
     }
 
     public SearchPage SearchConversation(
         string query,
         AvaGroupMessageSearchGroup conversation,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
         var selected = _conversations
             .Where(item => string.Equals(item.TableName, conversation.PCQQTableName, System.StringComparison.Ordinal))
             .ToArray();
-        return SearchPage(query, selected, cursor);
+        return SearchPage(query, selected, cursor, cancellationToken);
     }
 
     private SearchPage SearchPage(
         string query,
         IReadOnlyList<PCQQConversation> conversations,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
         var results = new List<AvaGroupMessageSearchResult>(SearchPageSize);
         var conversationIndex = cursor?.ConversationIndex ?? 0;
         var messageCursor = cursor?.PCQQCursor;
-        while (results.Count < SearchPageSize && conversationIndex < conversations.Count)
+        var scannedRows = 0;
+        while (results.Count < SearchPageSize &&
+               conversationIndex < conversations.Count &&
+               scannedRows < MaxSearchScanRowsPerPage)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var conversation = conversations[conversationIndex];
             var page = _database.SearchMessages(
                 conversation.TableName,
                 query,
                 SearchPageSize - results.Count,
-                messageCursor);
+                messageCursor,
+                cancellationToken,
+                maxScanRows: MaxSearchScanRowsPerPage - scannedRows);
+            scannedRows += page.ScannedRows;
             results.AddRange(page.Messages.Select(message => CreateResult(message, conversation)));
             if (page.HasMore)
             {

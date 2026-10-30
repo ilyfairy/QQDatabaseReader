@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -25,7 +26,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     private readonly ConversationMessageSearchResultStore _resultStore;
     private readonly ConversationMessageSearchSession _searchSession = new();
     private readonly ConversationMessageSearchVersionTracker _versionTracker = new();
-    private bool _isLoadingMore;
+    private CancellationTokenSource? _searchCancellation;
     private bool _suppressSelectedGroupRefresh;
     private int _lastVisibleResultCount;
     private string? _visibleGroupKey;
@@ -45,7 +46,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     [ObservableProperty]
     public partial bool IsLoadingMore { get; set; }
 
-    public bool CanSearch => !IsSearching;
+    public bool CanSearch => !IsSearching && !IsLoadingMore;
 
     public bool ShowSearchOverlay => IsSearching && _results.Count == 0;
 
@@ -75,7 +76,8 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             qqDatabaseService,
             _groups,
             _resultStore,
-            _searchSession);
+            _searchSession,
+            messageTabViewModel.ResolveProfileDisplayNameForSearch);
         _searchFilterParser = composition.FilterParser;
         _searchProviderFactory = composition.ProviderFactory;
         _searchWorkflow = composition.Workflow;
@@ -111,11 +113,15 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(CanLoadMore));
         if (!_suppressSelectedGroupRefresh)
-            _ = RefreshVisibleResultsAsync(value, _versionTracker.BeginVisibleResultsRefresh());
+            _ = RefreshVisibleResultsAsync(
+                value,
+                _versionTracker.BeginVisibleResultsRefresh(),
+                _searchCancellation?.Token ?? CancellationToken.None);
     }
 
     partial void OnIsLoadingMoreChanged(bool value)
     {
+        OnPropertyChanged(nameof(CanSearch));
         OnPropertyChanged(nameof(CanLoadMore));
     }
 
@@ -153,7 +159,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
     [RelayCommand]
     public async Task Search()
     {
-        if (IsSearching)
+        if (!CanSearch)
             return;
 
         if (!_searchProviderFactory.HasSearchDatabase)
@@ -175,6 +181,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         }
 
         var searchVersion = _versionTracker.BeginSearch();
+        var cancellationToken = BeginSearchCancellation();
         try
         {
             IsSearching = true;
@@ -184,22 +191,31 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             var searchResult = await _searchWorkflow.SearchAsync(
                 query,
                 conversationFilter,
-                SelectedGroup);
+                SelectedGroup,
+                () => _versionTracker.IsCurrentSearch(searchVersion),
+                cancellationToken);
 
-            if (!_versionTracker.IsCurrentSearch(searchVersion))
+            if (searchResult is null || !_versionTracker.IsCurrentSearch(searchVersion))
                 return;
 
             await SetSelectedGroupAndRefreshAsync(searchResult.SelectedGroup);
+            if (!_versionTracker.IsCurrentSearch(searchVersion))
+                return;
+
             UpdateStatusText();
-            _ = StreamDiscoveryResultsInBackgroundAsync(searchVersion);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
             if (_versionTracker.IsCurrentSearch(searchVersion))
-            {
                 StatusText = $"搜索失败: {ex.Message}";
+        }
+        finally
+        {
+            if (_versionTracker.IsCurrentSearch(searchVersion))
                 IsSearching = false;
-            }
         }
     }
 
@@ -214,18 +230,21 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
 
     public async Task LoadMoreResultsAsync()
     {
-        if (!CanLoadMore || _isLoadingMore)
+        if (!CanLoadMore)
             return;
 
         if (!_searchWorkflow.IsLoadMoreAvailable)
             return;
 
         var searchVersion = _versionTracker.CurrentSearchVersion;
+        var cancellationToken = _searchCancellation?.Token ?? CancellationToken.None;
         try
         {
-            _isLoadingMore = true;
             IsLoadingMore = true;
-            var selectedGroup = await _searchWorkflow.LoadMoreAsync(SelectedGroup);
+            var selectedGroup = await _searchWorkflow.LoadMoreAsync(
+                SelectedGroup,
+                () => _versionTracker.IsCurrentSearch(searchVersion),
+                cancellationToken);
 
             if (!_versionTracker.IsCurrentSearch(searchVersion))
                 return;
@@ -233,8 +252,17 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             if (selectedGroup is not null && !ReferenceEquals(SelectedGroup, selectedGroup))
                 SelectedGroup = selectedGroup;
 
-            await RefreshVisibleResultsAsync(SelectedGroup, _versionTracker.BeginVisibleResultsRefresh());
+            await RefreshVisibleResultsAsync(
+                SelectedGroup,
+                _versionTracker.BeginVisibleResultsRefresh(),
+                cancellationToken);
+            if (!_versionTracker.IsCurrentSearch(searchVersion))
+                return;
+
             UpdateStatusText();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -245,8 +273,6 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         {
             if (_versionTracker.IsCurrentSearch(searchVersion))
                 IsLoadingMore = false;
-
-            _isLoadingMore = false;
         }
     }
 
@@ -260,6 +286,7 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
 
     private void ResetSearchSessionState(bool clearInputs)
     {
+        CancelActiveSearch();
         IsSearching = false;
         IsLoadingMore = false;
         if (clearInputs)
@@ -288,7 +315,10 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
         StatusText = ConversationMessageSearchStatusFormatter.CreateNoSearchDatabaseStatus();
     }
 
-    private async Task RefreshVisibleResultsAsync(AvaGroupMessageSearchGroup? selectedGroup, int version)
+    private async Task RefreshVisibleResultsAsync(
+        AvaGroupMessageSearchGroup? selectedGroup,
+        int version,
+        CancellationToken cancellationToken = default)
     {
         if (selectedGroup is null)
         {
@@ -309,7 +339,12 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
                 pageLoadResult = await _searchWorkflow.LoadConversationPageAsync(
                     selectedGroup,
                     _searchSession.Query,
-                    _searchSession.DatabaseKind);
+                    _searchSession.DatabaseKind,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
             }
             catch (Exception ex)
             {
@@ -331,7 +366,17 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             UpdateStatusText();
         }
 
-        var enrichedResults = await _searchWorkflow.GetEnrichedVisibleResultsAsync(selectedGroup);
+        IReadOnlyList<AvaGroupMessageSearchResult> enrichedResults;
+        try
+        {
+            enrichedResults = await _searchWorkflow.GetEnrichedVisibleResultsAsync(
+                selectedGroup,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
 
         if (!_versionTracker.IsCurrentVisibleResultsRefresh(version, SelectedGroup, selectedGroup))
             return;
@@ -350,63 +395,11 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             _groups.Count,
             _searchSession.IsDiscoveringResults,
             _resultStore.HasMoreDiscoveryResults,
+            _resultStore.IsDiscoveryResultLimitReached ||
+                SelectedGroup is { } selectedGroup &&
+                _resultStore.HasReachedConversationResultLimit(selectedGroup),
             _searchSession.DatabaseKind);
         OnPropertyChanged(nameof(CanLoadMore));
-    }
-
-    private async Task StreamDiscoveryResultsAsync(int searchVersion)
-    {
-        while (_versionTracker.IsCurrentSearch(searchVersion) && _resultStore.HasMoreDiscoveryResults)
-        {
-            var selectedGroup = await _searchWorkflow.LoadMoreDiscoveryAsync(SelectedGroup);
-            if (!_versionTracker.IsCurrentSearch(searchVersion))
-                return;
-
-            await SetSelectedGroupAndRefreshIfChangedAsync(selectedGroup);
-            UpdateStatusText();
-            await Task.Yield();
-        }
-
-        if (!_versionTracker.IsCurrentSearch(searchVersion))
-            return;
-
-        var sortedSelectedGroup = _searchWorkflow.CompleteDiscovery(SelectedGroup);
-        await SetSelectedGroupAndRefreshAsync(sortedSelectedGroup);
-        UpdateStatusText();
-    }
-
-    private async Task StreamDiscoveryResultsInBackgroundAsync(int searchVersion)
-    {
-        try
-        {
-            await StreamDiscoveryResultsAsync(searchVersion);
-        }
-        catch (Exception ex)
-        {
-            if (_versionTracker.IsCurrentSearch(searchVersion))
-                StatusText = $"搜索失败: {ex.Message}";
-        }
-        finally
-        {
-            if (_versionTracker.IsCurrentSearch(searchVersion))
-                IsSearching = false;
-        }
-    }
-
-    private async Task SetSelectedGroupAndRefreshIfChangedAsync(AvaGroupMessageSearchGroup? selectedGroup)
-    {
-        if (!ReferenceEquals(SelectedGroup, selectedGroup))
-        {
-            await SetSelectedGroupAndRefreshAsync(selectedGroup);
-            return;
-        }
-
-        if (selectedGroup is null)
-            return;
-
-        var visibleResultCount = _resultStore.GetVisibleResultCount(selectedGroup);
-        if (visibleResultCount != _lastVisibleResultCount)
-            await RefreshVisibleResultsAsync(selectedGroup, _versionTracker.BeginVisibleResultsRefresh());
     }
 
     private async Task SetSelectedGroupAndRefreshAsync(AvaGroupMessageSearchGroup? selectedGroup)
@@ -424,7 +417,28 @@ public partial class GroupMessageSearchViewModel : ViewModelBase
             }
         }
 
-        await RefreshVisibleResultsAsync(SelectedGroup, _versionTracker.BeginVisibleResultsRefresh());
+        await RefreshVisibleResultsAsync(
+            SelectedGroup,
+            _versionTracker.BeginVisibleResultsRefresh(),
+            _searchCancellation?.Token ?? CancellationToken.None);
+    }
+
+    private CancellationToken BeginSearchCancellation()
+    {
+        CancelActiveSearch();
+        _searchCancellation = new CancellationTokenSource();
+        return _searchCancellation.Token;
+    }
+
+    private void CancelActiveSearch()
+    {
+        var cancellation = _searchCancellation;
+        _searchCancellation = null;
+        if (cancellation is null)
+            return;
+
+        cancellation.Cancel();
+        cancellation.Dispose();
     }
 
     private void ClearVisibleResults(string? visibleGroupKey = null)

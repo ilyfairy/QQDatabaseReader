@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
@@ -214,6 +215,36 @@ public sealed class IcalinguaMessageDatabaseSet : IDisposable
         int pageSize)
     {
         return _searchService.SearchMessagesInRoom(roomId, keyword, cursor, pageSize);
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesPage(
+        string keyword,
+        IReadOnlyList<long>? roomIds,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        return _searchService.SearchMessagesPage(
+            keyword,
+            roomIds,
+            pageSize,
+            cursor,
+            cancellationToken);
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesInRoomPage(
+        long roomId,
+        string keyword,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        return _searchService.SearchMessagesInRoomPage(
+            roomId,
+            keyword,
+            pageSize,
+            cursor,
+            cancellationToken);
     }
 
     public void Dispose()

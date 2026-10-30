@@ -65,6 +65,9 @@ public sealed class LoadedDatabaseItem
         Database = database;
         FilePath = database.DatabaseFilePath;
         Name = GetDatabaseDisplayName(database.DatabaseType, FilePath);
+        // 打开时报损坏, 已宽松打开 (常见是复制时末尾缺页), 提示有部分数据读不到
+        if (database.RawDatabase.OpenedInRecoveryMode)
+            Name += " (已损坏, 部分可读)";
         Kind = GetDatabaseItemKind(database.DatabaseType);
     }
 

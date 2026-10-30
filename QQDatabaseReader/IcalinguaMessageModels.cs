@@ -51,7 +51,25 @@ public sealed record IcalinguaMessageFile(
     int? Height,
     long? Size);
 
-public sealed record IcalinguaMessageSearchCursor(long MessageSortTime, long MessageId);
+public sealed record IcalinguaMessageSearchCursor(
+    long MessageSortTime,
+    long MessageId,
+    int? ScanDatabaseIndex = null,
+    int ScanSourceIndex = 0,
+    long? ScanBeforeRowId = null,
+    IReadOnlyList<IcalinguaMessageSearchSourceCursor>? SourceCursors = null,
+    IReadOnlyList<string>? SeenMessageKeys = null);
+
+public sealed record IcalinguaMessageSearchSourceCursor(
+    long? BeforeRowId = null,
+    long? PendingRowId = null,
+    bool IsExhausted = false);
+
+public sealed record IcalinguaMessageSearchPage(
+    IReadOnlyList<IcalinguaMessageRecord> Messages,
+    IcalinguaMessageSearchCursor? NextCursor,
+    bool HasMore,
+    int ScannedRows);
 
 public sealed record IcalinguaMessageSearchGroupCount(long RoomId, long MatchCount, string DisplayName);
 

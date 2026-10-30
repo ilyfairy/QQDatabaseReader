@@ -19,6 +19,7 @@ using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
 using QQDatabaseExplorer.Utilities;
 using QQDatabaseExplorer.ViewModels;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Views;
 
@@ -1268,7 +1269,7 @@ public partial class MessageTab : UserControl
         if (sender is not Control control ||
             TryGetImageSegmentFromTappedEvent(control, e) is not { } imageSegment ||
             imageSegment.ImageLocalPath is not { } imagePath ||
-            !File.Exists(imagePath))
+            !ArchiveFile.Exists(imagePath))
         {
             return;
         }
@@ -1318,7 +1319,7 @@ public partial class MessageTab : UserControl
         if (TryGetFileSegmentFromTappedEvent(control, e) is { } fileSegment &&
             fileSegment.IsFileAvailable &&
             !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
-            File.Exists(fileSegment.FileLocalPath))
+            ArchiveFile.Exists(fileSegment.FileLocalPath))
         {
             e.Handled = true;
             ShellFileLocator.ShowFileInFolder(fileSegment.FileLocalPath);
@@ -1362,7 +1363,7 @@ public partial class MessageTab : UserControl
 
         var imageSegment = TryGetImageSegmentFromTappedEvent(textBlock, e) ??
                            MessageInlineRenderer.GetImageSegmentAt(textBlock, e.GetPosition(textBlock));
-        if (imageSegment?.ImageLocalPath is not { } imagePath || !File.Exists(imagePath))
+        if (imageSegment?.ImageLocalPath is not { } imagePath || !ArchiveFile.Exists(imagePath))
             return;
 
         if (!imageSegment.IsImageAvailable)
@@ -1408,7 +1409,7 @@ public partial class MessageTab : UserControl
                           MessageInlineRenderer.GetFileSegmentAt(textBlock, e.GetPosition(textBlock));
         if (fileSegment?.IsFileAvailable == true &&
             !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
-            File.Exists(fileSegment.FileLocalPath))
+            ArchiveFile.Exists(fileSegment.FileLocalPath))
         {
             e.Handled = true;
             ShellFileLocator.ShowFileInFolder(fileSegment.FileLocalPath);
@@ -1603,7 +1604,7 @@ public partial class MessageTab : UserControl
         {
             Header = "复制图片",
             IsEnabled = !string.IsNullOrWhiteSpace(imageSegment.ImageLocalPath) &&
-                        File.Exists(imageSegment.ImageLocalPath),
+                        ArchiveFile.Exists(imageSegment.ImageLocalPath),
         };
         copyImageMenuItem.Click += async (_, _) => await CopyImageToClipboard(imageSegment.ImageLocalPath);
 
@@ -1733,7 +1734,7 @@ public partial class MessageTab : UserControl
             Header = "复制视频",
             IsEnabled = videoSegment.IsVideoAvailable &&
                         !string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) &&
-                        File.Exists(videoSegment.VideoLocalPath),
+                        ArchiveFile.Exists(videoSegment.VideoLocalPath),
         };
         copyVideoMenuItem.Click += async (_, _) => await CopyFileToClipboard(videoSegment.VideoLocalPath);
 
@@ -1742,7 +1743,7 @@ public partial class MessageTab : UserControl
             Header = "打开视频",
             IsEnabled = videoSegment.IsVideoAvailable &&
                         !string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) &&
-                        File.Exists(videoSegment.VideoLocalPath),
+                        ArchiveFile.Exists(videoSegment.VideoLocalPath),
         };
         openVideoMenuItem.Click += async (_, _) => await OpenVideoFileAsync(videoSegment);
 
@@ -1813,7 +1814,7 @@ public partial class MessageTab : UserControl
             Header = "复制文件",
             IsEnabled = fileSegment.IsFileAvailable &&
                         !string.IsNullOrWhiteSpace(fileSegment.FileLocalPath) &&
-                        File.Exists(fileSegment.FileLocalPath),
+                        ArchiveFile.Exists(fileSegment.FileLocalPath),
         };
         copyFileMenuItem.Click += async (_, _) => await CopyFileToClipboard(fileSegment.FileLocalPath);
 
@@ -1868,7 +1869,7 @@ public partial class MessageTab : UserControl
         var menuItem = new MenuItem
         {
             Header = "定位文件",
-            IsEnabled = !string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath),
+            IsEnabled = !string.IsNullOrWhiteSpace(localPath) && ArchiveFile.Exists(localPath),
         };
         menuItem.Click += (_, _) => ShellFileLocator.ShowFileInFolder(localPath);
         return menuItem;
@@ -2409,16 +2410,17 @@ public partial class MessageTab : UserControl
     {
         if (!videoSegment.IsVideoAvailable ||
             string.IsNullOrWhiteSpace(videoSegment.VideoLocalPath) ||
-            !File.Exists(videoSegment.VideoLocalPath))
+            !ArchiveFile.Exists(videoSegment.VideoLocalPath))
         {
             return Task.CompletedTask;
         }
 
         try
         {
+            // 归档里的视频先解到临时目录, 外部播放器只能打开真实文件
             Process.Start(new ProcessStartInfo
             {
-                FileName = videoSegment.VideoLocalPath,
+                FileName = ArchiveFile.GetLocalPath(videoSegment.VideoLocalPath),
                 UseShellExecute = true,
             });
         }

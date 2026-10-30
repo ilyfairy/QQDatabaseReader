@@ -24,6 +24,7 @@ public class ConfigService
             new JsonStringEnumConverter(),
         },
     };
+    private static readonly AppConfigJsonContext JsonContext = new(JsonOptions);
 
     /// <summary>
     /// 默认配置文件路径：%AppData%/QQDatabaseExplorer/config.json
@@ -60,7 +61,7 @@ public class ConfigService
             Directory.CreateDirectory(directory);
         }
 
-        var json = JsonSerializer.Serialize(config, JsonOptions);
+        var json = JsonSerializer.Serialize(config, JsonContext.AppConfig);
         await File.WriteAllTextAsync(filePath, json);
     }
 
@@ -93,7 +94,7 @@ public class ConfigService
         AppConfig config;
         try
         {
-            config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions)
+            config = JsonSerializer.Deserialize(json, JsonContext.AppConfig)
                 ?? new AppConfig();
         }
         catch
@@ -168,6 +169,7 @@ public class ConfigService
                         BuddyMessageFtsDbPassword = config.AndroidQQNT.BuddyMessageFtsDbPassword,
                         ProfileInfoDbPath = CreatePortablePath(config.AndroidQQNT.ProfileInfoDbPath, configDirectory),
                         ProfileInfoDbPassword = config.AndroidQQNT.ProfileInfoDbPassword,
+                        CipherHmacAlgorithm = config.AndroidQQNT.CipherHmacAlgorithm,
                     },
             },
             DatabasePlatformType.AndroidMobileQQ => new DatabaseConfig
@@ -212,6 +214,7 @@ public class ConfigService
                         BuddyMessageFtsDbPassword = config.QQNT.BuddyMessageFtsDbPassword,
                         ProfileInfoDbPath = CreatePortablePath(config.QQNT.ProfileInfoDbPath, configDirectory),
                         ProfileInfoDbPassword = config.QQNT.ProfileInfoDbPassword,
+                        CipherHmacAlgorithm = config.QQNT.CipherHmacAlgorithm,
                     },
             },
         };

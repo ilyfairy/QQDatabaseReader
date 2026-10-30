@@ -1082,7 +1082,12 @@ internal static class MessageMediaPathResolver
             if (!string.IsNullOrWhiteSpace(androidPath))
                 return androidPath;
 
-            return QqNtLocalMediaPathResolver.ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+            return QqNtLocalMediaPathResolver.ResolveExplicitLocalImagePath(
+                segment.ImageLocalPath,
+                mediaContext.ChatPicPath,
+                string.IsNullOrWhiteSpace(mediaContext.MobileQQPath)
+                    ? null
+                    : Path.Combine(mediaContext.MobileQQPath, "chatpic"));
         }
 
         return QqNtLocalMediaPathResolver.ResolveImagePath(
@@ -1819,62 +1824,4 @@ internal interface IMessageTimelineProvider
         long messageSeq,
         long messageId,
         MessageFilterCriteria filter);
-}
-
-internal static class MessageTimelineExporter
-{
-    public static IReadOnlyList<MessageRecord> LoadAll(
-        IMessageTimelineProvider provider,
-        AvaQQGroup conversation,
-        int pageSize)
-    {
-        var messages = new List<MessageRecord>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var page = provider.LoadEarliestMessages(conversation, pageSize, MessageFilterCriteria.Empty);
-        var previousAnchorKey = string.Empty;
-
-        while (page.Count > 0)
-        {
-            foreach (var message in page)
-            {
-                if (seen.Add(CreateMessageKey(message)))
-                    messages.Add(message);
-            }
-
-            if (page.Count < pageSize)
-                break;
-
-            var last = page
-                .OrderBy(static message => message.MessageSeq)
-                .ThenBy(static message => message.MessageId)
-                .Last();
-            var anchorKey = CreateMessageKey(last);
-            if (string.Equals(anchorKey, previousAnchorKey, StringComparison.Ordinal))
-                break;
-
-            previousAnchorKey = anchorKey;
-            page = provider.LoadNewerMessages(
-                conversation,
-                last.MessageSeq,
-                last.MessageId,
-                pageSize,
-                MessageFilterCriteria.Empty);
-        }
-
-        return messages
-            .OrderBy(static message => message.MessageSeq)
-            .ThenBy(static message => message.MessageId)
-            .ToArray();
-    }
-
-    private static string CreateMessageKey(MessageRecord message)
-    {
-        return string.Join(
-            ":",
-            message.MessageId,
-            message.MessageRandom,
-            message.MessageSeq,
-            message.MessageTime,
-            message.SenderId);
-    }
 }

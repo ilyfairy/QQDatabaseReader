@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -10,11 +11,11 @@ public static class LocalImageFile
     private const int MarketFaceKeepChunkSize = 30;
     private static readonly byte[] Gif87aHeader = "GIF87a"u8.ToArray();
     private static readonly byte[] Gif89aHeader = "GIF89a"u8.ToArray();
-    private static readonly byte[] PngHeader = "\x89PNG\r\n\x1A\n"u8.ToArray();
+    private static readonly byte[] PngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
     public static byte[] ReadDisplayBytes(string sourcePath)
     {
-        var bytes = File.ReadAllBytes(sourcePath);
+        var bytes = ArchiveFile.ReadAllBytes(sourcePath);
         if (IsMarketFaceEncodedGifBytes(bytes))
             DecodeMarketFaceBytes(bytes);
 
@@ -25,7 +26,7 @@ public static class LocalImageFile
     {
         return IsMarketFaceEncodedGifImage(sourcePath)
             ? new MemoryStream(ReadDisplayBytes(sourcePath), writable: false)
-            : File.OpenRead(sourcePath);
+            : ArchiveFile.OpenRead(sourcePath);
     }
 
     public static bool IsGifImage(string sourcePath)
@@ -41,18 +42,18 @@ public static class LocalImageFile
 
     public static bool IsDisplayableImageFile(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path) || !ArchiveFile.Exists(path))
             return false;
 
         Span<byte> header = stackalloc byte[12];
         try
         {
-            using var stream = File.OpenRead(path);
+            using var stream = ArchiveFile.OpenRead(path);
             var read = stream.Read(header);
             var value = header[..read];
             return value.StartsWith(Gif87aHeader) ||
                    value.StartsWith(Gif89aHeader) ||
-                   value.StartsWith("\x89PNG"u8) ||
+                   value.StartsWith(PngHeader.AsSpan(0, 4)) ||
                    value.Length >= 3 && value[0] == 0xFF && value[1] == 0xD8 && value[2] == 0xFF ||
                    value.StartsWith("RIFF"u8) && value.Length >= 12 && value[8..12].SequenceEqual("WEBP"u8) ||
                    IsMarketFaceEncodedGifBytes(value);
@@ -65,7 +66,7 @@ public static class LocalImageFile
 
     public static (int Width, int Height)? TryGetImageSize(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path) || !ArchiveFile.Exists(path))
             return null;
 
         try
@@ -101,7 +102,7 @@ public static class LocalImageFile
         header = new byte[6];
         try
         {
-            using var stream = File.OpenRead(sourcePath);
+            using var stream = ArchiveFile.OpenRead(sourcePath);
             return stream.Read(header, 0, header.Length) == header.Length;
         }
         catch

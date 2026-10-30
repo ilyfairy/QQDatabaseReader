@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -69,7 +70,7 @@ internal sealed class MessageSegmentMediaApplier
     {
         displaySegment.VideoLocalPath = localPath;
         displaySegment.VideoCoverLocalPath = coverPath;
-        displaySegment.IsVideoAvailable = !isMissing && !string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath);
+        displaySegment.IsVideoAvailable = !isMissing && !string.IsNullOrWhiteSpace(localPath) && ArchiveFile.Exists(localPath);
         displaySegment.IsVideoCoverAvailable = isCoverAvailable;
         displaySegment.Text = displaySegment.IsVideoAvailable ? "[视频]" : "[视频文件未找到]";
         displaySegment.Tone = displaySegment.IsVideoAvailable

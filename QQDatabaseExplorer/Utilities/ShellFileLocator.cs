@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Utilities;
 
@@ -34,6 +35,10 @@ public static class ShellFileLocator
 
     public static bool ShowFileInFolder(string? filePath)
     {
+        // tar / zip 里的文件没法在文件管理器里定位, 改为定位归档文件本身
+        if (!string.IsNullOrWhiteSpace(filePath) && ArchiveFile.TryResolve(filePath, out var archive, out _))
+            filePath = archive.Path;
+
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return false;
 

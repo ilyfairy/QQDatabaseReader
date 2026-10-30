@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 
 namespace QQDatabaseExplorer.Models;
@@ -63,6 +64,32 @@ public class QQNTDatabaseConfig
     public string? ProfileInfoDbPath { get; set; }
 
     public string? ProfileInfoDbPassword { get; set; }
+
+    /// <summary>
+    /// SQLCipher 的 HMAC 算法, 这一组数据库共用. 为空表示 HMAC_SHA1 (旧配置没有这一项)
+    /// </summary>
+    public QQNtHmacAlgorithm? CipherHmacAlgorithm { get; set; }
+}
+
+public enum QQNtHmacAlgorithm
+{
+    [JsonStringEnumMemberName("HMAC_SHA1")]
+    HmacSha1,
+
+    [JsonStringEnumMemberName("HMAC_SHA512")]
+    HmacSha512,
+}
+
+public static class QQNtHmacAlgorithmExtensions
+{
+    public static HashAlgorithmName ToHashAlgorithmName(this QQNtHmacAlgorithm? algorithm) =>
+        algorithm is QQNtHmacAlgorithm.HmacSha512 ? HashAlgorithmName.SHA512 : HashAlgorithmName.SHA1;
+
+    /// <summary>不支持的算法 (界面上没有的选项) 返回 null</summary>
+    public static QQNtHmacAlgorithm? ToQQNtHmacAlgorithm(this HashAlgorithmName? algorithm) =>
+        algorithm == HashAlgorithmName.SHA512 ? QQNtHmacAlgorithm.HmacSha512
+        : algorithm == HashAlgorithmName.SHA1 ? QQNtHmacAlgorithm.HmacSha1
+        : null;
 }
 
 public class AndroidQQNTDatabaseConfig : QQNTDatabaseConfig
@@ -106,3 +133,11 @@ public class IcalinguaDatabaseConfig
 
     public string? DataPath { get; set; }
 }
+
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    UseStringEnumConverter = true)]
+[JsonSerializable(typeof(AppConfig))]
+public sealed partial class AppConfigJsonContext : JsonSerializerContext;

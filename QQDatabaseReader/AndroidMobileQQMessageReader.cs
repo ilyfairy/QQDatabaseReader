@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Google.Protobuf;
 using QQDatabaseReader.Database;
 using QQDatabaseReader.Sqlite;
@@ -13,6 +14,11 @@ namespace QQDatabaseReader;
 
 public sealed class AndroidMobileQQMessageReader : IQQDatabase
 {
+    internal const int MaxSearchScanRowsPerPage = 5000;
+    internal const int MaxIndexSearchScanRowsPerPage = 8192;
+    private const int SearchScanBatchSize = 500;
+    private const int IndexSearchScanBatchSize = 1024;
+
     private static readonly Regex MessageTableNameRegex = new(
         @"^mr_(friend|troop)_[0-9A-F]{32}_New$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -80,34 +86,42 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        _connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        _connection.Open();
-
-        if (_slowRawDatabase is not null)
+        try
         {
-            _slowRawDatabase.Initialize();
-            _slowConnection = new QQNTDbConnection(_slowRawDatabase.Database, _slowRawDatabase.DatabaseFilePath);
-            _slowConnection.Open();
+            RawDatabase.Initialize();
+            _connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            _connection.Open();
+
+            if (_slowRawDatabase is not null)
+            {
+                _slowRawDatabase.Initialize();
+                _slowConnection = new QQNTDbConnection(_slowRawDatabase.Database, _slowRawDatabase.DatabaseFilePath);
+                _slowConnection.Open();
+            }
+
+            if (_indexRawDatabase is not null)
+            {
+                try
+                {
+                    _indexRawDatabase.Initialize();
+                    RegisterIndexCompressionFunction(_indexRawDatabase.Database, "qqcompress");
+                    RegisterIndexCompressionFunction(_indexRawDatabase.Database, "qquncompress");
+                    _indexConnection = new QQNTDbConnection(_indexRawDatabase.Database, _indexRawDatabase.DatabaseFilePath);
+                    _indexConnection.Open();
+                }
+                catch
+                {
+                    _indexSearchUnavailable = true;
+                    _indexConnection?.Dispose();
+                    _indexConnection = null;
+                    _indexRawDatabase.Dispose();
+                }
+            }
         }
-
-        if (_indexRawDatabase is not null)
+        catch
         {
-            try
-            {
-                _indexRawDatabase.Initialize();
-                RegisterIndexCompressionFunction(_indexRawDatabase.Database, "qqcompress");
-                RegisterIndexCompressionFunction(_indexRawDatabase.Database, "qquncompress");
-                _indexConnection = new QQNTDbConnection(_indexRawDatabase.Database, _indexRawDatabase.DatabaseFilePath);
-                _indexConnection.Open();
-            }
-            catch
-            {
-                _indexSearchUnavailable = true;
-                _indexConnection?.Dispose();
-                _indexConnection = null;
-                _indexRawDatabase.Dispose();
-            }
+            Dispose();
+            throw;
         }
     }
 
@@ -279,57 +293,99 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         string tableName,
         string query,
         int pageSize,
-        AndroidMobileQQMessageSearchCursor? cursor = null)
+        AndroidMobileQQMessageSearchCursor? cursor = null,
+        CancellationToken cancellationToken = default,
+        int maxScanRows = MaxIndexSearchScanRowsPerPage)
     {
         EnsureConversationTableName(tableName);
         if (string.IsNullOrWhiteSpace(query) || pageSize <= 0)
-            return new AndroidMobileQQMessageSearchPage([], null, false);
+            return new AndroidMobileQQMessageSearchPage([], null, false, 0);
+        if (maxScanRows <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxScanRows));
 
-        if (TrySearchMessagesWithIndex(tableName, query, pageSize, cursor, out var indexedPage))
+        if (TrySearchMessagesWithIndex(
+                tableName,
+                query,
+                pageSize,
+                cursor,
+                cancellationToken,
+                maxScanRows,
+                out var indexedPage))
             return indexedPage;
 
         var results = new List<AndroidMobileQQMessageRecord>(pageSize);
         AndroidMobileQQMessageSearchCursor? nextCursor = cursor;
         var hasMore = true;
-        while (results.Count < pageSize && hasMore)
+        var scannedRows = 0;
+        var scanBudget = Math.Min(MaxSearchScanRowsPerPage, maxScanRows);
+        while (results.Count < pageSize &&
+               hasMore &&
+               scannedRows < scanBudget)
         {
-            var batch = LoadSearchBatch(tableName, nextCursor, 500);
-            hasMore = batch.Count == 500;
+            cancellationToken.ThrowIfCancellationRequested();
+            var requestedBatchSize = Math.Min(
+                SearchScanBatchSize,
+                scanBudget - scannedRows);
+            var batch = LoadSearchBatch(
+                tableName,
+                nextCursor,
+                requestedBatchSize,
+                cancellationToken);
+            hasMore = batch.Count == requestedBatchSize;
             if (batch.Count == 0)
                 break;
 
-            var last = batch[^1];
-            nextCursor = new AndroidMobileQQMessageSearchCursor(last.MessageTime, last.RowId);
-
-            foreach (var message in batch)
+            for (var index = 0; index < batch.Count; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var message = batch[index];
+                scannedRows++;
+                nextCursor = new AndroidMobileQQMessageSearchCursor(message.MessageTime, message.RowId);
                 if (message.PreviewText.Contains(query, StringComparison.CurrentCultureIgnoreCase))
                 {
                     results.Add(message);
                     if (results.Count >= pageSize)
+                    {
+                        hasMore = index + 1 < batch.Count || hasMore;
                         break;
+                    }
                 }
             }
         }
 
+        if (scannedRows >= scanBudget)
+            hasMore = true;
+
         return new AndroidMobileQQMessageSearchPage(
             results,
             hasMore ? nextCursor : null,
-            hasMore);
+            hasMore,
+            scannedRows);
     }
 
     public AndroidMobileQQMessageSearchPage SearchAllMessages(
         string query,
         int pageSize,
-        AndroidMobileQQMessageSearchCursor? cursor = null)
+        AndroidMobileQQMessageSearchCursor? cursor = null,
+        CancellationToken cancellationToken = default,
+        int maxScanRows = MaxIndexSearchScanRowsPerPage)
     {
         if (string.IsNullOrWhiteSpace(query) || pageSize <= 0)
-            return new AndroidMobileQQMessageSearchPage([], null, false);
+            return new AndroidMobileQQMessageSearchPage([], null, false, 0);
+        if (maxScanRows <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxScanRows));
 
-        if (TrySearchMessagesWithIndex(tableName: null, query, pageSize, cursor, out var indexedPage))
+        if (TrySearchMessagesWithIndex(
+                tableName: null,
+                query,
+                pageSize,
+                cursor,
+                cancellationToken,
+                maxScanRows,
+                out var indexedPage))
             return indexedPage;
 
-        return new AndroidMobileQQMessageSearchPage([], null, false);
+        return new AndroidMobileQQMessageSearchPage([], null, false, 0);
     }
 
     public IReadOnlyList<AndroidMobileQQMessageDate> LoadMessageDates(string tableName)
@@ -418,12 +474,14 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         string sql,
         Action<IDbCommand> bind,
         bool descending,
-        int pageSize)
+        int pageSize,
+        CancellationToken cancellationToken = default)
     {
         var messages = new List<AndroidMobileQQMessageRecord>();
         foreach (var connection in GetConnectionsForTable(tableName))
         {
-            messages.AddRange(QueryMessages(connection, tableName, sql, bind));
+            cancellationToken.ThrowIfCancellationRequested();
+            messages.AddRange(QueryMessages(connection, tableName, sql, bind, cancellationToken));
         }
 
         var ordered = descending
@@ -439,7 +497,8 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
     private IReadOnlyList<AndroidMobileQQMessageRecord> LoadSearchBatch(
         string tableName,
         AndroidMobileQQMessageSearchCursor? cursor,
-        int batchSize)
+        int batchSize,
+        CancellationToken cancellationToken)
     {
         var cursorPredicate = cursor is null
             ? string.Empty
@@ -464,7 +523,8 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
                 AddParameter(command, "$limit", batchSize);
             },
             descending: true,
-            batchSize);
+            batchSize,
+            cancellationToken);
     }
 
     private bool TrySearchMessagesWithIndex(
@@ -472,9 +532,11 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         string query,
         int pageSize,
         AndroidMobileQQMessageSearchCursor? cursor,
+        CancellationToken cancellationToken,
+        int maxScanRows,
         out AndroidMobileQQMessageSearchPage page)
     {
-        page = new AndroidMobileQQMessageSearchPage([], null, false);
+        page = new AndroidMobileQQMessageSearchPage([], null, false, 0);
         if (_indexConnection is null || _indexSearchUnavailable)
             return false;
 
@@ -489,59 +551,97 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
             return false;
         }
 
-        var maxIndexRowId = cursor?.IndexRowId ?? long.MaxValue;
+        var beforeIndexRowId = cursor?.IndexRowId ?? long.MaxValue;
         var results = new List<AndroidMobileQQMessageRecord>(pageSize);
-        AndroidMobileQQMessageSearchCursor? nextCursor = null;
-        var exhausted = false;
+        long? lastExaminedIndexRowId = null;
+        var scannedRows = 0;
+        var hasMore = false;
+        var scanBudget = Math.Min(MaxIndexSearchScanRowsPerPage, maxScanRows);
 
         try
         {
-            // A keyword can be common globally while rare in one conversation. Keep
-            // advancing the FTS cursor inside this call so UI search pages still
-            // make visible progress without scanning message tables.
-            for (var round = 0; round < 64 && results.Count < pageSize; round++)
+            while (results.Count < pageSize &&
+                   scannedRows < scanBudget)
             {
-                var candidates = LoadIndexSearchCandidates(matchQuery, maxIndexRowId, 1024);
+                cancellationToken.ThrowIfCancellationRequested();
+                var requestedBatchSize = Math.Min(
+                    IndexSearchScanBatchSize,
+                    scanBudget - scannedRows);
+                var candidates = LoadIndexSearchCandidates(
+                    matchQuery,
+                    beforeIndexRowId,
+                    requestedBatchSize,
+                    cancellationToken);
                 if (candidates.Count == 0)
                 {
-                    exhausted = true;
+                    hasMore = false;
                     break;
                 }
 
-                maxIndexRowId = candidates[^1].IndexRowId;
-                foreach (var candidate in candidates)
+                for (var index = 0; index < candidates.Count; index++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var candidate = candidates[index];
+                    scannedRows++;
+                    lastExaminedIndexRowId = candidate.IndexRowId;
+                    beforeIndexRowId = candidate.IndexRowId;
+                    if (!candidate.IsUsable)
+                        continue;
+
+                    AndroidMobileQQConversation candidateConversation;
                     if (targetConversation is not null &&
                         !string.Equals(candidate.ConversationKey, CreateIndexConversationKey(targetConversation), StringComparison.Ordinal))
                     {
                         continue;
                     }
-
-                    if (targetConversation is null &&
-                        !TryResolveIndexedConversation(candidate, out targetConversation))
+                    else if (targetConversation is not null)
                     {
-                        targetConversation = null;
+                        candidateConversation = targetConversation;
+                    }
+                    else if (!TryResolveIndexedConversation(candidate, out candidateConversation))
+                    {
                         continue;
                     }
 
-                    var message = LoadIndexedMessage(targetConversation.TableName, candidate);
+                    var message = LoadIndexedMessage(
+                        candidateConversation.TableName,
+                        candidate,
+                        cancellationToken);
                     if (message is null || !PreviewMatchesQuery(message.PreviewText, query))
-                    {
-                        if (targetConversation is not null && tableName is null)
-                            targetConversation = null;
                         continue;
-                    }
 
                     results.Add(message);
-                    if (targetConversation is not null && tableName is null)
-                        targetConversation = null;
-
                     if (results.Count >= pageSize)
+                    {
+                        hasMore = index + 1 < candidates.Count || candidates.Count == requestedBatchSize;
                         break;
+                    }
                 }
 
-                nextCursor = new AndroidMobileQQMessageSearchCursor(0, 0, maxIndexRowId);
+                if (results.Count >= pageSize)
+                    break;
+                if (candidates.Count < requestedBatchSize)
+                {
+                    hasMore = false;
+                    break;
+                }
+
+                hasMore = true;
             }
+
+            if (scannedRows >= scanBudget)
+                hasMore = true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Android QQ indexed message search was canceled.",
+                exception,
+                cancellationToken);
         }
         catch
         {
@@ -549,7 +649,9 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
             return false;
         }
 
-        var hasMore = !exhausted && nextCursor is not null;
+        var nextCursor = hasMore && lastExaminedIndexRowId is { } nextIndexRowId
+            ? new AndroidMobileQQMessageSearchCursor(0, 0, nextIndexRowId)
+            : null;
         page = new AndroidMobileQQMessageSearchPage(
             results
                 .DistinctBy(static message => (message.TableName, message.RowId, message.MessageTime))
@@ -557,16 +659,19 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
                 .ThenByDescending(static message => message.RowId)
                 .Take(pageSize)
                 .ToArray(),
-            hasMore ? nextCursor : null,
-            hasMore);
+            nextCursor,
+            nextCursor is not null,
+            scannedRows);
         return true;
     }
 
     private IReadOnlyList<AndroidMobileQQIndexSearchCandidate> LoadIndexSearchCandidates(
         string matchQuery,
         long beforeIndexRowId,
-        int limit)
+        int limit,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var command = _indexConnection!.CreateCommand();
         command.CommandText = """
             SELECT rowid, content, exts, oid, ext1, ext2, ext3
@@ -581,9 +686,13 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         AddParameter(command, "$limit", limit);
 
         var candidates = new List<AndroidMobileQQIndexSearchCandidate>(limit);
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => ((IDbCommand)state!).Cancel(),
+            command);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var indexRowId = ReadInt64(reader, 0);
             var content = DecodeBase64Text(ReadIndexText(reader, 1));
             var location = DecodeIndexLocation(ReadIndexText(reader, 2));
@@ -592,23 +701,19 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
             var senderUin = DecodeBase64Text(ReadIndexText(reader, 5));
             var msgType = TryParseInt64(DecodeBase64Text(ReadIndexText(reader, 6)));
 
-            if (indexRowId <= 0 ||
-                rowId <= 0 ||
-                location is null ||
-                string.IsNullOrWhiteSpace(conversationKey))
-            {
-                continue;
-            }
-
             candidates.Add(new AndroidMobileQQIndexSearchCandidate(
                 indexRowId,
                 rowId,
-                location.MessageTime,
-                location.ShMsgSeq,
+                location?.MessageTime ?? 0,
+                location?.ShMsgSeq ?? 0,
                 conversationKey,
                 senderUin,
                 (int)msgType,
-                content));
+                content,
+                indexRowId > 0 &&
+                rowId > 0 &&
+                location is not null &&
+                !string.IsNullOrWhiteSpace(conversationKey)));
         }
 
         return candidates;
@@ -616,7 +721,8 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
 
     private AndroidMobileQQMessageRecord? LoadIndexedMessage(
         string tableName,
-        AndroidMobileQQIndexSearchCandidate candidate)
+        AndroidMobileQQIndexSearchCandidate candidate,
+        CancellationToken cancellationToken)
     {
         var message = QueryMergedMessages(
             tableName,
@@ -635,7 +741,8 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
                 AddParameter(command, "$shmsgseq", candidate.ShMsgSeq);
             },
             descending: false,
-            pageSize: 1)
+            pageSize: 1,
+            cancellationToken: cancellationToken)
             .FirstOrDefault();
 
         if (message is not null)
@@ -660,7 +767,8 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
                 AddParameter(command, "$time", candidate.MessageTime);
             },
             descending: false,
-            pageSize: 4)
+            pageSize: 4,
+            cancellationToken: cancellationToken)
             .FirstOrDefault(message =>
                 string.IsNullOrWhiteSpace(candidate.Content) ||
                 message.PreviewText.Contains(candidate.Content, StringComparison.CurrentCultureIgnoreCase) ||
@@ -694,6 +802,7 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         if (!GetAllMessageTables().Contains(tableName))
             return false;
 
+        EnsureContactCaches();
         conversation = new AndroidMobileQQConversation(
             conversationType,
             peerUin,
@@ -871,8 +980,10 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         QQNTDbConnection connection,
         string tableName,
         string sql,
-        Action<IDbCommand> bind)
+        Action<IDbCommand> bind,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         bind(command);
@@ -881,30 +992,48 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
             ? AndroidMobileQQConversationType.Group
             : AndroidMobileQQConversationType.Private;
         var messages = new List<AndroidMobileQQMessageRecord>();
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => ((IDbCommand)state!).Cancel(),
+            command);
+        try
         {
-            var msgType = (int)ReadInt64(reader, 4);
-            var content = DecodeContent(ReadBlob(reader, 5), msgType);
-            var peerUin = DecodeString(ReadHexBlob(reader, 1));
-            var senderUin = DecodeString(ReadHexBlob(reader, 2));
-            var senderName = ResolveSenderName(conversationType, peerUin, senderUin);
-            var previewText = AndroidMobileQQMessageContent.CreatePreviewText(content);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var msgType = (int)ReadInt64(reader, 4);
+                var content = DecodeContent(ReadBlob(reader, 5), msgType);
+                var peerUin = DecodeString(ReadHexBlob(reader, 1));
+                var senderUin = DecodeString(ReadHexBlob(reader, 2));
+                var senderName = ResolveSenderName(conversationType, peerUin, senderUin);
+                var previewText = AndroidMobileQQMessageContent.CreatePreviewText(content);
 
-            messages.Add(new AndroidMobileQQMessageRecord(
-                tableName,
-                conversationType,
-                peerUin,
-                reader.GetInt64(0),
-                ReadInt64(reader, 3),
-                msgType,
-                (int)ReadInt64(reader, 6),
-                ReadInt64(reader, 7),
-                (int)ReadInt64(reader, 8),
-                senderUin,
-                senderName,
-                content,
-                previewText));
+                messages.Add(new AndroidMobileQQMessageRecord(
+                    tableName,
+                    conversationType,
+                    peerUin,
+                    reader.GetInt64(0),
+                    ReadInt64(reader, 3),
+                    msgType,
+                    (int)ReadInt64(reader, 6),
+                    ReadInt64(reader, 7),
+                    (int)ReadInt64(reader, 8),
+                    senderUin,
+                    senderName,
+                    content,
+                    previewText));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Android QQ message query was canceled.",
+                exception,
+                cancellationToken);
         }
 
         return messages;
@@ -1581,7 +1710,8 @@ public sealed record AndroidMobileQQMessageSearchCursor(long MessageTime, long R
 public sealed record AndroidMobileQQMessageSearchPage(
     IReadOnlyList<AndroidMobileQQMessageRecord> Messages,
     AndroidMobileQQMessageSearchCursor? NextCursor,
-    bool HasMore);
+    bool HasMore,
+    int ScannedRows = 0);
 
 public enum AndroidMobileQQConversationType
 {
@@ -1613,6 +1743,7 @@ internal sealed record AndroidMobileQQIndexSearchCandidate(
     string ConversationKey,
     string SenderUin,
     int MsgType,
-    string Content);
+    string Content,
+    bool IsUsable);
 
 internal sealed record AndroidMobileQQIndexLocation(long MessageTime, long ShMsgSeq);

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QQDatabaseReader;
+using QQDatabaseReader.Archives;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
 
@@ -22,6 +23,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     private const string IcalinguaDatabasePrefix = "eqq";
 
     private readonly IDialogService _dialogService;
+    private bool _syncingNtKeys;
 
     [ObservableProperty]
     public partial DatabasePlatformType PlatformType { get; set; } = DatabasePlatformType.QQNT;
@@ -98,6 +100,10 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     [ObservableProperty]
     public partial string NtUid { get; set; } = string.Empty;
 
+    /// <summary>选择 nt_msg.db 时按数据库头部自动检测, 加载已保存的配置时以配置为准</summary>
+    [ObservableProperty]
+    public partial QQNtHmacAlgorithm CipherHmacAlgorithm { get; set; } = QQNtHmacAlgorithm.HmacSha1;
+
     [ObservableProperty]
     public partial string Rand { get; set; } = string.Empty;
 
@@ -128,6 +134,16 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public string FindDatabaseKeyButtonText => IsPCQQ
         ? "登录PCQQ自动获取Key"
         : "登录QQ自动获取Key";
+
+    public Dictionary<QQNtHmacAlgorithm, string> HmacAlgorithms { get; } = new()
+    {
+        { QQNtHmacAlgorithm.HmacSha1, "HMAC_SHA1" },
+        { QQNtHmacAlgorithm.HmacSha512, "HMAC_SHA512" },
+    };
+
+    public string HmacAlgorithmToolTip =>
+        "SQLCipher 的 HMAC 算法, 这一组数据库共用. 选择 nt_msg.db 时会按数据库头部自动检测:\n" +
+        "新版 QQNT 在头部写明 HMAC_SHA1, 旧版 PC QQNT 头部没有写, 用的是 HMAC_SHA512";
 
     public Dictionary<DatabasePlatformType, string> PlatformTypes { get; } = new()
     {
@@ -165,26 +181,27 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             return;
         }
 
+        // 和手动选择一样, 顺带补全同目录的其它数据库和 nt_data
         PlatformType = DatabasePlatformType.QQNT;
         if (string.Equals(fileName, NtMessageDbFileName, StringComparison.OrdinalIgnoreCase))
         {
-            NtMessageDbPath = databaseFilePath;
+            UsePickedNtMessageDbPath(databaseFilePath);
         }
         else if (string.Equals(fileName, NtGroupInfoDbFileName, StringComparison.OrdinalIgnoreCase))
         {
-            NtGroupInfoDbPath = databaseFilePath;
+            UsePickedNtGroupInfoDbPath(databaseFilePath);
         }
         else if (string.Equals(fileName, NtGroupMessageFtsDbFileName, StringComparison.OrdinalIgnoreCase))
         {
-            NtGroupMessageFtsDbPath = databaseFilePath;
+            UsePickedNtGroupMessageFtsDbPath(databaseFilePath);
         }
         else if (string.Equals(fileName, NtBuddyMessageFtsDbFileName, StringComparison.OrdinalIgnoreCase))
         {
-            NtBuddyMessageFtsDbPath = databaseFilePath;
+            UsePickedNtBuddyMessageFtsDbPath(databaseFilePath);
         }
         else if (string.Equals(fileName, NtProfileInfoDbFileName, StringComparison.OrdinalIgnoreCase))
         {
-            NtProfileInfoDbPath = databaseFilePath;
+            UsePickedNtProfileInfoDbPath(databaseFilePath);
         }
         else
         {
@@ -242,6 +259,20 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         OnPropertyChanged(nameof(NtDataPathLabel));
         OnPropertyChanged(nameof(NtDataPathToolTip));
         OnPropertyChanged(nameof(FindDatabaseKeyButtonText));
+        DetectHmacAlgorithm(NtMessageDbPath);
+    }
+
+    partial void OnNtMessageDbPathChanged(string value)
+    {
+        DetectHmacAlgorithm(value);
+    }
+
+    private void DetectHmacAlgorithm(string databaseFilePath)
+    {
+        if (!IsNtPlatform || string.IsNullOrWhiteSpace(databaseFilePath))
+            return;
+        if (RawDatabase.DetectQQNtHmacAlgorithm(databaseFilePath, IsAndroidQQNT).ToQQNtHmacAlgorithm() is { } detected)
+            CipherHmacAlgorithm = detected;
     }
 
     public void UsePickedNtMessageDbPath(string databaseFilePath)
@@ -265,6 +296,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public void UsePickedNtBuddyMessageFtsDbPath(string databaseFilePath)
     {
         NtBuddyMessageFtsDbPath = databaseFilePath;
+        TryCompleteNtDatabasePaths(databaseFilePath, NtBuddyMessageFtsDbFileName);
     }
 
     public void UsePickedNtProfileInfoDbPath(string databaseFilePath)
@@ -305,6 +337,44 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     public void UsePickedAndroidMobileQQChatPicPath(string chatPicPath)
     {
         AndroidMobileQQChatPicPath = chatPicPath;
+    }
+
+    // 同一组 QQNT 数据库共用一个密钥: 填了其中一个 (手填, 登录 QQ 获取, Android 推导) 就同步到其它
+    // 还没填, 或者还是旧值 (之前同步过来) 的密钥框, 单独改过的不覆盖
+    partial void OnKeyChanged(string oldValue, string newValue) => SyncNtKeys(oldValue, newValue);
+
+    partial void OnGroupInfoDbKeyChanged(string oldValue, string newValue) => SyncNtKeys(oldValue, newValue);
+
+    partial void OnGroupMessageFtsDbKeyChanged(string oldValue, string newValue) => SyncNtKeys(oldValue, newValue);
+
+    partial void OnBuddyMessageFtsDbKeyChanged(string oldValue, string newValue) => SyncNtKeys(oldValue, newValue);
+
+    partial void OnProfileInfoDbKeyChanged(string oldValue, string newValue) => SyncNtKeys(oldValue, newValue);
+
+    private void SyncNtKeys(string oldValue, string newValue)
+    {
+        if (_syncingNtKeys || !IsNtPlatform || string.IsNullOrWhiteSpace(newValue))
+            return;
+
+        _syncingNtKeys = true;
+        try
+        {
+            bool ShouldFill(string current) => string.IsNullOrWhiteSpace(current) || current == oldValue;
+            if (ShouldFill(Key))
+                Key = newValue;
+            if (ShouldFill(GroupInfoDbKey))
+                GroupInfoDbKey = newValue;
+            if (ShouldFill(GroupMessageFtsDbKey))
+                GroupMessageFtsDbKey = newValue;
+            if (ShouldFill(BuddyMessageFtsDbKey))
+                BuddyMessageFtsDbKey = newValue;
+            if (ShouldFill(ProfileInfoDbKey))
+                ProfileInfoDbKey = newValue;
+        }
+        finally
+        {
+            _syncingNtKeys = false;
+        }
     }
 
     partial void OnNtUidChanged(string value)
@@ -402,7 +472,10 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         if (!IsQQNT)
             return;
 
-        Key = await _dialogService.ShowQQDebuggerWindow(ViewModelToken);
+        // 没获取到 (直接关了窗口) 时保留原来填的密钥; 获取到的会同步到其它数据库的密钥框
+        var key = await _dialogService.ShowQQDebuggerWindow(ViewModelToken);
+        if (!string.IsNullOrWhiteSpace(key))
+            Key = key;
     }
 
     private async Task<bool> ValidateNtDatabasesAsync()
@@ -455,7 +528,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(path))
             return true;
 
-        if (File.Exists(path))
+        // 也可以是 tar / zip 归档里的文件, 例如 data.tar\databases\nt_db\nt_qq_xxx\nt_msg.db
+        if (ArchiveFile.Exists(path))
             return true;
 
         await _dialogService.ShowMessageBox(missingMessage, "错误", ViewModelToken);
@@ -491,6 +565,9 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         if (TryGetExistingSiblingFile(NtGroupMessageFtsDbPath, directory, NtGroupMessageFtsDbFileName) is { } groupMessageFtsDbPath)
             NtGroupMessageFtsDbPath = groupMessageFtsDbPath;
 
+        if (TryGetExistingSiblingFile(NtBuddyMessageFtsDbPath, directory, NtBuddyMessageFtsDbFileName) is { } buddyMessageFtsDbPath)
+            NtBuddyMessageFtsDbPath = buddyMessageFtsDbPath;
+
         if (TryGetExistingSiblingFile(NtProfileInfoDbPath, directory, NtProfileInfoDbFileName) is { } profileInfoDbPath)
             NtProfileInfoDbPath = profileInfoDbPath;
 
@@ -517,7 +594,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
 
     private static bool IsPickedStandardFile(string databaseFilePath, string expectedFileName)
     {
-        return File.Exists(databaseFilePath) &&
+        return ArchiveFile.Exists(databaseFilePath) &&
                string.Equals(Path.GetFileName(databaseFilePath), expectedFileName, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -537,12 +614,12 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             return null;
 
         var filePath = Path.Combine(directory, fileName);
-        return File.Exists(filePath) ? filePath : null;
+        return ArchiveFile.Exists(filePath) ? filePath : null;
     }
 
     private void EnsureRand(string databaseFilePath)
     {
-        if (File.Exists(databaseFilePath) && RawDatabase.GetRand(databaseFilePath) is string rand)
+        if (ArchiveFile.Exists(databaseFilePath) && RawDatabase.GetRand(databaseFilePath) is string rand)
             Rand = rand;
     }
 
@@ -622,15 +699,26 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
     private void SetQQNTFields(QQNTDatabaseConfig config)
     {
         NtMessageDbPath = config.MessageDbPath ?? string.Empty;
-        Key = config.MessageDbPassword ?? string.Empty;
         NtGroupInfoDbPath = config.GroupInfoDbPath ?? string.Empty;
-        GroupInfoDbKey = config.GroupInfoDbPassword ?? string.Empty;
         NtGroupMessageFtsDbPath = config.GroupMessageFtsDbPath ?? string.Empty;
-        GroupMessageFtsDbKey = config.GroupMessageFtsDbPassword ?? string.Empty;
         NtBuddyMessageFtsDbPath = config.BuddyMessageFtsDbPath ?? string.Empty;
-        BuddyMessageFtsDbKey = config.BuddyMessageFtsDbPassword ?? string.Empty;
         NtProfileInfoDbPath = config.ProfileInfoDbPath ?? string.Empty;
-        ProfileInfoDbKey = config.ProfileInfoDbPassword ?? string.Empty;
+
+        // 配置里的密钥原样恢复, 不互相同步
+        _syncingNtKeys = true;
+        try
+        {
+            Key = config.MessageDbPassword ?? string.Empty;
+            GroupInfoDbKey = config.GroupInfoDbPassword ?? string.Empty;
+            GroupMessageFtsDbKey = config.GroupMessageFtsDbPassword ?? string.Empty;
+            BuddyMessageFtsDbKey = config.BuddyMessageFtsDbPassword ?? string.Empty;
+            ProfileInfoDbKey = config.ProfileInfoDbPassword ?? string.Empty;
+        }
+        finally
+        {
+            _syncingNtKeys = false;
+        }
+
         NtDataPath = config.NtDataPath ?? string.Empty;
         MobileQQPath = config is AndroidQQNTDatabaseConfig android
             ? android.MobileQQPath ?? string.Empty
@@ -638,6 +726,8 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
         ChatPicPath = config is AndroidQQNTDatabaseConfig androidConfig
             ? androidConfig.ChatPicPath ?? string.Empty
             : string.Empty;
+        // 设置路径时已经自动检测过, 这里以保存的配置为准; 旧配置没有这一项时按 HMAC_SHA1
+        CipherHmacAlgorithm = config.CipherHmacAlgorithm ?? QQNtHmacAlgorithm.HmacSha1;
     }
 
     private DatabaseConfig CreatePCQQConfig()
@@ -686,6 +776,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
             BuddyMessageFtsDbPassword = EmptyToNull(BuddyMessageFtsDbKey),
             ProfileInfoDbPath = EmptyToNull(NtProfileInfoDbPath),
             ProfileInfoDbPassword = EmptyToNull(ProfileInfoDbKey),
+            CipherHmacAlgorithm = CipherHmacAlgorithm,
         };
 
         if (!IsAndroidQQNT)
@@ -715,6 +806,7 @@ public partial class OpenDatabaseDialogViewModel : ViewModelBase
                 BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                 ProfileInfoDbPath = config.ProfileInfoDbPath,
                 ProfileInfoDbPassword = config.ProfileInfoDbPassword,
+                CipherHmacAlgorithm = config.CipherHmacAlgorithm,
                 NtUid = EmptyToNull(NtUid),
                 Rand = EmptyToNull(Rand),
             },

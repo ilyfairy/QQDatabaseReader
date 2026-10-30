@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -11,6 +12,8 @@ namespace QQDatabaseReader;
 public class QQGroupInfoReader : IQQDatabase
 {
     public QQGroupInfoDbContext DbContext { get; private set; } = null!;
+
+    public DatabaseSchema Schema { get; private set; } = null!;
 
     public RawDatabase RawDatabase { get; }
     public QQDatabaseType DatabaseType => QQDatabaseType.GroupInfo;
@@ -28,16 +31,27 @@ public class QQGroupInfoReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        var optionsBuilder = new DbContextOptionsBuilder<QQGroupInfoDbContext>();
-        optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-        DbContext = new QQGroupInfoDbContext(optionsBuilder.Options);
+        try
+        {
+            RawDatabase.Initialize();
+            Schema = DatabaseSchema.Read(RawDatabase.Database);
+            var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            var optionsBuilder = new DbContextOptionsBuilder<QQGroupInfoDbContext>();
+            optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking).UseSchemaMappedModel();
+            DbContext = new QQGroupInfoDbContext(optionsBuilder.Options, Schema);
+        }
+        catch
+        {
+            DbContext?.Dispose();
+            RawDatabase.Dispose();
+            throw;
+        }
     }
 
     public void Dispose()
     {
-
+        DbContext?.Dispose();
+        RawDatabase.Dispose();
     }
 }
 
@@ -46,6 +60,13 @@ public partial class QQMessageReader : IQQDatabase
     private const int MaxForwardedMessageDepth = 8;
 
     public QQMessageDbContext DbContext { get; private set; } = null!;
+
+    public DatabaseSchema Schema { get; private set; } = null!;
+
+    /// <summary>
+    /// nt_uid 换 QQ 号, 查不到返回 0. 旧版 QQNT 消息表没有 QQ 号列, 靠它补 (一般是 <see cref="QQProfileInfoReader.FindUinByUid"/>)
+    /// </summary>
+    public Func<string, long>? UinResolver { get; set; }
 
     public RawDatabase RawDatabase { get; init; }
     public QQDatabaseType DatabaseType => QQDatabaseType.Message;
@@ -64,17 +85,28 @@ public partial class QQMessageReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        var optionsBuilder = new DbContextOptionsBuilder<QQMessageDbContext>();
-        optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-        DbContext = new QQMessageDbContext(optionsBuilder.Options);
+        try
+        {
+            RawDatabase.Initialize();
+            Schema = DatabaseSchema.Read(RawDatabase.Database);
+            QQNtUinFunction.Register(RawDatabase.Database, () => UinResolver);
+            var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            var optionsBuilder = new DbContextOptionsBuilder<QQMessageDbContext>();
+            optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking).UseSchemaMappedModel();
+            DbContext = new QQMessageDbContext(optionsBuilder.Options, Schema);
+        }
+        catch
+        {
+            DbContext?.Dispose();
+            RawDatabase.Dispose();
+            throw;
+        }
     }
 
 
     public void Dispose()
     {
-        DbContext.Dispose();
+        DbContext?.Dispose();
         RawDatabase.Dispose();
     }
 
@@ -83,6 +115,11 @@ public partial class QQMessageReader : IQQDatabase
 public class QQAndroidMessageReader : IQQDatabase
 {
     public QQAndroidMessageDbContext DbContext { get; private set; } = null!;
+
+    public DatabaseSchema Schema { get; private set; } = null!;
+
+    /// <inheritdoc cref="QQMessageReader.UinResolver"/>
+    public Func<string, long>? UinResolver { get; set; }
 
     public RawDatabase RawDatabase { get; init; }
     public QQDatabaseType DatabaseType => QQDatabaseType.AndroidMessage;
@@ -108,16 +145,27 @@ public class QQAndroidMessageReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        var optionsBuilder = new DbContextOptionsBuilder<QQAndroidMessageDbContext>();
-        optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-        DbContext = new QQAndroidMessageDbContext(optionsBuilder.Options);
+        try
+        {
+            RawDatabase.Initialize();
+            Schema = DatabaseSchema.Read(RawDatabase.Database);
+            QQNtUinFunction.Register(RawDatabase.Database, () => UinResolver);
+            var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            var optionsBuilder = new DbContextOptionsBuilder<QQAndroidMessageDbContext>();
+            optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking).UseSchemaMappedModel();
+            DbContext = new QQAndroidMessageDbContext(optionsBuilder.Options, Schema);
+        }
+        catch
+        {
+            DbContext?.Dispose();
+            RawDatabase.Dispose();
+            throw;
+        }
     }
 
     public void Dispose()
     {
-        DbContext.Dispose();
+        DbContext?.Dispose();
         RawDatabase.Dispose();
     }
 }
@@ -1694,7 +1742,15 @@ public partial class QQMessageReader
 
 public class QQProfileInfoReader : IQQDatabase
 {
+    private readonly ConcurrentDictionary<string, long> _uinByUid = new(StringComparer.Ordinal);
+    private readonly Lock _uinLookupLock = new();
+
     public QQProfileInfoDbContext DbContext { get; private set; } = null!;
+
+    public DatabaseSchema Schema { get; private set; } = null!;
+
+    /// <summary>资料表的实际表名: profile_info_v6, 旧版 QQNT 是 profile_info_v2; 都没有时为 null</summary>
+    public string? ProfileInfoTableName => Schema?.ResolveTable<QQProfileInfoEntry>();
 
     public RawDatabase RawDatabase { get; }
     public QQDatabaseType DatabaseType => QQDatabaseType.ProfileInfo;
@@ -1726,16 +1782,76 @@ public class QQProfileInfoReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        var optionsBuilder = new DbContextOptionsBuilder<QQProfileInfoDbContext>();
-        optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-        DbContext = new QQProfileInfoDbContext(optionsBuilder.Options);
+        try
+        {
+            RawDatabase.Initialize();
+            Schema = DatabaseSchema.Read(RawDatabase.Database);
+            var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            var optionsBuilder = new DbContextOptionsBuilder<QQProfileInfoDbContext>();
+            optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking).UseSchemaMappedModel();
+            DbContext = new QQProfileInfoDbContext(optionsBuilder.Options, Schema);
+        }
+        catch
+        {
+            DbContext?.Dispose();
+            RawDatabase.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// nt_uid 换 QQ 号: 先查资料表, 再查好友表, 都按 1000 (nt_uid) 列的主键索引; 查不到返回 0. 结果按 uid 缓存
+    /// </summary>
+    public long FindUinByUid(string uid)
+    {
+        if (_uinByUid.TryGetValue(uid, out var uin))
+            return uin;
+
+        lock (_uinLookupLock)
+        {
+            if (_uinByUid.TryGetValue(uid, out uin))
+                return uin;
+
+            try
+            {
+                uin = ProfileInfoTableName is { } profileTable ? LookupUin(profileTable, uid) : 0;
+                if (uin == 0 && Schema.HasTable("buddy_list"))
+                    uin = LookupUin("buddy_list", uid);
+            }
+            catch
+            {
+                // Closed or unreadable database: report unknown without caching it
+                return 0;
+            }
+
+            _uinByUid[uid] = uin;
+            return uin;
+        }
+    }
+
+    private long LookupUin(string table, string uid)
+    {
+        var database = RawDatabase.Database;
+        var sql = $"SELECT [1002] FROM \"{table}\" WHERE [1000] = ?1 AND [1002] > 0 LIMIT 1";
+        if (SQLitePCL.raw.sqlite3_prepare_v2(database, sql, out var statement) != SQLitePCL.raw.SQLITE_OK)
+            throw new InvalidOperationException(SQLitePCL.raw.sqlite3_errmsg(database).utf8_to_string());
+
+        try
+        {
+            SQLitePCL.raw.sqlite3_bind_text(statement, 1, uid);
+            return SQLitePCL.raw.sqlite3_step(statement) == SQLitePCL.raw.SQLITE_ROW
+                ? SQLitePCL.raw.sqlite3_column_int64(statement, 0)
+                : 0;
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_finalize(statement);
+        }
     }
 
     public void Dispose()
     {
-        DbContext.Dispose();
+        DbContext?.Dispose();
         RawDatabase.Dispose();
     }
 }

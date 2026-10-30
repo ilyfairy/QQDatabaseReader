@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using Avalonia.Labs.Gif;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -105,7 +106,7 @@ public class AnimatedAssetImage : ContentControl
 
     private GifImage CreateGifImage(string sourcePath)
     {
-        var stream = File.OpenRead(sourcePath);
+        var stream = ArchiveFile.OpenRead(sourcePath);
         try
         {
             _gifSource = GifStreamSource.FromStream(stream);
@@ -201,7 +202,7 @@ public class AnimatedAssetImage : ContentControl
     {
         try
         {
-            using var stream = File.OpenRead(sourcePath);
+            using var stream = ArchiveFile.OpenRead(sourcePath);
             return new Bitmap(stream);
         }
         catch

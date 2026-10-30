@@ -1,6 +1,7 @@
 using System.Text;
 using SQLitePCL;
 using System.Security.Cryptography;
+using QQDatabaseReader.Archives;
 using QQDatabaseReader.Sqlite;
 using System.Linq;
 
@@ -19,7 +20,11 @@ public class RawDatabase : IDisposable
     public HashAlgorithmName? CipherKdfAlgorithm { get; }
     public HashAlgorithmName? CipherHmacAlgorithm { get; }
 
+    /// <summary>数据库在 tar / zip 归档里 (路径形如 data.tar\databases\...\nt_msg.db), 通过 ArchiveFileVfs 只读访问</summary>
+    public bool IsInArchive => !UsePCQQVFS && ArchiveFile.IsArchivePath(DatabaseFilePath);
+
     private sqlite3? _db;
+    private string? _pcqqVfsName;
 
     public sqlite3 Database => _db!;
 
@@ -29,11 +34,12 @@ public class RawDatabase : IDisposable
     {
         SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_e_sqlcipher());
         QQNTFileOffsetVfs.Register();
+        ArchiveFileVfs.Register();
     }
 
     public RawDatabase(string dbFilePath, bool useVFS = false, bool useImmutableReadOnly = false)
     {
-        if (!File.Exists(dbFilePath))
+        if (!ArchiveFile.Exists(dbFilePath))
         {
             throw new Exception($"Error: Database file not found: {DatabaseFilePath}");
         }
@@ -65,7 +71,7 @@ public class RawDatabase : IDisposable
 
     public RawDatabase(string databaseFilePath, string cipherPassword, HashAlgorithmName? cipherKdfAlgorithm = null, HashAlgorithmName? cipherHmacAlgorithm = null, int cipherPageSize = 4096, int cipherKdfIter = 4000, bool useVFS = true)
     {
-        if (!File.Exists(databaseFilePath))
+        if (!ArchiveFile.Exists(databaseFilePath))
         {
             throw new Exception($"Error: Database file not found: {DatabaseFilePath}");
         }
@@ -81,44 +87,67 @@ public class RawDatabase : IDisposable
 
     public void Initialize()
     {
+        if (_db is not null)
+            throw new InvalidOperationException("Database is already initialized.");
+
         string? vfsName = null;
-        if (UsePCQQVFS)
+        sqlite3? openedDatabase = null;
+        try
         {
-            PCQQPageDecryptVfs.Register(PCQQKey!);
-            vfsName = PCQQPageDecryptVfs.VfsName;
-        }
-        else if (UseVFS)
-        {
-            vfsName = QQNTFileOffsetVfs.VfsName;
-        }
+            if (UsePCQQVFS)
+            {
+                _pcqqVfsName = PCQQPageDecryptVfs.Register(PCQQKey!);
+                vfsName = _pcqqVfsName;
+            }
+            else if (IsInArchive)
+            {
+                // 归档内的库: 自动识别 QQNT 头, 不需要 QQNTFileOffsetVfs; 只有原样存放的文件能随机读
+                if (ArchiveFile.TryGetEntry(DatabaseFilePath, out _, out var entry) && entry.Storage != ArchiveEntryStorage.Stored)
+                    throw new NotSupportedException($"归档内的数据库是压缩存储的, 不能直接读取, 请用仅存储 (不压缩) 方式打包: {DatabaseFilePath}");
+                vfsName = ArchiveFileVfs.VfsName;
+            }
+            else if (UseVFS)
+            {
+                vfsName = QQNTFileOffsetVfs.VfsName;
+            }
 
-        var openFilePath = UseImmutableReadOnly
-            ? CreateImmutableReadOnlyUri(DatabaseFilePath)
-            : DatabaseFilePath;
-        var openFlags = raw.SQLITE_OPEN_READONLY |
-                        (UseImmutableReadOnly ? raw.SQLITE_OPEN_URI : 0);
-        int rc = raw.sqlite3_open_v2(openFilePath, out _db, openFlags, vfsName);
-        if (rc != raw.SQLITE_OK)
-        {
-            var errorMsg = raw.sqlite3_errmsg(Database).utf8_to_string();
-            throw new Exception($"Failed to open database: {errorMsg}");
-        }
-
-        // 如果启用了解密，使用 PRAGMA key 方法（SQLCipher）
-        if (!string.IsNullOrEmpty(CipherPassword))
-        {
-            rc += raw.sqlite3_exec(Database, $"PRAGMA key = '{CipherPassword}';", null, IntPtr.Zero, out var keyErr);
-            rc += raw.sqlite3_exec(Database, $"PRAGMA cipher_page_size = {CipherPageSize};", null, IntPtr.Zero, out _);
-            rc += raw.sqlite3_exec(Database, $"PRAGMA kdf_iter = {CipherKdfIter};", null, IntPtr.Zero, out _);
-            rc += raw.sqlite3_exec(Database, $"PRAGMA cipher_hmac_algorithm = HMAC_{CipherHmacAlgorithm!.Value.Name};", null, IntPtr.Zero, out _);
-            rc += raw.sqlite3_exec(Database, $"PRAGMA cipher_default_kdf_algorithm = PBKDF2_HMAC_{CipherKdfAlgorithm!.Value.Name};", null, IntPtr.Zero, out _);
-            rc += raw.sqlite3_exec(Database, "SELECT count(*) FROM sqlite_master;", null, IntPtr.Zero, out _);
+            var openFilePath = UseImmutableReadOnly && !IsInArchive
+                ? CreateImmutableReadOnlyUri(DatabaseFilePath)
+                : DatabaseFilePath;
+            var openFlags = raw.SQLITE_OPEN_READONLY |
+                            (UseImmutableReadOnly && !IsInArchive ? raw.SQLITE_OPEN_URI : 0);
+            int rc = raw.sqlite3_open_v2(openFilePath, out openedDatabase, openFlags, vfsName);
             if (rc != raw.SQLITE_OK)
             {
-                throw new Exception("解密失败");
+                var errorMsg = raw.sqlite3_errmsg(openedDatabase).utf8_to_string();
+                throw new Exception($"Failed to open database: {errorMsg}");
+            }
+
+            _db = openedDatabase;
+            // 归档里不能建 -shm; 独占模式下 SQLite 把 WAL 索引放在进程内存里, 要在第一次读库之前设置
+            if (IsInArchive)
+                ExecuteSqlOrThrow(Database, "PRAGMA locking_mode = EXCLUSIVE;", "设置独占锁模式失败");
+
+            // 如果启用了解密，使用 PRAGMA key 方法（SQLCipher）
+            if (!string.IsNullOrEmpty(CipherPassword))
+            {
+                var escapedPassword = CipherPassword.Replace("'", "''", StringComparison.Ordinal);
+                ExecuteSqlOrThrow(Database, $"PRAGMA key = '{escapedPassword}';", "设置 SQLCipher 密钥失败");
+                ExecuteSqlOrThrow(Database, $"PRAGMA cipher_page_size = {CipherPageSize};", "设置 SQLCipher page size 失败");
+                ExecuteSqlOrThrow(Database, $"PRAGMA kdf_iter = {CipherKdfIter};", "设置 SQLCipher KDF 轮数失败");
+                ExecuteSqlOrThrow(Database, $"PRAGMA cipher_hmac_algorithm = HMAC_{CipherHmacAlgorithm!.Value.Name};", "设置 SQLCipher HMAC 算法失败");
+                ExecuteSqlOrThrow(Database, $"PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_{CipherKdfAlgorithm!.Value.Name};", "设置 SQLCipher KDF 算法失败");
+                VerifyDecrypted();
             }
         }
-
+        catch
+        {
+            _db = null;
+            openedDatabase?.Dispose();
+            PCQQPageDecryptVfs.Release(_pcqqVfsName);
+            _pcqqVfsName = null;
+            throw;
+        }
     }
 
 
@@ -135,18 +164,33 @@ public class RawDatabase : IDisposable
         return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(hash + rand)));
     }
 
+    /// <summary>
+    /// 读数据库文件开头 1024 字节 (QQNT 头). 文件不存在, 不足 1024 字节, 或在归档里但不是原样存放 (读它要整个解压) 时返回 false
+    /// </summary>
+    private static bool TryReadQQNtHeader(string databaseFilePath, Span<byte> buffer)
+    {
+        try
+        {
+            if (ArchiveFile.TryGetEntry(databaseFilePath, out _, out var entry) && entry.Storage != ArchiveEntryStorage.Stored)
+                return false;
+            if (!ArchiveFile.Exists(databaseFilePath))
+                return false;
+
+            using var fs = ArchiveFile.OpenRead(databaseFilePath);
+            return fs.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false) == buffer.Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
     public static string? GetRand(string databaseFilePath)
     {
-        if (!File.Exists(databaseFilePath))
-            return null;
-
-        using var fs = new FileStream(databaseFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (fs.Length < 1024)
-            return null;
-
         var header = "SQLite header 3"u8;
         Span<byte> buffer = stackalloc byte[1024];
-        fs.ReadExactly(buffer);
+        if (!TryReadQQNtHeader(databaseFilePath, buffer))
+            return null;
         if (!buffer[..header.Length].SequenceEqual(header))
             return null;
 
@@ -156,6 +200,30 @@ public class RawDatabase : IDisposable
             return null;
         var headerPayload = buffer[(qqntIndex + qqntdbHeader.Length)..];
         return TryReadQQNTHeaderRand(headerPayload) ?? ScanRandToken(headerPayload);
+    }
+
+    /// <summary>
+    /// 从 QQNT 数据库头部检测 SQLCipher 的 HMAC 算法. 新版 QQNT 在头部写明 (如 HMAC_SHA1);
+    /// 旧版 PC QQNT 头部没有这一项, 用的是 SQLCipher 默认的 HMAC_SHA512.
+    /// Android 头部没有这一项时按 HMAC_SHA1 处理. 文件不存在或不是 QQNT 数据库时返回 null
+    /// </summary>
+    public static HashAlgorithmName? DetectQQNtHmacAlgorithm(string databaseFilePath, bool android = false)
+    {
+        Span<byte> buffer = stackalloc byte[1024];
+        if (!TryReadQQNtHeader(databaseFilePath, buffer))
+            return null;
+
+        if (!buffer.StartsWith("SQLite header 3"u8) || buffer.IndexOf("QQ_NT DB"u8) < 0)
+            return null;
+
+        // HMAC_SHA1 是 HMAC_SHA1xx 的前缀, 先匹配长的
+        if (buffer.IndexOf("HMAC_SHA512"u8) >= 0)
+            return HashAlgorithmName.SHA512;
+        if (buffer.IndexOf("HMAC_SHA256"u8) >= 0)
+            return HashAlgorithmName.SHA256;
+        if (buffer.IndexOf("HMAC_SHA1"u8) >= 0)
+            return HashAlgorithmName.SHA1;
+        return android ? HashAlgorithmName.SHA1 : HashAlgorithmName.SHA512;
     }
 
     private static string CreateImmutableReadOnlyUri(string databaseFilePath)
@@ -315,6 +383,45 @@ public class RawDatabase : IDisposable
         return "\"" + name.Replace("\"", "\"\"") + "\"";
     }
 
+    /// <summary>
+    /// 校验时报数据库损坏, 已开启 writable_schema 宽松打开. 最常见的是 QQ 运行中复制的备份末尾少了几页 (库头页数比文件多),
+    /// 此时按文件实际大小读, 缺的页里的数据读不到. 也可能是其它损坏, 部分表或数据读不到
+    /// </summary>
+    public bool OpenedInRecoveryMode { get; private set; }
+
+    private void VerifyDecrypted()
+    {
+        const string sql = "SELECT count(*) FROM sqlite_master;";
+        var rc = raw.sqlite3_exec(Database, sql, null, IntPtr.Zero, out _);
+        if (rc == raw.SQLITE_CORRUPT)
+        {
+            // 页数检查失败时 SQLite 报 malformed; writable_schema 下改按文件大小计页. 连接是只读的, 不会写入.
+            // 这个开关打开后要一直开着: 每个读事务都会重新检查页数
+            ExecuteSqlOrThrow(Database, "PRAGMA writable_schema = ON;", "设置 writable_schema 失败");
+            rc = raw.sqlite3_exec(Database, sql, null, IntPtr.Zero, out _);
+            if (rc == raw.SQLITE_OK)
+            {
+                OpenedInRecoveryMode = true;
+                return;
+            }
+
+            ExecuteSqlOrThrow(Database, "PRAGMA writable_schema = OFF;", "恢复 writable_schema 失败");
+        }
+
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"解密失败: {raw.sqlite3_errmsg(Database).utf8_to_string()} (code {rc})");
+    }
+
+    private static void ExecuteSqlOrThrow(sqlite3 database, string sql, string context)
+    {
+        var rc = raw.sqlite3_exec(database, sql, null, IntPtr.Zero, out _);
+        if (rc == raw.SQLITE_OK)
+            return;
+
+        var error = raw.sqlite3_errmsg(database).utf8_to_string();
+        throw new InvalidOperationException($"{context}: {error} (code {rc})");
+    }
+
     public string DiagnoseDatabase()
     {
         // 快速检查
@@ -337,7 +444,7 @@ public class RawDatabase : IDisposable
     {
         string sql = $"PRAGMA table_info('{tableName}');";
         raw.sqlite3_prepare_v2(Database, sql, out var stmt);
-        
+
         while (raw.sqlite3_step(stmt) == raw.SQLITE_ROW)
         {
             var colName = raw.sqlite3_column_text(stmt, 1).utf8_to_string();
@@ -358,7 +465,7 @@ public class RawDatabase : IDisposable
     {
         string sql = $"PRAGMA index_list('{tableName}');";
         raw.sqlite3_prepare_v2(Database, sql, out var stmt);
-        
+
         var indexNames = new List<string>();
         while (raw.sqlite3_step(stmt) == raw.SQLITE_ROW)
         {
@@ -366,12 +473,12 @@ public class RawDatabase : IDisposable
             indexNames.Add(indexName);
         }
         raw.sqlite3_finalize(stmt);
-        
+
         foreach (var indexName in indexNames)
         {
             string indexInfoSQL = $"PRAGMA index_info('{indexName}');";
             raw.sqlite3_prepare_v2(Database, indexInfoSQL, out var indexInfoStmt);
-            
+
             while (raw.sqlite3_step(indexInfoStmt) == raw.SQLITE_ROW)
             {
                 var colName = raw.sqlite3_column_text(indexInfoStmt, 2).utf8_to_string();
@@ -383,7 +490,7 @@ public class RawDatabase : IDisposable
             }
             raw.sqlite3_finalize(indexInfoStmt);
         }
-        
+
         return false;
     }
 
@@ -394,7 +501,7 @@ public class RawDatabase : IDisposable
     {
         string sql = $"PRAGMA index_list('{tableName}');";
         raw.sqlite3_prepare_v2(Database, sql, out var stmt);
-        
+
         var indexNames = new List<string>();
         while (raw.sqlite3_step(stmt) == raw.SQLITE_ROW)
         {
@@ -402,12 +509,12 @@ public class RawDatabase : IDisposable
             indexNames.Add(indexName);
         }
         raw.sqlite3_finalize(stmt);
-        
+
         foreach (var indexName in indexNames)
         {
             string indexInfoSQL = $"PRAGMA index_info('{indexName}');";
             raw.sqlite3_prepare_v2(Database, indexInfoSQL, out var indexInfoStmt);
-            
+
             var indexColumns = new List<string>();
             while (raw.sqlite3_step(indexInfoStmt) == raw.SQLITE_ROW)
             {
@@ -415,7 +522,7 @@ public class RawDatabase : IDisposable
                 indexColumns.Add(colName);
             }
             raw.sqlite3_finalize(indexInfoStmt);
-            
+
             // 检查是否包含所有指定的列（顺序必须匹配或者是前缀）
             if (indexColumns.Count >= columnNames.Length)
             {
@@ -431,7 +538,7 @@ public class RawDatabase : IDisposable
                 if (matches) return true;
             }
         }
-        
+
         return false;
     }
 
@@ -439,150 +546,399 @@ public class RawDatabase : IDisposable
 
     /// <summary>
     /// 将所有用户表（排除 sqlite_*）从当前连接导出到新的未加密数据库。
-    /// 对每张表优先使用 rowid 驱动复制；若无 rowid 则尝试 INTEGER PRIMARY KEY；否则回退为全表顺序扫描。
-    /// 遇到损坏页时：rowid/整数主键路径使用指数跳过；顺序扫描无法精确跳过，仅记录错误后继续下一表。
+    /// 对每张表优先使用 rowid 驱动复制；无法访问隐藏 rowid 时按表自身顺序完整复制。
+    /// 任意读取、写入、建表、索引或触发器错误都会终止导出，临时数据库不会替换目标文件。
     /// 可选进度：reportTotalRows 回调总行数；progress 每成功插入一行时 Report 当前累计行数。
     /// </summary>
     public void ExportToNewDatabase(string destPath, int batchSize = 2048, int commitEvery = 20000, Action<long>? reportTotalRows = null, IProgress<long>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(destPath))
             throw new ArgumentException("destPath 不能为空");
-        if (File.Exists(destPath))
-            File.Delete(destPath);
+        if (batchSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(batchSize), "batchSize 必须大于 0");
+        if (commitEvery <= 0)
+            throw new ArgumentOutOfRangeException(nameof(commitEvery), "commitEvery 必须大于 0");
 
-        int rc = raw.sqlite3_open_v2(destPath, out var newDb, raw.SQLITE_OPEN_READWRITE | raw.SQLITE_OPEN_CREATE, null);
-        if (rc != raw.SQLITE_OK)
-        {
-            var msg = raw.sqlite3_errmsg(newDb).utf8_to_string();
-            throw new Exception($"无法创建目标数据库: {msg}");
-        }
+        var destinationPath = Path.GetFullPath(destPath);
+        var sourcePath = Path.GetFullPath(DatabaseFilePath);
+        var pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(destinationPath, sourcePath, pathComparison))
+            throw new ArgumentException("目标路径不能与源数据库相同", nameof(destPath));
+
+        var destinationDirectory = Path.GetDirectoryName(destinationPath)
+            ?? throw new InvalidOperationException("无法确定导出目录");
+        Directory.CreateDirectory(destinationDirectory);
+        var tempPath = Path.Combine(
+            destinationDirectory,
+            $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+
+        sqlite3? newDb = null;
 
         try
         {
-            // 获取所有用户表及其 CREATE TABLE 语句
-            List<(string name, string sql, string type)> tables = new();
-            raw.sqlite3_prepare_v2(_db, "SELECT name, sql, type FROM sqlite_master WHERE type IN ('table') AND name NOT LIKE 'sqlite_%' AND sql NOT NULL ORDER BY name", out var tblStmt);
-            while (raw.sqlite3_step(tblStmt) == raw.SQLITE_ROW)
+            int rc = raw.sqlite3_open_v2(
+                tempPath,
+                out newDb,
+                raw.SQLITE_OPEN_READWRITE | raw.SQLITE_OPEN_CREATE,
+                null);
+            if (rc != raw.SQLITE_OK)
+            {
+                var msg = raw.sqlite3_errmsg(newDb).utf8_to_string();
+                throw new InvalidOperationException($"无法创建目标数据库: {msg} (code {rc})");
+            }
+
+            ExportToOpenedDatabase(newDb, batchSize, commitEvery, reportTotalRows, progress);
+            VerifyDatabaseIntegrity(newDb);
+
+            rc = raw.sqlite3_close_v2(newDb);
+            if (rc != raw.SQLITE_OK)
+                throw new InvalidOperationException($"关闭导出数据库失败 (code {rc})");
+            newDb = null;
+
+            if (File.Exists(destinationPath))
+                File.Replace(tempPath, destinationPath, null, ignoreMetadataErrors: true);
+            else
+                File.Move(tempPath, destinationPath);
+        }
+        catch
+        {
+            if (newDb is not null)
+            {
+                raw.sqlite3_close_v2(newDb);
+            }
+
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+    }
+
+    private void ExportToOpenedDatabase(
+        sqlite3 newDb,
+        int batchSize,
+        int commitEvery,
+        Action<long>? reportTotalRows,
+        IProgress<long>? progress)
+    {
+        // 获取所有用户表及其 CREATE TABLE 语句
+        List<(string name, string sql)> tables = new();
+        var rc = raw.sqlite3_prepare_v2(_db, "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND sql NOT NULL ORDER BY name", out var tblStmt);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"读取源数据库表结构失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
+        try
+        {
+            while ((rc = raw.sqlite3_step(tblStmt)) == raw.SQLITE_ROW)
             {
                 string name = raw.sqlite3_column_text(tblStmt, 0).utf8_to_string();
                 string sql = raw.sqlite3_column_text(tblStmt, 1).utf8_to_string();
-                string type = raw.sqlite3_column_text(tblStmt, 2).utf8_to_string();
-                tables.Add((name, sql, type));
-            }
-            raw.sqlite3_finalize(tblStmt);
-
-            // 分离普通表和FTS表
-            var normalTables = tables.Where(t => !IsFts5VirtualTable(t.sql)).ToList();
-            var ftsTables = tables.Where(t => IsFts5VirtualTable(t.sql)).ToList();
-
-            // 先创建普通表
-            foreach (var (name, sql, type) in normalTables)
-            {
-                rc = raw.sqlite3_exec(newDb, sql, null, IntPtr.Zero, out _);
-                if (rc != raw.SQLITE_OK)
-                {
-                    var msg2 = raw.sqlite3_errmsg(newDb).utf8_to_string();
-                    throw new Exception($"创建普通表 {name} 失败: {msg2}");
-                }
+                tables.Add((name, sql));
             }
 
-            // 后创建FTS表（处理tokenizer兼容性）
-            foreach (var (name, sql, type) in ftsTables)
-            {
-                // 先清理可能存在的FTS内部表
-                CleanupExistingFtsTable(newDb, name);
-                
-                // 处理不支持的FTS5 tokenizer
-                string createSql = RewriteUnsupportedFtsTokenizer(sql, name);
-                
-                rc = raw.sqlite3_exec(newDb, createSql, null, IntPtr.Zero, out _);
-                if (rc != raw.SQLITE_OK)
-                {
-                    var msg2 = raw.sqlite3_errmsg(newDb).utf8_to_string();
-                    
-                    // 如果是FTS相关错误，尝试跳过该表
-                    if (msg2.Contains("no such tokenizer") || msg2.Contains("already exists") || msg2.Contains("fts"))
-                    {
-                        continue;
-                    }
-                    
-                    throw new Exception($"创建FTS表 {name} 失败: {msg2}");
-                }
-            }
-
-            // 计算总行数（进度总量）
-            long totalRows = 0;
-            foreach (var (name, _, _) in tables)
-            {
-                if (raw.sqlite3_prepare_v2(_db, $"SELECT COUNT(*) FROM {QuoteIdent(name)}", out var cntStmt) == raw.SQLITE_OK)
-                {
-                    if (raw.sqlite3_step(cntStmt) == raw.SQLITE_ROW)
-                    {
-                        totalRows += raw.sqlite3_column_int64(cntStmt, 0);
-                    }
-                    raw.sqlite3_finalize(cntStmt);
-                }
-            }
-            reportTotalRows?.Invoke(totalRows);
-
-            // 复制前性能优化参数（目标库）
-            raw.sqlite3_exec(newDb, "PRAGMA synchronous=OFF", null, IntPtr.Zero, out _);
-            raw.sqlite3_exec(newDb, "PRAGMA journal_mode=OFF", null, IntPtr.Zero, out _);
-            raw.sqlite3_exec(newDb, "PRAGMA temp_store=MEMORY", null, IntPtr.Zero, out _);
-            raw.sqlite3_exec(newDb, "PRAGMA foreign_keys=OFF", null, IntPtr.Zero, out _);
-
-            long copiedTotal = 0;
-            // 每张表独立事务复制，避免单表失败导致全部数据回滚
-            foreach (var (table, _, _) in tables)
-            {
-                // 开启表级事务
-                raw.sqlite3_exec(newDb, "BEGIN IMMEDIATE", null, IntPtr.Zero, out _);
-                try
-                {
-                    CopySingleTableData(_db!, newDb, table, batchSize, commitEvery, ref copiedTotal, progress);
-                    progress?.Report(copiedTotal);
-                    raw.sqlite3_exec(newDb, "COMMIT", null, IntPtr.Zero, out _);
-                }
-                catch (Exception)
-                {
-                    // 回滚当前表，继续下一张，避免整库失败
-                    raw.sqlite3_exec(newDb, "ROLLBACK", null, IntPtr.Zero, out _);
-                    // 可选：输出错误以便诊断
-                    // Console.WriteLine($"[WARN] 表 {table} 复制失败");
-                }
-            }
-
-            // 重建所有索引/触发器
-            raw.sqlite3_prepare_v2(_db, "SELECT sql FROM sqlite_master WHERE (type='index' OR type='trigger') AND name NOT LIKE 'sqlite_%' AND sql NOT NULL", out var itStmt);
-            while (raw.sqlite3_step(itStmt) == raw.SQLITE_ROW)
-            {
-                var ddl = raw.sqlite3_column_text(itStmt, 0).utf8_to_string();
-                try
-                { raw.sqlite3_exec(newDb, ddl, null, IntPtr.Zero, out _); }
-                catch { }
-            }
-            raw.sqlite3_finalize(itStmt);
+            if (rc != raw.SQLITE_DONE)
+                throw new InvalidOperationException($"读取源数据库表结构失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
         }
         finally
         {
-            raw.sqlite3_close_v2(newDb);
+            raw.sqlite3_finalize(tblStmt);
+        }
+
+        var views = ReadViewDefinitions(_db!);
+
+        // 分离普通表和FTS表
+        var ftsTables = tables.Where(t => IsFts5VirtualTable(t.sql)).ToList();
+        var ftsTableNames = ftsTables.Select(static table => table.name).ToArray();
+        var normalTables = tables
+            .Where(t => !IsFts5VirtualTable(t.sql) && !IsFtsShadowTable(t.name, ftsTableNames))
+            .ToList();
+        var exportTables = normalTables.Concat(ftsTables).ToArray();
+
+        // 先创建普通表
+        foreach (var (name, sql) in normalTables)
+        {
+            ExecuteSqlOrThrow(newDb, sql, $"创建普通表 {name} 失败");
+        }
+
+        // 后创建FTS表（处理tokenizer兼容性）
+        foreach (var (name, sql) in ftsTables)
+        {
+            // 处理不支持的FTS5 tokenizer
+            string createSql = RewriteUnsupportedFtsTokenizer(sql, name);
+            ExecuteSqlOrThrow(newDb, createSql, $"创建 FTS 表 {name} 失败");
+        }
+
+        // 计算总行数（进度总量）
+        long totalRows = 0;
+        foreach (var (name, _) in exportTables)
+        {
+            rc = raw.sqlite3_prepare_v2(_db, $"SELECT COUNT(*) FROM {QuoteIdent(name)}", out var cntStmt);
+            if (rc != raw.SQLITE_OK)
+                throw new InvalidOperationException($"统计表 {name} 失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
+            try
+            {
+                rc = raw.sqlite3_step(cntStmt);
+                if (rc != raw.SQLITE_ROW)
+                    throw new InvalidOperationException($"统计表 {name} 失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
+                totalRows += raw.sqlite3_column_int64(cntStmt, 0);
+            }
+            finally
+            {
+                raw.sqlite3_finalize(cntStmt);
+            }
+        }
+        reportTotalRows?.Invoke(totalRows);
+
+        // 复制前性能优化参数（目标库）
+        ExecuteSqlOrThrow(newDb, "PRAGMA synchronous=OFF", "设置目标数据库 synchronous 失败");
+        ExecuteSqlOrThrow(newDb, "PRAGMA journal_mode=OFF", "设置目标数据库 journal_mode 失败");
+        ExecuteSqlOrThrow(newDb, "PRAGMA temp_store=MEMORY", "设置目标数据库 temp_store 失败");
+        ExecuteSqlOrThrow(newDb, "PRAGMA foreign_keys=OFF", "设置目标数据库 foreign_keys 失败");
+
+        long copiedTotal = 0;
+        // 每张表独立事务复制，避免单表失败导致全部数据回滚
+        foreach (var (table, _) in exportTables)
+        {
+            // 开启表级事务
+            ExecuteSqlOrThrow(newDb, "BEGIN IMMEDIATE", $"开始复制表 {table} 的事务失败");
+            try
+            {
+                CopySingleTableData(_db!, newDb, table, batchSize, commitEvery, ref copiedTotal, progress);
+                progress?.Report(copiedTotal);
+                ExecuteSqlOrThrow(newDb, "COMMIT", $"提交表 {table} 失败");
+            }
+            catch (Exception ex)
+            {
+                raw.sqlite3_exec(newDb, "ROLLBACK", null, IntPtr.Zero, out _);
+                throw new InvalidOperationException($"复制表 {table} 失败", ex);
+            }
+        }
+
+        CopySqliteSequence(_db!, newDb);
+
+        foreach (var (name, sql) in views)
+            ExecuteSqlOrThrow(newDb, sql, $"重建视图 {name} 失败");
+
+        // 重建所有索引/触发器
+        rc = raw.sqlite3_prepare_v2(_db, "SELECT name, sql FROM sqlite_master WHERE (type='index' OR type='trigger') AND name NOT LIKE 'sqlite_%' AND sql NOT NULL ORDER BY name", out var itStmt);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"读取索引/触发器结构失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
+        try
+        {
+            while ((rc = raw.sqlite3_step(itStmt)) == raw.SQLITE_ROW)
+            {
+                var name = raw.sqlite3_column_text(itStmt, 0).utf8_to_string();
+                var ddl = raw.sqlite3_column_text(itStmt, 1).utf8_to_string();
+                ExecuteSqlOrThrow(newDb, ddl, $"重建索引/触发器 {name} 失败");
+            }
+
+            if (rc != raw.SQLITE_DONE)
+                throw new InvalidOperationException($"读取索引/触发器结构失败: {raw.sqlite3_errmsg(_db).utf8_to_string()} (code {rc})");
+        }
+        finally
+        {
+            raw.sqlite3_finalize(itStmt);
+        }
+    }
+
+    private static List<(string name, string sql)> ReadViewDefinitions(sqlite3 database)
+    {
+        var views = new List<(string name, string sql)>();
+        var rc = raw.sqlite3_prepare_v2(
+            database,
+            "SELECT name, sql FROM sqlite_master WHERE type='view' AND name NOT LIKE 'sqlite_%' AND sql NOT NULL ORDER BY name",
+            out var statement);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"读取视图结构失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+
+        try
+        {
+            while ((rc = raw.sqlite3_step(statement)) == raw.SQLITE_ROW)
+            {
+                views.Add((
+                    raw.sqlite3_column_text(statement, 0).utf8_to_string(),
+                    raw.sqlite3_column_text(statement, 1).utf8_to_string()));
+            }
+
+            if (rc != raw.SQLITE_DONE)
+                throw new InvalidOperationException($"读取视图结构失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+        }
+        finally
+        {
+            raw.sqlite3_finalize(statement);
+        }
+
+        return views;
+    }
+
+    private static void CopySqliteSequence(sqlite3 sourceDatabase, sqlite3 destinationDatabase)
+    {
+        if (!HasSchemaTable(sourceDatabase, "sqlite_sequence"))
+            return;
+
+        var sequences = new List<(string name, long? sequence)>();
+        var rc = raw.sqlite3_prepare_v2(
+            sourceDatabase,
+            "SELECT name, seq FROM sqlite_sequence ORDER BY name",
+            out var selectStatement);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"读取 AUTOINCREMENT 序列失败: {raw.sqlite3_errmsg(sourceDatabase).utf8_to_string()} (code {rc})");
+
+        try
+        {
+            while ((rc = raw.sqlite3_step(selectStatement)) == raw.SQLITE_ROW)
+            {
+                var sequence = raw.sqlite3_column_type(selectStatement, 1) == raw.SQLITE_NULL
+                    ? (long?)null
+                    : raw.sqlite3_column_int64(selectStatement, 1);
+                sequences.Add((raw.sqlite3_column_text(selectStatement, 0).utf8_to_string(), sequence));
+            }
+
+            if (rc != raw.SQLITE_DONE)
+                throw new InvalidOperationException($"读取 AUTOINCREMENT 序列失败: {raw.sqlite3_errmsg(sourceDatabase).utf8_to_string()} (code {rc})");
+        }
+        finally
+        {
+            raw.sqlite3_finalize(selectStatement);
+        }
+
+        if (sequences.Count == 0)
+            return;
+        if (!HasSchemaTable(destinationDatabase, "sqlite_sequence"))
+            throw new InvalidOperationException("目标数据库缺少 sqlite_sequence，无法恢复 AUTOINCREMENT 序列");
+
+        ExecuteSqlOrThrow(destinationDatabase, "BEGIN IMMEDIATE", "开始恢复 AUTOINCREMENT 序列失败");
+        sqlite3_stmt? insertStatement = null;
+        try
+        {
+            ExecuteSqlOrThrow(destinationDatabase, "DELETE FROM sqlite_sequence", "清理目标 AUTOINCREMENT 序列失败");
+            rc = raw.sqlite3_prepare_v2(
+                destinationDatabase,
+                "INSERT INTO sqlite_sequence(name, seq) VALUES(?1, ?2)",
+                out insertStatement);
+            if (rc != raw.SQLITE_OK)
+                throw new InvalidOperationException($"准备恢复 AUTOINCREMENT 序列失败: {raw.sqlite3_errmsg(destinationDatabase).utf8_to_string()} (code {rc})");
+
+            foreach (var (name, sequence) in sequences)
+            {
+                raw.sqlite3_reset(insertStatement);
+                raw.sqlite3_clear_bindings(insertStatement);
+                raw.sqlite3_bind_text(insertStatement, 1, name);
+                if (sequence is { } value)
+                    raw.sqlite3_bind_int64(insertStatement, 2, value);
+                else
+                    raw.sqlite3_bind_null(insertStatement, 2);
+
+                rc = raw.sqlite3_step(insertStatement);
+                if (rc != raw.SQLITE_DONE)
+                    throw new InvalidOperationException($"恢复 AUTOINCREMENT 序列 {name} 失败: {raw.sqlite3_errmsg(destinationDatabase).utf8_to_string()} (code {rc})");
+            }
+
+            raw.sqlite3_finalize(insertStatement);
+            insertStatement = null;
+            ExecuteSqlOrThrow(destinationDatabase, "COMMIT", "提交 AUTOINCREMENT 序列失败");
+        }
+        catch
+        {
+            if (insertStatement is not null)
+                raw.sqlite3_finalize(insertStatement);
+            raw.sqlite3_exec(destinationDatabase, "ROLLBACK", null, IntPtr.Zero, out _);
+            throw;
+        }
+    }
+
+    private static bool HasSchemaTable(sqlite3 database, string tableName)
+    {
+        var rc = raw.sqlite3_prepare_v2(
+            database,
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1",
+            out var statement);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"检查表 {tableName} 失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+
+        try
+        {
+            raw.sqlite3_bind_text(statement, 1, tableName);
+            rc = raw.sqlite3_step(statement);
+            if (rc == raw.SQLITE_ROW)
+                return true;
+            if (rc == raw.SQLITE_DONE)
+                return false;
+            throw new InvalidOperationException($"检查表 {tableName} 失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+        }
+        finally
+        {
+            raw.sqlite3_finalize(statement);
+        }
+    }
+
+    private static bool IsFtsShadowTable(string tableName, IReadOnlyList<string> ftsTableNames)
+    {
+        foreach (var ftsTableName in ftsTableNames)
+        {
+            if (tableName == ftsTableName + "_data" ||
+                tableName == ftsTableName + "_idx" ||
+                tableName == ftsTableName + "_content" ||
+                tableName == ftsTableName + "_docsize" ||
+                tableName == ftsTableName + "_config")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void VerifyDatabaseIntegrity(sqlite3 database)
+    {
+        var rc = raw.sqlite3_prepare_v2(database, "PRAGMA quick_check", out var stmt);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"准备导出数据库完整性检查失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+
+        try
+        {
+            rc = raw.sqlite3_step(stmt);
+            if (rc != raw.SQLITE_ROW)
+                throw new InvalidOperationException($"导出数据库完整性检查失败: {raw.sqlite3_errmsg(database).utf8_to_string()} (code {rc})");
+
+            var result = raw.sqlite3_column_text(stmt, 0).utf8_to_string();
+            if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"导出数据库完整性检查失败: {result}");
+        }
+        finally
+        {
+            raw.sqlite3_finalize(stmt);
         }
     }
 
     private void CopySingleTableData(sqlite3 srcDb, sqlite3 destDb, string table, int batchSize, int commitEvery, ref long copiedTotal, IProgress<long>? progress)
     {
         // 列清单
-        List<(int cid, string name, string type, int pk)> cols = new();
-        if (raw.sqlite3_prepare_v2(srcDb, $"PRAGMA table_info({QuoteIdent(table)})", out var infoStmt) == raw.SQLITE_OK)
+        List<(int cid, string name)> cols = new();
+        var rc = raw.sqlite3_prepare_v2(srcDb, $"PRAGMA table_info({QuoteIdent(table)})", out var infoStmt);
+        if (rc != raw.SQLITE_OK)
+            throw new InvalidOperationException($"读取表 {table} 的列结构失败: {raw.sqlite3_errmsg(srcDb).utf8_to_string()} (code {rc})");
+        try
         {
-            while (raw.sqlite3_step(infoStmt) == raw.SQLITE_ROW)
+            while ((rc = raw.sqlite3_step(infoStmt)) == raw.SQLITE_ROW)
             {
                 int cid = raw.sqlite3_column_int(infoStmt, 0);
                 string name = raw.sqlite3_column_text(infoStmt, 1).utf8_to_string();
-                string type = raw.sqlite3_column_text(infoStmt, 2).utf8_to_string();
-                int pk = raw.sqlite3_column_int(infoStmt, 5);
-                cols.Add((cid, name, type, pk));
+                cols.Add((cid, name));
             }
+
+            if (rc != raw.SQLITE_DONE)
+                throw new InvalidOperationException($"读取表 {table} 的列结构失败: {raw.sqlite3_errmsg(srcDb).utf8_to_string()} (code {rc})");
+        }
+        finally
+        {
             raw.sqlite3_finalize(infoStmt);
         }
         if (cols.Count == 0)
@@ -591,44 +947,35 @@ public class RawDatabase : IDisposable
         var orderedCols = cols.OrderBy(c => c.cid).ToList();
         string quotedCols = string.Join(",", orderedCols.Select(c => QuoteIdent(c.name)));
 
-        // 判定 rowid 或 INTEGER PRIMARY KEY
+        // 判定隐藏 rowid。声明列可能遮蔽 rowid 别名。
         bool hasRowId = false;
+        string? rowIdAlias = new[] { "rowid", "_rowid_", "oid" }
+            .FirstOrDefault(alias => orderedCols.All(column =>
+                !string.Equals(column.name, alias, StringComparison.OrdinalIgnoreCase)));
         long minKey = 0, maxKey = 0;
-        if (raw.sqlite3_prepare_v2(srcDb, $"SELECT MIN(rowid), MAX(rowid) FROM {QuoteIdent(table)}", out var mmStmt) == raw.SQLITE_OK)
+        if (rowIdAlias is not null &&
+            raw.sqlite3_prepare_v2(srcDb, $"SELECT MIN({rowIdAlias}), MAX({rowIdAlias}) FROM {QuoteIdent(table)}", out var mmStmt) == raw.SQLITE_OK)
         {
-            if (raw.sqlite3_step(mmStmt) == raw.SQLITE_ROW)
+            try
             {
+                rc = raw.sqlite3_step(mmStmt);
+                if (rc != raw.SQLITE_ROW)
+                    throw new InvalidOperationException($"读取表 {table} 的 rowid 范围失败: {raw.sqlite3_errmsg(srcDb).utf8_to_string()} (code {rc})");
                 minKey = raw.sqlite3_column_int64(mmStmt, 0);
                 maxKey = raw.sqlite3_column_int64(mmStmt, 1);
                 hasRowId = true;
             }
-            raw.sqlite3_finalize(mmStmt);
-        }
-
-        string? pkName = null;
-        bool pkIsInteger = false;
-        if (!hasRowId)
-        {
-            var pkCol = orderedCols.FirstOrDefault(c => c.pk == 1 && c.type.IndexOf("INT", StringComparison.OrdinalIgnoreCase) >= 0);
-            if (!string.IsNullOrEmpty(pkCol.name))
+            finally
             {
-                pkName = pkCol.name;
-                pkIsInteger = true;
-                if (raw.sqlite3_prepare_v2(srcDb, $"SELECT MIN({QuoteIdent(pkName)}), MAX({QuoteIdent(pkName)}) FROM {QuoteIdent(table)}", out var pkmm) == raw.SQLITE_OK)
-                {
-                    if (raw.sqlite3_step(pkmm) == raw.SQLITE_ROW)
-                    {
-                        minKey = raw.sqlite3_column_int64(pkmm, 0);
-                        maxKey = raw.sqlite3_column_int64(pkmm, 1);
-                    }
-                    raw.sqlite3_finalize(pkmm);
-                }
+                raw.sqlite3_finalize(mmStmt);
             }
         }
 
         // 准备 INSERT 语句
-        string placeholders = string.Join(",", Enumerable.Range(1, orderedCols.Count).Select(i => $"?{i}"));
-        string insertSql = $"INSERT INTO {QuoteIdent(table)}({quotedCols}) VALUES({placeholders})";
+        var insertColumnCount = orderedCols.Count + (hasRowId ? 1 : 0);
+        string placeholders = string.Join(",", Enumerable.Range(1, insertColumnCount).Select(i => $"?{i}"));
+        string insertColumns = hasRowId ? $"{rowIdAlias},{quotedCols}" : quotedCols;
+        string insertSql = $"INSERT INTO {QuoteIdent(table)}({insertColumns}) VALUES({placeholders})";
         if (raw.sqlite3_prepare_v2(destDb, insertSql, out var insertStmt) != raw.SQLITE_OK)
         {
             var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
@@ -636,171 +983,117 @@ public class RawDatabase : IDisposable
         }
 
         int currentBatch = Math.Max(1, batchSize);
-        int copied = 0;
-
         try
         {
-            if (hasRowId || pkIsInteger)
+            if (hasRowId)
             {
-                string keyExpr = hasRowId ? "rowid" : QuoteIdent(pkName!);
-                string selectCols;
-                if (hasRowId)
-                {
-                    // rowid 不在列集合中
-                    selectCols = $"{keyExpr},{quotedCols}";
-                }
-                else
-                {
-                    // 将主键放在首列，后续列排除主键，避免重复
-                    string restCols = string.Join(",", orderedCols.Where(c => !string.Equals(c.name, pkName, StringComparison.OrdinalIgnoreCase)).Select(c => QuoteIdent(c.name)));
-                    selectCols = restCols.Length == 0 ? keyExpr : $"{keyExpr},{restCols}";
-                }
+                string keyExpr = rowIdAlias!;
+                string selectCols = $"{keyExpr},{quotedCols}";
 
-                string selectSql = $"SELECT {selectCols} FROM {QuoteIdent(table)} WHERE {keyExpr} > ?1 ORDER BY {keyExpr} LIMIT ?2";
+                string selectSql = $"SELECT {selectCols} FROM {QuoteIdent(table)} WHERE {keyExpr} >= ?1 ORDER BY {keyExpr} LIMIT ?2";
                 if (raw.sqlite3_prepare_v2(srcDb, selectSql, out var selectStmt) != raw.SQLITE_OK)
                 {
                     var em = raw.sqlite3_errmsg(srcDb).utf8_to_string();
                     throw new Exception($"准备源查询失败({table}): {em}");
                 }
 
-                long last = hasRowId ? (minKey - 1) : (minKey - 1);
-                while (last < maxKey)
+                try
                 {
-                    raw.sqlite3_reset(selectStmt);
-                    raw.sqlite3_clear_bindings(selectStmt);
-                    raw.sqlite3_bind_int64(selectStmt, 1, last);
-                    raw.sqlite3_bind_int(selectStmt, 2, currentBatch);
-
-                    int stepRc;
-                    bool anyRow = false;
-                    long lastSuccess = last;
-
-                    while ((stepRc = raw.sqlite3_step(selectStmt)) == raw.SQLITE_ROW)
+                    long nextKey = minKey;
+                    while (nextKey <= maxKey)
                     {
-                        anyRow = true;
-                        long keyVal = raw.sqlite3_column_int64(selectStmt, 0);
+                        raw.sqlite3_reset(selectStmt);
+                        raw.sqlite3_clear_bindings(selectStmt);
+                        raw.sqlite3_bind_int64(selectStmt, 1, nextKey);
+                        raw.sqlite3_bind_int(selectStmt, 2, currentBatch);
 
-                        raw.sqlite3_reset(insertStmt);
-                        raw.sqlite3_clear_bindings(insertStmt);
+                        int stepRc;
+                        bool anyRow = false;
+                        long lastSuccess = nextKey;
 
-                        // 绑定列
-                        int srcIdx = 1; // select 第 0 列是 key
-                        for (int i = 0; i < orderedCols.Count; i++)
+                        while ((stepRc = raw.sqlite3_step(selectStmt)) == raw.SQLITE_ROW)
                         {
-                            var col = orderedCols[i];
-                            if (!hasRowId && pkIsInteger && string.Equals(col.name, pkName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                raw.sqlite3_bind_int64(insertStmt, i + 1, keyVal);
-                                continue;
-                            }
+                            anyRow = true;
+                            long keyVal = raw.sqlite3_column_int64(selectStmt, 0);
 
-                            int type = raw.sqlite3_column_type(selectStmt, srcIdx);
-                            if (type == raw.SQLITE_NULL)
+                            raw.sqlite3_reset(insertStmt);
+                            raw.sqlite3_clear_bindings(insertStmt);
+                            if (hasRowId)
+                                raw.sqlite3_bind_int64(insertStmt, 1, keyVal);
+
+                            // 绑定列
+                            int srcIdx = 1; // select 第 0 列是 key
+                            for (int i = 0; i < orderedCols.Count; i++)
                             {
-                                raw.sqlite3_bind_null(insertStmt, i + 1);
-                            }
-                            else if (type == raw.SQLITE_INTEGER)
-                            {
-                                long v = raw.sqlite3_column_int64(selectStmt, srcIdx);
-                                raw.sqlite3_bind_int64(insertStmt, i + 1, v);
-                            }
-                            else if (type == raw.SQLITE_FLOAT)
-                            {
-                                double v = raw.sqlite3_column_double(selectStmt, srcIdx);
-                                raw.sqlite3_bind_double(insertStmt, i + 1, v);
-                            }
-                            else if (type == raw.SQLITE_TEXT)
-                            {
-                                string v = raw.sqlite3_column_text(selectStmt, srcIdx).utf8_to_string();
-                                raw.sqlite3_bind_text(insertStmt, i + 1, v);
-                            }
-                            else if (type == raw.SQLITE_BLOB)
-                            {
-                                var span = raw.sqlite3_column_blob(selectStmt, srcIdx);
-                                if (span.Length == 0)
+                                var parameterIndex = i + 2;
+
+                                int type = raw.sqlite3_column_type(selectStmt, srcIdx);
+                                if (type == raw.SQLITE_NULL)
                                 {
-                                    raw.sqlite3_bind_zeroblob(insertStmt, i + 1, 0);
+                                    raw.sqlite3_bind_null(insertStmt, parameterIndex);
                                 }
-                                else
+                                else if (type == raw.SQLITE_INTEGER)
                                 {
-                                    raw.sqlite3_bind_blob(insertStmt, i + 1, span.ToArray());
+                                    long v = raw.sqlite3_column_int64(selectStmt, srcIdx);
+                                    raw.sqlite3_bind_int64(insertStmt, parameterIndex, v);
                                 }
+                                else if (type == raw.SQLITE_FLOAT)
+                                {
+                                    double v = raw.sqlite3_column_double(selectStmt, srcIdx);
+                                    raw.sqlite3_bind_double(insertStmt, parameterIndex, v);
+                                }
+                                else if (type == raw.SQLITE_TEXT)
+                                {
+                                    string v = raw.sqlite3_column_text(selectStmt, srcIdx).utf8_to_string();
+                                    raw.sqlite3_bind_text(insertStmt, parameterIndex, v);
+                                }
+                                else if (type == raw.SQLITE_BLOB)
+                                {
+                                    var span = raw.sqlite3_column_blob(selectStmt, srcIdx);
+                                    if (span.Length == 0)
+                                        raw.sqlite3_bind_zeroblob(insertStmt, parameterIndex, 0);
+                                    else
+                                        raw.sqlite3_bind_blob(insertStmt, parameterIndex, span.ToArray());
+                                }
+
+                                srcIdx++;
                             }
 
-                            srcIdx++;
+                            int irc = raw.sqlite3_step(insertStmt);
+                            if (irc != raw.SQLITE_DONE)
+                            {
+                                var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
+                                throw new Exception($"插入失败({table}): {em} (code {irc})");
+                            }
+
+                            copiedTotal++;
+                            lastSuccess = keyVal;
+
+                            if (copiedTotal % commitEvery == 0)
+                            {
+                                ExecuteSqlOrThrow(destDb, "COMMIT", $"分批提交表 {table} 失败");
+                                ExecuteSqlOrThrow(destDb, "BEGIN IMMEDIATE", $"继续复制表 {table} 失败");
+                                progress?.Report(copiedTotal);
+                            }
                         }
 
-                        int irc = raw.sqlite3_step(insertStmt);
-                        if (irc != raw.SQLITE_DONE)
+                        if (stepRc != raw.SQLITE_DONE)
                         {
-                            var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
-                            throw new Exception($"插入失败({table}): {em} (code {irc})");
+                            var em = raw.sqlite3_errmsg(srcDb).utf8_to_string();
+                            throw new Exception($"读取失败({table}): {em} (code {stepRc})");
                         }
 
-                        copied++;
-                        copiedTotal++;
-                        lastSuccess = keyVal;
-
-                        if (copiedTotal % commitEvery == 0)
-                        {
-                            raw.sqlite3_exec(destDb, "COMMIT", null, IntPtr.Zero, out _);
-                            raw.sqlite3_exec(destDb, "BEGIN IMMEDIATE", null, IntPtr.Zero, out _);
-                            progress?.Report(copiedTotal);
-                        }
-                    }
-
-                    if (stepRc == raw.SQLITE_DONE)
-                    {
                         if (!anyRow)
                             break;
-                        last = lastSuccess;
-                        continue;
-                    }
-
-                    if (stepRc == raw.SQLITE_CORRUPT || stepRc == raw.SQLITE_IOERR)
-                    {
-                        if (currentBatch > 1)
-                        {
-                            currentBatch = 1;
-                            continue;
-                        }
-
-                        long delta = 1;
-                        bool jumped = false;
-                        while (last + delta < maxKey)
-                        {
-                            raw.sqlite3_reset(selectStmt);
-                            raw.sqlite3_clear_bindings(selectStmt);
-                            raw.sqlite3_bind_int64(selectStmt, 1, last + delta);
-                            raw.sqlite3_bind_int(selectStmt, 2, 1);
-                            int trc = raw.sqlite3_step(selectStmt);
-                            if (trc == raw.SQLITE_ROW)
-                            {
-                                long nextKey = raw.sqlite3_column_int64(selectStmt, 0);
-                                last = nextKey - 1;
-                                jumped = true;
-                                break;
-                            }
-                            else if (trc == raw.SQLITE_DONE)
-                            {
-                                last = maxKey;
-                                jumped = true;
-                                break;
-                            }
-                            delta = Math.Min(delta << 1, maxKey - last);
-                        }
-                        if (!jumped)
+                        if (lastSuccess == maxKey)
                             break;
-                        continue;
-                    }
-                    else
-                    {
-                        var em = raw.sqlite3_errmsg(srcDb).utf8_to_string();
-                        throw new Exception($"读取失败({table}): {em} (code {stepRc})");
+                        nextKey = lastSuccess + 1;
                     }
                 }
-
-                raw.sqlite3_finalize(selectStmt);
+                finally
+                {
+                    raw.sqlite3_finalize(selectStmt);
+                }
             }
             else
             {
@@ -812,54 +1105,56 @@ public class RawDatabase : IDisposable
                     throw new Exception($"准备源查询失败({table}): {em}");
                 }
 
-                int stepRc;
-                while ((stepRc = raw.sqlite3_step(selectStmt)) == raw.SQLITE_ROW)
+                try
                 {
-                    raw.sqlite3_reset(insertStmt);
-                    raw.sqlite3_clear_bindings(insertStmt);
-                    for (int i = 0; i < orderedCols.Count; i++)
+                    int stepRc;
+                    while ((stepRc = raw.sqlite3_step(selectStmt)) == raw.SQLITE_ROW)
                     {
-                        int type = raw.sqlite3_column_type(selectStmt, i);
-                        if (type == raw.SQLITE_NULL)
-                            raw.sqlite3_bind_null(insertStmt, i + 1);
-                        else if (type == raw.SQLITE_INTEGER)
-                            raw.sqlite3_bind_int64(insertStmt, i + 1, raw.sqlite3_column_int64(selectStmt, i));
-                        else if (type == raw.SQLITE_FLOAT)
-                            raw.sqlite3_bind_double(insertStmt, i + 1, raw.sqlite3_column_double(selectStmt, i));
-                        else if (type == raw.SQLITE_TEXT)
-                            raw.sqlite3_bind_text(insertStmt, i + 1, raw.sqlite3_column_text(selectStmt, i).utf8_to_string());
-                        else if (type == raw.SQLITE_BLOB)
+                        raw.sqlite3_reset(insertStmt);
+                        raw.sqlite3_clear_bindings(insertStmt);
+                        for (int i = 0; i < orderedCols.Count; i++)
                         {
-                            var span = raw.sqlite3_column_blob(selectStmt, i);
-                            if (span.Length == 0)
-                                raw.sqlite3_bind_zeroblob(insertStmt, i + 1, 0);
-                            else
-                                raw.sqlite3_bind_blob(insertStmt, i + 1, span.ToArray());
+                            int type = raw.sqlite3_column_type(selectStmt, i);
+                            if (type == raw.SQLITE_NULL)
+                                raw.sqlite3_bind_null(insertStmt, i + 1);
+                            else if (type == raw.SQLITE_INTEGER)
+                                raw.sqlite3_bind_int64(insertStmt, i + 1, raw.sqlite3_column_int64(selectStmt, i));
+                            else if (type == raw.SQLITE_FLOAT)
+                                raw.sqlite3_bind_double(insertStmt, i + 1, raw.sqlite3_column_double(selectStmt, i));
+                            else if (type == raw.SQLITE_TEXT)
+                                raw.sqlite3_bind_text(insertStmt, i + 1, raw.sqlite3_column_text(selectStmt, i).utf8_to_string());
+                            else if (type == raw.SQLITE_BLOB)
+                            {
+                                var span = raw.sqlite3_column_blob(selectStmt, i);
+                                if (span.Length == 0)
+                                    raw.sqlite3_bind_zeroblob(insertStmt, i + 1, 0);
+                                else
+                                    raw.sqlite3_bind_blob(insertStmt, i + 1, span.ToArray());
+                            }
+                        }
+
+                        int irc = raw.sqlite3_step(insertStmt);
+                        if (irc != raw.SQLITE_DONE)
+                        {
+                            var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
+                            throw new Exception($"插入失败({table}): {em} (code {irc})");
+                        }
+
+                        copiedTotal++;
+                        if (copiedTotal % commitEvery == 0)
+                        {
+                            ExecuteSqlOrThrow(destDb, "COMMIT", $"分批提交表 {table} 失败");
+                            ExecuteSqlOrThrow(destDb, "BEGIN IMMEDIATE", $"继续复制表 {table} 失败");
+                            progress?.Report(copiedTotal);
                         }
                     }
 
-                    int irc = raw.sqlite3_step(insertStmt);
-                    if (irc != raw.SQLITE_DONE)
-                    {
-                        var em = raw.sqlite3_errmsg(destDb).utf8_to_string();
-                        throw new Exception($"插入失败({table}): {em} (code {irc})");
-                    }
-
-                    copied++;
-                    copiedTotal++;
-                    if (copiedTotal % commitEvery == 0)
-                    {
-                        raw.sqlite3_exec(destDb, "COMMIT", null, IntPtr.Zero, out _);
-                        raw.sqlite3_exec(destDb, "BEGIN IMMEDIATE", null, IntPtr.Zero, out _);
-                        progress?.Report(copiedTotal);
-                    }
+                    if (stepRc != raw.SQLITE_DONE)
+                        throw new Exception($"读取失败({table}): {raw.sqlite3_errmsg(srcDb).utf8_to_string()} (code {stepRc})");
                 }
-
-                raw.sqlite3_finalize(selectStmt);
-
-                if (stepRc == raw.SQLITE_CORRUPT || stepRc == raw.SQLITE_IOERR)
+                finally
                 {
-                    //Console.WriteLine($"[{table}] 顺序扫描遇到损坏，可能未能完整复制");
+                    raw.sqlite3_finalize(selectStmt);
                 }
             }
         }
@@ -869,39 +1164,6 @@ public class RawDatabase : IDisposable
         }
 
     }
-
-    /// <summary>
-    /// 清理已存在的FTS表及其内部表
-    /// </summary>
-    private static void CleanupExistingFtsTable(sqlite3 db, string ftsTableName)
-    {
-        try
-        {
-            // FTS5会创建多个内部表，需要全部清理
-            var internalTables = new[]
-            {
-                $"{ftsTableName}_data",
-                $"{ftsTableName}_idx", 
-                $"{ftsTableName}_content",
-                $"{ftsTableName}_docsize",
-                $"{ftsTableName}_config"
-            };
-
-            // 先删除FTS虚拟表本身
-            raw.sqlite3_exec(db, $"DROP TABLE IF EXISTS {QuoteIdent(ftsTableName)}", null, IntPtr.Zero, out _);
-
-            // 然后删除所有可能的内部表
-            foreach (string internalTable in internalTables)
-            {
-                raw.sqlite3_exec(db, $"DROP TABLE IF EXISTS {QuoteIdent(internalTable)}", null, IntPtr.Zero, out _);
-            }
-        }
-        catch
-        {
-            throw;
-        }
-    }
-
     /// <summary>
     /// 重写不支持的FTS5 tokenizer，提高兼容性
     /// </summary>
@@ -1064,7 +1326,17 @@ public class RawDatabase : IDisposable
 
     public void Dispose()
     {
-        Database.Dispose();
+        var database = _db;
+        _db = null;
+        try
+        {
+            database?.Dispose();
+        }
+        finally
+        {
+            PCQQPageDecryptVfs.Release(_pcqqVfsName);
+            _pcqqVfsName = null;
+        }
     }
 
 }

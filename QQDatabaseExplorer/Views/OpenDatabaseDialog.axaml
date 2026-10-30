@@ -44,6 +44,15 @@
                             <TextBlock Width="152" Text="密钥:" VerticalAlignment="Center" />
                             <TextBox Text="{Binding Key}" />
                         </DockPanel>
+                        <DockPanel ToolTip.Tip="{Binding HmacAlgorithmToolTip}">
+                            <TextBlock Width="152" Text="HMAC 算法:" VerticalAlignment="Center" />
+                            <ComboBox
+                                Width="180"
+                                ItemsSource="{Binding HmacAlgorithms}"
+                                DisplayMemberBinding="{Binding Value}"
+                                SelectedValueBinding="{Binding Key}"
+                                SelectedValue="{Binding CipherHmacAlgorithm}" />
+                        </DockPanel>
                         <DockPanel ToolTip.Tip="group_info.db">
                             <TextBlock Width="152" Text="group_info.db:" VerticalAlignment="Center" />
                             <Button

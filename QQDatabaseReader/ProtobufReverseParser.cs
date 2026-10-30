@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace QQDatabaseReader.Database;
 
 /// <summary>
-/// Protobuf 逆向解析器 - 无需 .proto 定义，直接从 byte[] 解析成 JSON
+/// 在没有 .proto 描述时，把 protobuf 二进制内容整理成便于查看的 JSON。
 /// </summary>
 public static class ProtobufReverseParser
 {
@@ -28,7 +28,7 @@ public static class ProtobufReverseParser
     }
 
     /// <summary>
-    /// 解析未知的 Protobuf 消息
+    /// 按字段号解析 protobuf 消息内容。
     /// </summary>
     public static Dictionary<int, object?> ParseUnknownMessage(byte[] data)
     {

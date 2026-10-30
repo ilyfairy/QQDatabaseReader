@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -109,7 +110,7 @@ public class AvatarImage : Image
     {
         try
         {
-            await using var stream = File.OpenRead(sourcePath);
+            await using var stream = ArchiveFile.OpenRead(sourcePath);
             using var memoryStream = new MemoryStream();
             await stream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;

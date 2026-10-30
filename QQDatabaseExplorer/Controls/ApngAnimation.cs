@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Avalonia.Media.Imaging;
 using SkiaSharp;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -22,7 +23,7 @@ internal sealed class ApngAnimation
 
     public static ApngAnimation? Load(string path)
     {
-        var bytes = File.ReadAllBytes(path);
+        var bytes = ArchiveFile.ReadAllBytes(path);
         if (bytes.Length < PngSignature.Length || !bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature))
             return null;
 

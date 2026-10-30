@@ -1,12 +1,14 @@
 using System;
 using System.Linq;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
 internal sealed class SystemHintParticipantResolver(
     Func<QQGroupInfoReader?> getGroupInfoDatabase,
-    Func<ProfileInfoNameCache> getProfileInfoNameCache)
+    Func<ProfileInfoNameCache> getProfileInfoNameCache,
+    QQNtDatabaseQueryGate queryGate)
 {
     public string ResolveParticipantName(
         uint groupId,
@@ -45,87 +47,65 @@ internal sealed class SystemHintParticipantResolver(
         out string name)
     {
         name = string.Empty;
-        if (getGroupInfoDatabase() is not { } groupInfoDatabase)
+        if (groupId == 0 || getGroupInfoDatabase() is not { } groupInfoDatabase)
             return false;
 
         try
         {
-            var query = groupInfoDatabase.DbContext.GroupMembers
-                .Where(member => member.Uin != 0 || !string.IsNullOrEmpty(member.NtUid));
-
-            if (!string.IsNullOrWhiteSpace(ntUid))
+            name = queryGate.Run(() =>
             {
-                query = query.Where(member => member.NtUid == ntUid);
-            }
-            else if (resolvedUin != 0)
-            {
-                query = query.Where(member => member.Uin == resolvedUin);
-            }
-            else
-            {
-                return false;
-            }
-
-            if (groupId != 0)
-            {
-                var groupName = query
+                var query = groupInfoDatabase.DbContext.GroupMembers
                     .Where(member => member.GroupId == groupId)
+                    .Where(member => member.Uin != 0 || !string.IsNullOrEmpty(member.NtUid));
+
+                if (!string.IsNullOrWhiteSpace(ntUid))
+                {
+                    query = query.Where(member => member.NtUid == ntUid);
+                }
+                else if (resolvedUin != 0)
+                {
+                    query = query.Where(member => member.Uin == resolvedUin);
+                }
+                else
+                {
+                    return string.Empty;
+                }
+
+                var match = query
                     .Select(member => new { member.MemberName, member.NickName })
                     .FirstOrDefault();
-                name = FirstNonEmpty(groupName?.MemberName, groupName?.NickName);
-                if (!string.IsNullOrWhiteSpace(name))
-                    return true;
-            }
-
-            var match = query
-                .Select(member => new { member.MemberName, member.NickName })
-                .FirstOrDefault();
-            name = FirstNonEmpty(match?.MemberName, match?.NickName);
-            return !string.IsNullOrWhiteSpace(name);
+                return FirstNonEmpty(match?.MemberName, match?.NickName);
+            });
         }
         catch
         {
             return false;
         }
+
+        return !string.IsNullOrWhiteSpace(name);
     }
 
     private bool TryResolveGroupMemberUin(uint groupId, string ntUid, out uint uin)
     {
         uin = 0;
-        if (getGroupInfoDatabase() is not { } groupInfoDatabase)
+        if (groupId == 0 || getGroupInfoDatabase() is not { } groupInfoDatabase)
             return false;
 
         try
         {
-            var query = groupInfoDatabase.DbContext.GroupMembers
+            uin = queryGate.Run(() => groupInfoDatabase.DbContext.GroupMembers
+                .Where(member => member.GroupId == groupId)
                 .Where(member => member.NtUid == ntUid)
-                .Where(member => member.Uin != 0);
-
-            if (groupId != 0)
-            {
-                uin = query
-                    .Where(member => member.GroupId == groupId)
-                    .Select(member => member.Uin)
-                    .FirstOrDefault();
-                if (uin != 0)
-                    return true;
-            }
-
-            var matches = query
+                .Where(member => member.Uin != 0)
                 .Select(member => member.Uin)
-                .Distinct()
-                .Take(2)
-                .ToArray();
-            if (matches.Length != 1)
-                return false;
-
-            uin = matches[0];
-            return true;
+                .FirstOrDefault());
         }
         catch
         {
             return false;
         }
+
+        return uin != 0;
     }
 
     private static string FirstNonEmpty(params string?[] values)

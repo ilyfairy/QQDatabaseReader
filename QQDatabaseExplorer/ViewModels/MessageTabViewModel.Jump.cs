@@ -103,20 +103,21 @@ public partial class MessageTabViewModel
             return;
         }
 
-        MessageRecord? targetMessage = sourceMessage.ConversationType switch
-        {
-            AvaConversationType.Group when sourceMessage.GroupId != 0 => _jumpTargetResolver.ResolveGroupTarget(
-                sourceMessage.GroupId,
-                [],
-                [],
-                [sourceMessage.SystemHintTargetMessageSeq]),
-            AvaConversationType.Private when sourceMessage.PrivateConversationId != 0 => _jumpTargetResolver.ResolvePrivateTarget(
-                sourceMessage.PrivateConversationId,
-                [],
-                [],
-                [sourceMessage.SystemHintTargetMessageSeq]),
-            _ => null,
-        };
+        var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+            sourceMessage.ConversationType switch
+            {
+                AvaConversationType.Group when sourceMessage.GroupId != 0 => _jumpTargetResolver.ResolveGroupTarget(
+                    sourceMessage.GroupId,
+                    [],
+                    [],
+                    [sourceMessage.SystemHintTargetMessageSeq]),
+                AvaConversationType.Private when sourceMessage.PrivateConversationId != 0 => _jumpTargetResolver.ResolvePrivateTarget(
+                    sourceMessage.PrivateConversationId,
+                    [],
+                    [],
+                    [sourceMessage.SystemHintTargetMessageSeq]),
+                _ => null,
+            });
 
         if (targetMessage is null)
             return;
@@ -169,12 +170,13 @@ public partial class MessageTabViewModel
         {
             case AvaConversationType.Group:
             {
-                var targetMessage = _jumpTargetResolver.ResolveGroupTarget(
-                    conversation.GroupId,
-                    ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
-                    reply);
+                var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                    _jumpTargetResolver.ResolveGroupTarget(
+                        conversation.GroupId,
+                        ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
+                        reply));
                 if (targetMessage is null)
                     return;
 
@@ -184,12 +186,13 @@ public partial class MessageTabViewModel
             }
             case AvaConversationType.Private:
             {
-                var targetMessage = _jumpTargetResolver.ResolvePrivateTarget(
-                    conversation.PrivateConversationId,
-                    ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
-                    reply);
+                var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                    _jumpTargetResolver.ResolvePrivateTarget(
+                        conversation.PrivateConversationId,
+                        ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, conversation.ConversationType),
+                        reply));
                 if (targetMessage is null)
                     return;
 
@@ -231,12 +234,13 @@ public partial class MessageTabViewModel
                 if (sourceMessage.GroupId == 0)
                     return;
 
-                var targetMessage = _jumpTargetResolver.ResolveGroupTarget(
-                    sourceMessage.GroupId,
-                    ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
-                    reply);
+                var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                    _jumpTargetResolver.ResolveGroupTarget(
+                        sourceMessage.GroupId,
+                        ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
+                        reply));
                 if (targetMessage is null)
                     return;
 
@@ -249,12 +253,13 @@ public partial class MessageTabViewModel
                 if (sourceMessage.PrivateConversationId == 0)
                     return;
 
-                var targetMessage = _jumpTargetResolver.ResolvePrivateTarget(
-                    sourceMessage.PrivateConversationId,
-                    ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
-                    ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
-                    reply);
+                var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                    _jumpTargetResolver.ResolvePrivateTarget(
+                        sourceMessage.PrivateConversationId,
+                        ReplyTargetMatcher.GetReplyMessageIdCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageRandomCandidates(reply),
+                        ReplyTargetMatcher.GetReplyMessageSeqCandidates(reply, sourceMessage.ConversationType),
+                        reply));
                 if (targetMessage is null)
                     return;
 
@@ -454,7 +459,8 @@ public partial class MessageTabViewModel
 
         if (_databaseAvailability.HasQQNtMessageDatabase)
         {
-            var targetMessage = _jumpTargetResolver.ResolvePrivateTarget(conversationId, [messageId], [], [messageSeq]);
+            var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                _jumpTargetResolver.ResolvePrivateTarget(conversationId, [messageId], [], [messageSeq]));
             if (targetMessage is null)
                 return;
 
@@ -487,7 +493,8 @@ public partial class MessageTabViewModel
 
         if (_databaseAvailability.HasQQNtMessageDatabase)
         {
-            var targetMessage = _jumpTargetResolver.ResolveGroupTarget(groupId, messageId, messageSeq);
+            var targetMessage = await _messageDatabaseQueryRunner.RunAsync(() =>
+                _jumpTargetResolver.ResolveGroupTarget(groupId, messageId, messageSeq));
             if (targetMessage is null)
                 return;
 

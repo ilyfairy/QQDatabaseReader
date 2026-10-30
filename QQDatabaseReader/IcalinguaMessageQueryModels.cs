@@ -15,6 +15,31 @@ internal sealed record IcalinguaMessageSource(
     HashSet<string> Columns,
     int SourceIndex);
 
+internal sealed record IcalinguaMessageSearchSource(
+    IcalinguaMessageSource Source,
+    IReadOnlySet<long>? AllowedRoomIds);
+
+internal sealed record IcalinguaMessageSearchScanRow(
+    long SourceRowId,
+    IcalinguaMessageRecord Message);
+
+internal sealed class IcalinguaMessageSearchSourceState(
+    IcalinguaMessageSearchSource searchSource,
+    IcalinguaMessageSearchSourceCursor cursor)
+{
+    public IcalinguaMessageSearchSource SearchSource { get; } = searchSource;
+
+    public long? BeforeRowId { get; set; } = cursor.BeforeRowId;
+
+    public bool IsExhausted { get; set; } = cursor.IsExhausted;
+
+    public IcalinguaMessageSearchScanRow? Candidate { get; set; }
+
+    public long? PendingRowId { get; set; } = cursor.PendingRowId;
+
+    public bool IsExhaustedAfterCandidate { get; set; }
+}
+
 internal sealed record IcalinguaRoomRow(
     long RoomId,
     string? RoomName,

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -21,7 +22,7 @@ public partial class MessageTabViewModel : ViewModelBase
     private readonly IDialogService _dialogService;
     private readonly ObservableList<AvaQQGroup> _groups = new();
     private readonly ObservableList<AvaQQGroup> _filteredGroups = new();
-    private readonly MessageDatabaseQueryRunner _messageDatabaseQueryRunner = new();
+    private readonly MessageDatabaseQueryRunner _messageDatabaseQueryRunner;
     private readonly MessageSelectionState _messageSelection;
     private readonly ConversationListState _conversationList;
     private readonly MessageFilterState _messageFilterState = new();
@@ -248,36 +249,94 @@ public partial class MessageTabViewModel : ViewModelBase
         await LoadEarliestMessagesAsync(SelectedGroup, loadVersion);
     }
 
-    private async Task<IReadOnlyList<ChatExportSource>> CreateExportSourcesAsync(
+    private Task<IReadOnlyList<ChatExportSource>> CreateExportSourcesAsync(
         AvaQQGroup conversation,
         IProgress<ChatExportProgress>? progress,
         CancellationToken cancellationToken)
     {
         var exportSources = new List<ChatExportSource>();
         var sourceConversations = GetExportConversations(conversation);
-        var sourceIndex = 0;
-        foreach (var sourceConversation in sourceConversations)
+        for (var sourceIndex = 0; sourceIndex < sourceConversations.Count; sourceIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            sourceIndex++;
-            progress?.Report(new ChatExportProgress(
-                "读取消息",
-                $"{sourceConversation.DisplayName} ({sourceIndex}/{sourceConversations.Count})",
-                sourceIndex - 1,
-                sourceConversations.Count));
-            var page = await _messageDatabaseQueryRunner.RunAsync(() =>
-                _messagePageLoader.CreatePage(
-                    sourceConversation,
-                    _messageTimelineFacade.LoadAllMessages(sourceConversation, ExportPageSize),
-                    ExportReplyLookupLimit));
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var avaMessages = await _messagePageDisplayBuilder.CreateAsync(sourceConversation, page);
-            cancellationToken.ThrowIfCancellationRequested();
-            exportSources.Add(new ChatExportSource(sourceConversation, avaMessages));
+            var currentSource = sourceConversations[sourceIndex];
+            var currentSourceIndex = sourceIndex;
+            exportSources.Add(new ChatExportSource(
+                currentSource,
+                token => EnumerateExportMessagesAsync(
+                    currentSource,
+                    currentSourceIndex,
+                    sourceConversations.Count,
+                    progress,
+                    token)));
         }
 
-        return exportSources;
+        return Task.FromResult<IReadOnlyList<ChatExportSource>>(exportSources);
+    }
+
+    private async IAsyncEnumerable<AvaQQMessage> EnumerateExportMessagesAsync(
+        AvaQQGroup conversation,
+        int sourceIndex,
+        int sourceCount,
+        IProgress<ChatExportProgress>? progress,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var loadedCount = 0;
+        var firstPage = true;
+        var anchorMessageSeq = 0L;
+        var anchorMessageId = 0L;
+        var previousAnchorKey = string.Empty;
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new ChatExportProgress(
+                "读取消息",
+                $"{conversation.DisplayName} ({sourceIndex + 1}/{sourceCount}), 已读取 {loadedCount}",
+                loadedCount,
+                0));
+
+            var page = await _messageDatabaseQueryRunner.RunAsync(() =>
+            {
+                var records = firstPage
+                    ? _messageTimelineFacade.LoadEarliestMessagesForExport(conversation, ExportPageSize)
+                    : _messageTimelineFacade.LoadNewerMessagesForExport(
+                        conversation,
+                        anchorMessageSeq,
+                        anchorMessageId,
+                        ExportPageSize);
+                return _messagePageLoader.CreatePage(conversation, records, ExportReplyLookupLimit);
+            }, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (page.Messages.Count == 0)
+                yield break;
+
+            var displayMessages = await _messagePageDisplayBuilder.CreateAsync(conversation, page);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var message in displayMessages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                loadedCount++;
+                yield return message;
+            }
+
+            if (page.Messages.Count < ExportPageSize)
+                yield break;
+
+            var last = page.Messages
+                .OrderBy(static message => message.MessageSeq)
+                .ThenBy(static message => message.MessageId)
+                .Last();
+            var anchorKey = string.Join(':', last.MessageSeq, last.MessageId, last.MessageRandom);
+            if (string.Equals(anchorKey, previousAnchorKey, StringComparison.Ordinal))
+                yield break;
+
+            previousAnchorKey = anchorKey;
+            anchorMessageSeq = last.MessageSeq;
+            anchorMessageId = last.MessageId;
+            firstPage = false;
+        }
     }
 
     private int BeginExportOperation()
@@ -589,19 +648,16 @@ public partial class MessageTabViewModel : ViewModelBase
 
 internal sealed class MessageDatabaseQueryRunner
 {
-    private readonly SemaphoreSlim _queryLock = new(1, 1);
+    private readonly QQNtDatabaseQueryGate _queryGate;
 
-    public async Task<T> RunAsync<T>(Func<T> query)
+    public MessageDatabaseQueryRunner(QQNtDatabaseQueryGate queryGate)
     {
-        await _queryLock.WaitAsync();
-        try
-        {
-            return await Task.Run(query);
-        }
-        finally
-        {
-            _queryLock.Release();
-        }
+        _queryGate = queryGate;
+    }
+
+    public Task<T> RunAsync<T>(Func<T> query, CancellationToken cancellationToken = default)
+    {
+        return _queryGate.RunAsync(query, cancellationToken);
     }
 }
 

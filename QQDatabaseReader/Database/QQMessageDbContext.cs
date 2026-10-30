@@ -2,11 +2,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace QQDatabaseReader.Database;
 
-public class QQMessageDbContext(DbContextOptions<QQMessageDbContext> options) : DbContext(options)
+public class QQMessageDbContext(DbContextOptions<QQMessageDbContext> options, DatabaseSchema? schema = null)
+    : DbContext(options), ISchemaMappedDbContext
 {
     public DbSet<GroupMessage> GroupMessages { get; set; }
     public DbSet<PrivateMessage> PrivateMessages { get; set; }
     public DbSet<RecentContact> RecentContacts { get; set; }
+
+    public DatabaseSchema? Schema => schema;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +40,8 @@ public class QQMessageDbContext(DbContextOptions<QQMessageDbContext> options) : 
         modelBuilder.Entity<RecentContact>()
             .Property(v => v.Uin2)
             .HasConversion(UInt32BitPatternConverter.Instance);
+
+        schema?.Apply(modelBuilder);
     }
 }
 

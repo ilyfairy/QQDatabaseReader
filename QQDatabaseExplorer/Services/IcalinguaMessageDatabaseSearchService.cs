@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.Services;
 
 internal sealed class IcalinguaMessageDatabaseSearchService
 {
+    private const int MaxSearchScanRowsPerPage = 5000;
     private readonly IReadOnlyList<IcalinguaMessageDatabaseEntry> _databases;
     private readonly IcalinguaExternalMessageIdMapper _idMapper;
     private readonly Func<IReadOnlyList<IcalinguaConversation>> _getConversations;
@@ -133,6 +135,159 @@ internal sealed class IcalinguaMessageDatabaseSearchService
                 .Where(message => cursor is null || IcalinguaMessageMerger.IsBeforeCursor(message, cursor.MessageSortTime, cursor.MessageId)),
             descending: true,
             pageSize);
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesPage(
+        string keyword,
+        IReadOnlyList<long>? roomIds,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(keyword) || pageSize <= 0 || _databases.Count == 0)
+            return new IcalinguaMessageSearchPage([], null, false, 0);
+
+        var databases = _databases
+            .OrderByDescending(static database => database.Index)
+            .ToArray();
+        var databasePosition = FindSearchDatabasePosition(databases, cursor?.ScanDatabaseIndex);
+        if (databasePosition >= databases.Length)
+            return new IcalinguaMessageSearchPage([], null, false, 0);
+
+        var results = new List<IcalinguaMessageRecord>(pageSize);
+        var scannedRows = 0;
+        var activeCursor = cursor;
+        while (databasePosition < databases.Length &&
+               results.Count < pageSize &&
+               scannedRows < MaxSearchScanRowsPerPage)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var database = databases[databasePosition];
+            var remainingScanRows = MaxSearchScanRowsPerPage - scannedRows;
+            var remainingResults = pageSize - results.Count;
+            var readerCursor = activeCursor is null
+                ? null
+                : activeCursor with { ScanDatabaseIndex = null };
+            var page = database.Reader.SearchMessagesPage(
+                keyword,
+                roomIds,
+                remainingResults,
+                readerCursor,
+                remainingScanRows,
+                cancellationToken);
+            scannedRows += page.ScannedRows;
+            results.AddRange(page.Messages.Select(message => WrapMessage(database, message)));
+
+            if (page.HasMore && page.NextCursor is { } readerNextCursor)
+            {
+                var nextCursor = CreateExternalSearchCursor(
+                    database.Index,
+                    readerNextCursor,
+                    results,
+                    cursor);
+                return CreateBoundedSearchPage(results, nextCursor, scannedRows, pageSize);
+            }
+
+            databasePosition++;
+            activeCursor = null;
+            if (databasePosition >= databases.Length)
+                break;
+
+            if (results.Count >= pageSize || scannedRows >= MaxSearchScanRowsPerPage)
+            {
+                var nextCursor = CreateNextDatabaseCursor(
+                    databases[databasePosition].Index,
+                    results,
+                    cursor);
+                return CreateBoundedSearchPage(results, nextCursor, scannedRows, pageSize);
+            }
+        }
+
+        return new IcalinguaMessageSearchPage(
+            IcalinguaMessageMerger.Merge(results, descending: true, pageSize),
+            null,
+            false,
+            scannedRows);
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesInRoomPage(
+        long roomId,
+        string keyword,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        CancellationToken cancellationToken)
+    {
+        return SearchMessagesPage(
+            keyword,
+            [roomId],
+            pageSize,
+            cursor,
+            cancellationToken);
+    }
+
+    private static int FindSearchDatabasePosition(
+        IReadOnlyList<IcalinguaMessageDatabaseEntry> databases,
+        int? databaseIndex)
+    {
+        if (databaseIndex is null)
+            return 0;
+
+        for (var index = 0; index < databases.Count; index++)
+        {
+            if (databases[index].Index == databaseIndex.Value)
+                return index;
+        }
+
+        return databases.Count;
+    }
+
+    private IcalinguaMessageSearchPage CreateBoundedSearchPage(
+        IReadOnlyList<IcalinguaMessageRecord> results,
+        IcalinguaMessageSearchCursor nextCursor,
+        int scannedRows,
+        int pageSize)
+    {
+        return new IcalinguaMessageSearchPage(
+            IcalinguaMessageMerger.Merge(results, descending: true, pageSize),
+            nextCursor,
+            true,
+            scannedRows);
+    }
+
+    private static IcalinguaMessageSearchCursor CreateExternalSearchCursor(
+        int databaseIndex,
+        IcalinguaMessageSearchCursor readerCursor,
+        IReadOnlyList<IcalinguaMessageRecord> results,
+        IcalinguaMessageSearchCursor? previousCursor)
+    {
+        var anchor = results
+            .OrderByDescending(static message => message.MessageSeq)
+            .ThenByDescending(static message => message.MessageId)
+            .LastOrDefault();
+        return readerCursor with
+        {
+            MessageSortTime = anchor?.MessageSeq ?? previousCursor?.MessageSortTime ?? 0,
+            MessageId = anchor?.MessageId ?? previousCursor?.MessageId ?? 0,
+            ScanDatabaseIndex = databaseIndex,
+        };
+    }
+
+    private static IcalinguaMessageSearchCursor CreateNextDatabaseCursor(
+        int databaseIndex,
+        IReadOnlyList<IcalinguaMessageRecord> results,
+        IcalinguaMessageSearchCursor? previousCursor)
+    {
+        var anchor = results
+            .OrderByDescending(static message => message.MessageSeq)
+            .ThenByDescending(static message => message.MessageId)
+            .LastOrDefault();
+        return new IcalinguaMessageSearchCursor(
+            anchor?.MessageSeq ?? previousCursor?.MessageSortTime ?? 0,
+            anchor?.MessageId ?? previousCursor?.MessageId ?? 0,
+            databaseIndex,
+            ScanSourceIndex: 0,
+            ScanBeforeRowId: null);
     }
 
     private IReadOnlyList<IcalinguaMessageRecord> SearchDatabasesLatestFirst(

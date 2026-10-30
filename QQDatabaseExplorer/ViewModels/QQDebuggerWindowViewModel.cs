@@ -23,6 +23,10 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
     [ObservableProperty]
     public partial string Key { get; set; } = string.Empty;
 
+    /// <summary>拿到密钥后结束这次启动的 QQ (被调试的那个进程及其子进程)</summary>
+    [ObservableProperty]
+    public partial bool KillQQAfterKeyFound { get; set; } = true;
+
     public QQDebuggerWindowViewModel(IDialogService dialogService)
     {
         _dialogService = dialogService;
@@ -69,9 +73,10 @@ public partial class QQDebuggerWindowViewModel : ViewModelBase
 
         await _dialogService.ShowMessageBox("接下来打开QQ, 登录后会自动获取key", ownerToken: ViewModelToken);
 
+        var killAfterKeyFound = KillQQAfterKeyFound;
         await Task.Run(() =>
         {
-            Key = QQDebugger.NewProcess(QQFilePath) ?? string.Empty;
+            Key = QQDebugger.NewProcess(QQFilePath, killAfterKeyFound) ?? string.Empty;
         });
 
         if (string.IsNullOrWhiteSpace(Key))

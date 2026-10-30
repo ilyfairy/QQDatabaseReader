@@ -54,11 +54,11 @@ public sealed class PCQQKeyDumper : IDisposable
 
             if (name.Equals("KernelUtil.dll", StringComparison.OrdinalIgnoreCase))
             {
-                HookKernelUtilSqlite(dbg, pid, baseAddr, size);
+                CaptureKernelUtilSqlite(dbg, pid, baseAddr, size);
             }
             else if (name.Equals("Common.dll", StringComparison.OrdinalIgnoreCase))
             {
-                HookCommonInfoDbTea(dbg, infoIndex, pid, baseAddr);
+                CaptureCommonInfoDbTea(dbg, infoIndex, pid, baseAddr);
             }
         };
 
@@ -92,7 +92,7 @@ public sealed class PCQQKeyDumper : IDisposable
         }
     }
 
-    private void HookKernelUtilSqlite(MultiProcDebugger dbg, uint pid, ulong baseAddr, uint size)
+    private void CaptureKernelUtilSqlite(MultiProcDebugger dbg, uint pid, ulong baseAddr, uint size)
     {
         if (size == 0) size = 0x200000;
         ulong addrKey = dbg.ScanMemory(pid, baseAddr, size, PCQQKeyDumpPatterns.SqliteKey);
@@ -146,7 +146,7 @@ public sealed class PCQQKeyDumper : IDisposable
         }
     }
 
-    private void HookCommonInfoDbTea(
+    private void CaptureCommonInfoDbTea(
         MultiProcDebugger dbg,
         InfoDbPayloadIndex infoIndex,
         uint pid,
@@ -162,7 +162,7 @@ public sealed class PCQQKeyDumper : IDisposable
         }.FirstOrDefault(File.Exists);
         if (commonPath is null)
         {
-            _log("[Common] Common.dll on disk not found; skip Info.db hook");
+            _log("[Common] Common.dll on disk not found; skip Info.db capture");
             return;
         }
 
@@ -180,7 +180,7 @@ public sealed class PCQQKeyDumper : IDisposable
             }
 
             ulong entry = baseAddr + rva.Value;
-            _log($"[Common] pid={pid} hook {exp.Label} @0x{entry:X}");
+            _log($"[Common] pid={pid} capture {exp.Label} @0x{entry:X}");
             dbg.SetBreakpoint(pid, entry, (p, ctx) =>
             {
                 try

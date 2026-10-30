@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using QQDatabaseExplorer.Controls;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Models;
 
@@ -19,14 +20,14 @@ public sealed class MessageCopyPayload
         ImagePaths = parts
             .Where(part => part.Kind == MessageCopyPartKind.Image &&
                            !string.IsNullOrWhiteSpace(part.ImagePath) &&
-                           File.Exists(part.ImagePath))
+                           ArchiveFile.Exists(part.ImagePath))
             .Select(part => part.ImagePath!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         FilePaths = parts
             .Where(part => part.Kind == MessageCopyPartKind.File &&
                            !string.IsNullOrWhiteSpace(part.FilePath) &&
-                           File.Exists(part.FilePath))
+                           ArchiveFile.Exists(part.FilePath))
             .Select(part => part.FilePath!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -43,13 +44,13 @@ public sealed class MessageCopyPayload
         Parts.Count == 1 &&
         Parts[0].Kind == MessageCopyPartKind.Image &&
         !string.IsNullOrWhiteSpace(Parts[0].ImagePath) &&
-        File.Exists(Parts[0].ImagePath);
+        ArchiveFile.Exists(Parts[0].ImagePath);
     public string? SingleLocalImagePath => IsSingleLocalImage ? Parts[0].ImagePath : null;
     public bool IsSingleLocalFile =>
         Parts.Count == 1 &&
         Parts[0].Kind == MessageCopyPartKind.File &&
         !string.IsNullOrWhiteSpace(Parts[0].FilePath) &&
-        File.Exists(Parts[0].FilePath);
+        ArchiveFile.Exists(Parts[0].FilePath);
     public string? SingleLocalFilePath => IsSingleLocalFile ? Parts[0].FilePath : null;
 
     public static MessageCopyPayload Empty { get; } = new([]);
@@ -251,17 +252,17 @@ public sealed class MessageCopyPayload
                 case MessageCopyPartKind.Image when part.QQFaceId is not null:
                     AppendTextHtml(builder, part);
                     break;
-                case MessageCopyPartKind.Image when !string.IsNullOrWhiteSpace(part.ImagePath) && File.Exists(part.ImagePath):
+                case MessageCopyPartKind.Image when !string.IsNullOrWhiteSpace(part.ImagePath) && ArchiveFile.Exists(part.ImagePath):
                     AppendImageHtml(builder, CreateFileImageDataUri(part.ImagePath), part.Text, part.IsBlockImage);
                     break;
                 case MessageCopyPartKind.Image when part.AssetPaths.Count > 0:
                     foreach (var assetPath in part.AssetPaths)
                     {
-                        if (File.Exists(assetPath))
+                        if (ArchiveFile.Exists(assetPath))
                             AppendImageHtml(builder, CreateFileImageDataUri(assetPath), part.Text, part.IsBlockImage);
                     }
                     break;
-                case MessageCopyPartKind.File when !string.IsNullOrWhiteSpace(part.FilePath) && File.Exists(part.FilePath):
+                case MessageCopyPartKind.File when !string.IsNullOrWhiteSpace(part.FilePath) && ArchiveFile.Exists(part.FilePath):
                     AppendFileHtml(builder, part.FilePath, part.Text);
                     break;
                 default:
@@ -297,7 +298,7 @@ public sealed class MessageCopyPayload
 
             if (part.Kind == MessageCopyPartKind.Image &&
                 !string.IsNullOrWhiteSpace(part.ImagePath) &&
-                File.Exists(part.ImagePath))
+                ArchiveFile.Exists(part.ImagePath))
             {
                 hasRichElement = true;
                 builder.Append("<EditElement type=\"1\" filepath=\"")
@@ -395,7 +396,7 @@ public sealed class MessageCopyPayload
         Span<byte> header = stackalloc byte[12];
         try
         {
-            using var stream = File.OpenRead(imagePath);
+            using var stream = ArchiveFile.OpenRead(imagePath);
             var read = stream.Read(header);
             return GetImageMimeType(header[..read]);
         }

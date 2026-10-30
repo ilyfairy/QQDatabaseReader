@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using QQDatabaseExplorer.Controls;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
@@ -34,14 +35,26 @@ internal static class AndroidMobileQQMediaPathResolver
         {
             var cacheName = CreateImageCacheName(folderName, md5);
             var candidatePath = Path.Combine(resolvedChatPicPath, folderName, cacheName[^3..], cacheName);
-            if (LocalImageFile.IsDisplayableImageFile(candidatePath))
-                return candidatePath;
+            if (TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                    resolvedChatPicPath,
+                    candidatePath,
+                    out var resolvedCandidatePath) &&
+                LocalImageFile.IsDisplayableImageFile(resolvedCandidatePath))
+            {
+                return resolvedCandidatePath;
+            }
         }
 
         var legacyCacheName = CreateLegacyImageCacheName(md5);
         var legacyCandidatePath = Path.Combine(resolvedChatPicPath, "chatimg", legacyCacheName[^3..], legacyCacheName);
-        if (LocalImageFile.IsDisplayableImageFile(legacyCandidatePath))
-            return legacyCandidatePath;
+        if (TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                resolvedChatPicPath,
+                legacyCandidatePath,
+                out var resolvedLegacyCandidatePath) &&
+            LocalImageFile.IsDisplayableImageFile(resolvedLegacyCandidatePath))
+        {
+            return resolvedLegacyCandidatePath;
+        }
 
         return null;
     }
@@ -49,11 +62,26 @@ internal static class AndroidMobileQQMediaPathResolver
     private static string? ResolveChatPicPath(string? mobileQQPath, string? chatPicPath)
     {
         if (!string.IsNullOrWhiteSpace(chatPicPath))
-            return chatPicPath;
+        {
+            try
+            {
+                return Path.GetFullPath(chatPicPath);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                return null;
+            }
+        }
 
-        return string.IsNullOrWhiteSpace(mobileQQPath)
-            ? null
-            : Path.Combine(mobileQQPath, "chatpic");
+        if (string.IsNullOrWhiteSpace(mobileQQPath))
+            return null;
+
+        return TrustedMediaPath.TryResolveSubdirectoryWithinAnchor(
+            mobileQQPath,
+            "chatpic",
+            out var resolvedPath)
+            ? resolvedPath
+            : null;
     }
 
     private static string CreateImageCacheName(string folderName, string md5)

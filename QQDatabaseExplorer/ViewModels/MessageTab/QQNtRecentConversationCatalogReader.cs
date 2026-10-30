@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
@@ -13,7 +14,9 @@ internal static class QQNtRecentConversationCatalogReader
         try
         {
             var recentContacts = messageDatabase.DbContext.RecentContacts
-                .Where(v => v.ChatType == ChatType.GroupMessage || v.ChatType == ChatType.PrivateMessage)
+                .Where(v =>
+                    (v.RecentCategory == (int)ChatType.GroupMessage && v.ChatType == ChatType.GroupMessage) ||
+                    (v.RecentCategory == (int)ChatType.PrivateMessage && v.ChatType == ChatType.PrivateMessage))
                 .OrderByDescending(v => v.SortTime == 0 ? v.LastTime : v.SortTime)
                 .Select(v => new
                 {
@@ -133,9 +136,9 @@ internal static class QQNtRecentConversationCatalogReader
                 .DistinctBy(contact => contact.ConversationKey)
                 .ToList();
         }
-        catch
+        catch (Exception ex)
         {
-            return [];
+            throw new InvalidOperationException("Failed to read the QQNT recent-conversation catalog.", ex);
         }
     }
 }

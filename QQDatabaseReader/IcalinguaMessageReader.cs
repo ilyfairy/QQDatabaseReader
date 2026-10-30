@@ -12,6 +12,9 @@ namespace QQDatabaseReader;
 
 public sealed class IcalinguaMessageReader : IQQDatabase
 {
+    internal const int MaxSearchScanRowsPerPage = 5000;
+    private const int SearchScanBatchSize = 500;
+    private const int MaxSearchCursorSeenKeys = 8192;
     private const string UnifiedMessagesTableName = "messages";
     private readonly Dictionary<long, string> _legacyMessageTables = new();
     private readonly Dictionary<string, HashSet<string>> _tableColumns = new(StringComparer.OrdinalIgnoreCase);
@@ -37,12 +40,22 @@ public sealed class IcalinguaMessageReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        _connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        _connection.Open();
-        _hasUnifiedMessagesTable = HasTable(UnifiedMessagesTableName) &&
-                                   GetTableColumns(UnifiedMessagesTableName).Contains("roomId");
-        LoadLegacyMessageTables();
+        try
+        {
+            RawDatabase.Initialize();
+            _connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            _connection.Open();
+            _hasUnifiedMessagesTable = HasTable(UnifiedMessagesTableName) &&
+                                       GetTableColumns(UnifiedMessagesTableName).Contains("roomId");
+            LoadLegacyMessageTables();
+        }
+        catch
+        {
+            _connection?.Dispose();
+            _connection = null;
+            RawDatabase.Dispose();
+            throw;
+        }
     }
 
     private void EnsureConnection()
@@ -1035,6 +1048,18 @@ public sealed class IcalinguaMessageReader : IQQDatabase
             return LoadMessageFromSource(resolvedSource, sourceRowId);
         }
 
+        // Bounded cross-room search assigns every legacy table a unique source id so
+        // equal rowids from different msgN tables still have a stable global order.
+        // A room timeline has at most one legacy source, so it can safely recover the
+        // original rowid even when that search-only source id differs from its local id.
+        if (sourceIndex > 0 &&
+            sources.FirstOrDefault(static candidate => !candidate.HasRoomIdColumn) is { } legacySource &&
+            LoadMessageFromSource(legacySource, sourceRowId) is { } legacyMessage &&
+            (messageSortTime <= 0 || legacyMessage.MessageSeq == messageSortTime))
+        {
+            return legacyMessage;
+        }
+
         foreach (var source in sources)
         {
             if (LoadMessageFromSource(source, rowId) is { } message &&
@@ -1483,6 +1508,465 @@ public sealed class IcalinguaMessageReader : IQQDatabase
             .ThenByDescending(static message => message.MessageId)
             .Take(Math.Max(1, pageSize))
             .ToArray();
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesPage(
+        string keyword,
+        IReadOnlyList<long>? roomIds,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        int maxScanRows,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConnection();
+        if (string.IsNullOrWhiteSpace(keyword) || pageSize <= 0)
+            return new IcalinguaMessageSearchPage([], null, false, 0);
+        if (maxScanRows <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxScanRows));
+
+        var sources = CreateBoundedSearchSources(roomIds);
+        if (sources.Count == 0)
+            return new IcalinguaMessageSearchPage([], null, false, 0);
+
+        var query = keyword.Trim();
+        var sourceStates = CreateSearchSourceStates(sources, cursor);
+        var results = new List<IcalinguaMessageRecord>(pageSize);
+        var seenMessageKeys = cursor?.SeenMessageKeys is { } cursorSeenMessageKeys
+            ? new HashSet<string>(cursorSeenMessageKeys, StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        var scannedRows = 0;
+
+        while (results.Count < pageSize &&
+               scannedRows < maxScanRows &&
+               seenMessageKeys.Count < MaxSearchCursorSeenKeys)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var sourceState in sourceStates)
+            {
+                if (sourceState.IsExhausted || sourceState.Candidate is not null)
+                    continue;
+
+                PrepareNextSearchCandidate(
+                    sourceState,
+                    query,
+                    seenMessageKeys,
+                    maxScanRows,
+                    ref scannedRows,
+                    cancellationToken);
+                if (scannedRows >= maxScanRows)
+                    break;
+            }
+
+            if (sourceStates.Any(static state => !state.IsExhausted && state.Candidate is null))
+                break;
+
+            var selectedState = sourceStates
+                .Where(static state => state.Candidate is not null)
+                .OrderByDescending(static state => state.Candidate!.Message.MessageSeq)
+                .ThenByDescending(static state => state.Candidate!.Message.MessageId)
+                .FirstOrDefault();
+            if (selectedState is null)
+                break;
+
+            var selectedMessage = selectedState.Candidate!.Message;
+            var selectedKey = CreateSearchResultKey(selectedMessage);
+            foreach (var duplicateState in sourceStates.Where(
+                         state => state.Candidate is { } candidate &&
+                                  string.Equals(
+                                      CreateSearchResultKey(candidate.Message),
+                                      selectedKey,
+                                      StringComparison.Ordinal)))
+            {
+                ConsumeSearchCandidate(duplicateState);
+            }
+
+            if (seenMessageKeys.Add(selectedKey))
+                results.Add(selectedMessage);
+        }
+
+        var hasMore = seenMessageKeys.Count < MaxSearchCursorSeenKeys &&
+                      sourceStates.Any(static state => !state.IsExhausted || state.Candidate is not null);
+        var cursorAnchor = results.LastOrDefault();
+        var nextCursor = hasMore
+            ? CreateBoundedSearchCursor(sourceStates, seenMessageKeys, cursorAnchor, cursor)
+            : null;
+        return new IcalinguaMessageSearchPage(
+            results,
+            nextCursor,
+            nextCursor is not null,
+            scannedRows);
+    }
+
+    public IcalinguaMessageSearchPage SearchMessagesInRoomPage(
+        long roomId,
+        string keyword,
+        int pageSize,
+        IcalinguaMessageSearchCursor? cursor,
+        int maxScanRows,
+        CancellationToken cancellationToken = default)
+    {
+        return SearchMessagesPage(
+            keyword,
+            [roomId],
+            pageSize,
+            cursor,
+            maxScanRows,
+            cancellationToken);
+    }
+
+    private IReadOnlyList<IcalinguaMessageSearchSource> CreateBoundedSearchSources(
+        IReadOnlyList<long>? roomIds)
+    {
+        var allowedRoomIds = roomIds is { Count: > 0 }
+            ? roomIds.Where(static roomId => roomId != 0).ToHashSet()
+            : null;
+        var results = new List<IcalinguaMessageSearchSource>();
+        var addedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddSource(string tableName, long roomId, bool hasRoomIdColumn)
+        {
+            if (!addedTables.Add(tableName))
+                return;
+
+            var columns = GetTableColumns(tableName);
+            if (!HasSearchableColumns(columns))
+                return;
+
+            var sourceIndex = results.Count;
+            results.Add(new IcalinguaMessageSearchSource(
+                new IcalinguaMessageSource(
+                    tableName,
+                    roomId,
+                    hasRoomIdColumn,
+                    columns,
+                    sourceIndex),
+                hasRoomIdColumn ? allowedRoomIds : null));
+        }
+
+        if (_hasUnifiedMessagesTable)
+            AddSource(UnifiedMessagesTableName, 0, hasRoomIdColumn: true);
+
+        var legacyRoomIds = allowedRoomIds is null
+            ? _legacyMessageTables.Keys.OrderBy(static roomId => roomId)
+            : allowedRoomIds.OrderBy(static roomId => roomId);
+        foreach (var roomId in legacyRoomIds)
+        {
+            if (_legacyMessageTables.TryGetValue(roomId, out var tableName) && HasTable(tableName))
+            {
+                AddSource(tableName, roomId, hasRoomIdColumn: false);
+                continue;
+            }
+
+            var fallbackTableName = "msg" + roomId.ToString(CultureInfo.InvariantCulture);
+            if (HasTable(fallbackTableName))
+                AddSource(fallbackTableName, roomId, hasRoomIdColumn: false);
+        }
+
+        return results;
+    }
+
+    private static List<IcalinguaMessageSearchSourceState> CreateSearchSourceStates(
+        IReadOnlyList<IcalinguaMessageSearchSource> sources,
+        IcalinguaMessageSearchCursor? cursor)
+    {
+        IReadOnlyList<IcalinguaMessageSearchSourceCursor> sourceCursors;
+        if (cursor?.SourceCursors is { } savedSourceCursors &&
+            savedSourceCursors.Count == sources.Count)
+        {
+            sourceCursors = savedSourceCursors;
+        }
+        else
+        {
+            var scanSourceIndex = Math.Clamp(cursor?.ScanSourceIndex ?? 0, 0, sources.Count);
+            var cursors = new IcalinguaMessageSearchSourceCursor[sources.Count];
+            for (var index = 0; index < cursors.Length; index++)
+            {
+                cursors[index] = index < scanSourceIndex
+                    ? new IcalinguaMessageSearchSourceCursor(IsExhausted: true)
+                    : index == scanSourceIndex
+                        ? new IcalinguaMessageSearchSourceCursor(cursor?.ScanBeforeRowId)
+                        : new IcalinguaMessageSearchSourceCursor();
+            }
+
+            sourceCursors = cursors;
+        }
+
+        return sources
+            .Select((source, index) => new IcalinguaMessageSearchSourceState(source, sourceCursors[index]))
+            .ToList();
+    }
+
+    private void PrepareNextSearchCandidate(
+        IcalinguaMessageSearchSourceState state,
+        string query,
+        IReadOnlySet<string> seenMessageKeys,
+        int maxScanRows,
+        ref int scannedRows,
+        CancellationToken cancellationToken)
+    {
+        if (state.IsExhausted || state.Candidate is not null)
+            return;
+
+        if (state.PendingRowId is { } pendingRowId && scannedRows < maxScanRows)
+        {
+            var pendingRow = LoadSearchScanRow(
+                state.SearchSource.Source,
+                pendingRowId,
+                cancellationToken);
+            scannedRows++;
+            state.PendingRowId = null;
+            if (pendingRow is not null && IsSearchCandidate(
+                    state.SearchSource,
+                    pendingRow.Message,
+                    query,
+                    seenMessageKeys))
+            {
+                state.Candidate = pendingRow;
+                return;
+            }
+        }
+
+        while (!state.IsExhausted && scannedRows < maxScanRows)
+        {
+            var requestedBatchSize = Math.Min(SearchScanBatchSize, maxScanRows - scannedRows);
+            var batch = LoadSearchScanBatch(
+                state.SearchSource.Source,
+                state.BeforeRowId,
+                requestedBatchSize,
+                cancellationToken);
+            scannedRows += batch.Count;
+            if (batch.Count == 0)
+            {
+                state.IsExhausted = true;
+                return;
+            }
+
+            for (var index = 0; index < batch.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var row = batch[index];
+                if (!IsSearchCandidate(
+                        state.SearchSource,
+                        row.Message,
+                        query,
+                        seenMessageKeys))
+                {
+                    state.BeforeRowId = row.SourceRowId;
+                    continue;
+                }
+
+                state.BeforeRowId = row.SourceRowId;
+                state.Candidate = row;
+                state.IsExhaustedAfterCandidate =
+                    index == batch.Count - 1 && batch.Count < requestedBatchSize;
+                return;
+            }
+
+            if (batch.Count < requestedBatchSize)
+                state.IsExhausted = true;
+        }
+    }
+
+    private static bool IsSearchCandidate(
+        IcalinguaMessageSearchSource searchSource,
+        IcalinguaMessageRecord message,
+        string query,
+        IReadOnlySet<string> seenMessageKeys)
+    {
+        return message.RoomId != 0 &&
+               (searchSource.AllowedRoomIds is null || searchSource.AllowedRoomIds.Contains(message.RoomId)) &&
+               MatchesSearchQuery(message, searchSource.Source.Columns, query) &&
+               !seenMessageKeys.Contains(CreateSearchResultKey(message));
+    }
+
+    private static void ConsumeSearchCandidate(IcalinguaMessageSearchSourceState state)
+    {
+        state.Candidate = null;
+        state.PendingRowId = null;
+        if (state.IsExhaustedAfterCandidate)
+        {
+            state.IsExhausted = true;
+            state.IsExhaustedAfterCandidate = false;
+        }
+    }
+
+    private static IcalinguaMessageSearchCursor CreateBoundedSearchCursor(
+        IReadOnlyList<IcalinguaMessageSearchSourceState> sourceStates,
+        IReadOnlyCollection<string> seenMessageKeys,
+        IcalinguaMessageRecord? cursorAnchor,
+        IcalinguaMessageSearchCursor? previousCursor)
+    {
+        var sourceCursors = sourceStates
+            .Select(static state => new IcalinguaMessageSearchSourceCursor(
+                state.BeforeRowId,
+                state.Candidate?.SourceRowId ?? state.PendingRowId,
+                state.IsExhausted))
+            .ToArray();
+        var firstActiveSourceIndex = sourceStates
+            .Select((state, index) => (state, index))
+            .Where(static item => !item.state.IsExhausted || item.state.Candidate is not null)
+            .Select(static item => item.index)
+            .DefaultIfEmpty(sourceStates.Count)
+            .First();
+        var firstActiveCursor = firstActiveSourceIndex < sourceCursors.Length
+            ? sourceCursors[firstActiveSourceIndex]
+            : null;
+
+        return new IcalinguaMessageSearchCursor(
+            cursorAnchor?.MessageSeq ?? previousCursor?.MessageSortTime ?? 0,
+            cursorAnchor?.MessageId ?? previousCursor?.MessageId ?? 0,
+            previousCursor?.ScanDatabaseIndex,
+            firstActiveSourceIndex,
+            firstActiveCursor?.PendingRowId ?? firstActiveCursor?.BeforeRowId,
+            sourceCursors,
+            seenMessageKeys.ToArray());
+    }
+
+    private IReadOnlyList<IcalinguaMessageSearchScanRow> LoadSearchScanBatch(
+        IcalinguaMessageSource source,
+        long? beforeRowId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var command = _connection!.CreateCommand();
+        command.CommandText = beforeRowId is null
+            ? $"""
+              {CreateMessageSelectSql(source)}
+              WHERE rowid <= $beforeRowId
+              ORDER BY rowid DESC
+              LIMIT $limit
+              """
+            : $"""
+              {CreateMessageSelectSql(source)}
+              WHERE rowid < $beforeRowId
+              ORDER BY rowid DESC
+              LIMIT $limit
+              """;
+        AddParameter(command, "$beforeRowId", beforeRowId ?? long.MaxValue);
+        AddParameter(command, "$limit", limit);
+
+        var rows = new List<IcalinguaMessageSearchScanRow>(limit);
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => ((IDbCommand)state!).Cancel(),
+            command);
+        try
+        {
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                rows.Add(new IcalinguaMessageSearchScanRow(
+                    ReadInt64(reader, 0),
+                    ReadMessage(reader, source)));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Icalingua message search was canceled.",
+                exception,
+                cancellationToken);
+        }
+
+        return rows;
+    }
+
+    private IcalinguaMessageSearchScanRow? LoadSearchScanRow(
+        IcalinguaMessageSource source,
+        long rowId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var command = _connection!.CreateCommand();
+        command.CommandText =
+            $"""
+            {CreateMessageSelectSql(source)}
+            WHERE rowid = $rowId
+            LIMIT 1
+            """;
+        AddParameter(command, "$rowId", rowId);
+
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => ((IDbCommand)state!).Cancel(),
+            command);
+        try
+        {
+            using var reader = command.ExecuteReader();
+            return reader.Read()
+                ? new IcalinguaMessageSearchScanRow(ReadInt64(reader, 0), ReadMessage(reader, source))
+                : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(
+                "Icalingua message search was canceled.",
+                exception,
+                cancellationToken);
+        }
+    }
+
+    private static bool MatchesSearchQuery(
+        IcalinguaMessageRecord message,
+        IReadOnlySet<string> columns,
+        string query)
+    {
+        foreach (var column in GetSearchableColumns(columns))
+        {
+            var value = column switch
+            {
+                "content" => message.Content,
+                "title" => message.Title,
+                "code" => message.Code,
+                "file" => message.FileJson,
+                "files" => message.FilesJson,
+                "mirai" => message.MiraiJson,
+                "recallInfo" => message.RecallInfo,
+                "username" => message.Username,
+                _ => null,
+            };
+            if (!string.IsNullOrEmpty(value) &&
+                value.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string CreateSearchResultKey(IcalinguaMessageRecord message)
+    {
+        string identity;
+        if (!string.IsNullOrWhiteSpace(message.RawId) &&
+            !message.RawId.Contains(':', StringComparison.Ordinal))
+        {
+            identity = string.Join(
+                "\u001F",
+                "id",
+                message.RoomId.ToString(CultureInfo.InvariantCulture),
+                message.RawId);
+        }
+        else
+        {
+            identity = string.Join(
+                "\u001F",
+                "row",
+                message.RoomId.ToString(CultureInfo.InvariantCulture),
+                message.MessageTime.ToString(CultureInfo.InvariantCulture),
+                message.SenderId.ToString(CultureInfo.InvariantCulture),
+                message.Content);
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
     }
 
     private long CountSearchMatchesInRoomCore(long roomId, string keyword)

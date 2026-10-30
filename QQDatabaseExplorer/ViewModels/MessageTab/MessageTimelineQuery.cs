@@ -101,9 +101,26 @@ internal sealed class MessageTimelineQuery
             : null;
     }
 
-    public IReadOnlyList<MessageRecord> LoadAllMessages(AvaQQGroup conversation, int pageSize)
+    public List<MessageRecord> LoadEarliestMessagesForExport(AvaQQGroup conversation, int pageSize)
     {
-        return MessageTimelineExporter.LoadAll(GetProvider(conversation), conversation, pageSize);
+        return GetProvider(conversation).LoadEarliestMessages(
+            conversation,
+            pageSize,
+            MessageFilterCriteria.Empty);
+    }
+
+    public List<MessageRecord> LoadNewerMessagesForExport(
+        AvaQQGroup conversation,
+        long messageSeq,
+        long messageId,
+        int pageSize)
+    {
+        return GetProvider(conversation).LoadNewerMessages(
+            conversation,
+            messageSeq,
+            messageId,
+            pageSize,
+            MessageFilterCriteria.Empty);
     }
 
     private IMessageTimelineProvider GetProvider(AvaQQGroup conversation)

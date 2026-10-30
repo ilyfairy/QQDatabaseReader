@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Labs.Gif;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -169,7 +170,7 @@ public sealed class ZoomableLocalImageViewer : ContentControl
     {
         ClearSource();
 
-        if (!_isAttached || string.IsNullOrWhiteSpace(SourcePath) || !File.Exists(SourcePath))
+        if (!_isAttached || string.IsNullOrWhiteSpace(SourcePath) || !ArchiveFile.Exists(SourcePath))
             return;
 
         try

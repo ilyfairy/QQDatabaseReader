@@ -4,8 +4,10 @@ using System.IO;
 using System.Linq;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -17,28 +19,28 @@ internal static class QqNtLocalMediaPathResolver
         QQMessageSegment segment,
         SubMessageType subMessageType)
     {
-        if (string.IsNullOrWhiteSpace(ntDataPath))
-            return ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+        if (!TryResolveNtDataRoot(ntDataPath, out var ntDataRoot))
+            return null;
 
         var candidateFileNames = MessageMediaFileNameCandidateFactory.CreateImageCandidates(segment).ToArray();
         if (candidateFileNames.Length == 0)
-            return ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+            return ResolveExplicitMessageImagePath(ntDataRoot, segment.ImageLocalPath);
 
         if (!TryGetMessageUtcMonth(messageTime, out var month))
-            return ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+            return ResolveExplicitMessageImagePath(ntDataRoot, segment.ImageLocalPath);
 
-        var primaryDir = GetMediaMonthDirectory(ntDataPath, subMessageType, month);
-        var result = ResolveMediaPath(primaryDir, candidateFileNames);
+        var primaryDir = GetMediaMonthDirectory(ntDataRoot, subMessageType, month);
+        var result = ResolveMediaPath(ntDataRoot, primaryDir, candidateFileNames);
         if (result is not null)
             return result;
 
         // QQNT 有时会把 sticker 的图片放在 Pic，反之亦然。
         var fallbackDir = MessageMediaSegmentClassifier.IsStickerMessage(subMessageType)
-            ? Path.Combine(ntDataPath, "Pic", month)
-            : Path.Combine(ntDataPath, "Emoji", "emoji-recv", month);
+            ? Path.Combine(ntDataRoot, "Pic", month)
+            : Path.Combine(ntDataRoot, "Emoji", "emoji-recv", month);
 
-        result = ResolveMediaPath(fallbackDir, candidateFileNames);
-        return result ?? ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+        result = ResolveMediaPath(ntDataRoot, fallbackDir, candidateFileNames);
+        return result ?? ResolveExplicitMessageImagePath(ntDataRoot, segment.ImageLocalPath);
     }
 
     public static string? ResolveVoicePath(
@@ -46,14 +48,17 @@ internal static class QqNtLocalMediaPathResolver
         int messageTime,
         QQMessageSegment segment)
     {
-        if (string.IsNullOrWhiteSpace(ntDataPath) ||
+        if (!TryResolveNtDataRoot(ntDataPath, out var ntDataRoot) ||
             !TryGetMessageUtcMonth(messageTime, out var month))
         {
             return null;
         }
 
-        var voiceDirectory = Path.Combine(ntDataPath, "Ptt", month, "Ori");
-        return ResolveVoicePath(voiceDirectory, MessageMediaFileNameCandidateFactory.CreateVoiceCandidates(segment));
+        var voiceDirectory = Path.Combine(ntDataRoot, "Ptt", month, "Ori");
+        return ResolveVoicePath(
+            ntDataRoot,
+            voiceDirectory,
+            MessageMediaFileNameCandidateFactory.CreateVoiceCandidates(segment));
     }
 
     public static ResolvedVideoMediaPath ResolveVideoPath(
@@ -61,33 +66,84 @@ internal static class QqNtLocalMediaPathResolver
         int messageTime,
         QQMessageSegment segment)
     {
-        if (string.IsNullOrWhiteSpace(ntDataPath) ||
+        if (!TryResolveNtDataRoot(ntDataPath, out var ntDataRoot) ||
             !TryGetMessageUtcMonth(messageTime, out var month))
         {
             return ResolvedVideoMediaPath.Missing;
         }
 
-        var videoMonthDirectory = Path.Combine(ntDataPath, "Video", month);
+        var videoMonthDirectory = Path.Combine(ntDataRoot, "Video", month);
         var videoPath = ResolveMediaOriginalPath(
+            ntDataRoot,
             videoMonthDirectory,
             MessageMediaFileNameCandidateFactory.CreateVideoCandidates(segment).ToArray());
         var coverPath = ResolveMediaThumbnailPath(
+            ntDataRoot,
             videoMonthDirectory,
             MessageMediaFileNameCandidateFactory.CreateVideoCoverCandidates(segment).ToArray())
-            ?? ResolveExplicitLocalImagePath(segment.ImageLocalPath);
+            ?? ResolveExplicitLocalImagePathWithinSubdirectories(
+                ntDataRoot,
+                segment.ImageLocalPath,
+                "Video",
+                "Pic",
+                "Emoji");
 
         return new ResolvedVideoMediaPath(
             videoPath,
             coverPath,
-            !string.IsNullOrWhiteSpace(videoPath) && File.Exists(videoPath),
+            !string.IsNullOrWhiteSpace(videoPath) && ArchiveFile.Exists(videoPath),
             LocalImageFile.IsDisplayableImageFile(coverPath));
     }
 
-    public static string? ResolveExplicitLocalImagePath(string? imageLocalPath)
+    public static string? ResolveExplicitLocalImagePath(
+        string? imageLocalPath,
+        params string?[] trustedRoots)
     {
-        return !string.IsNullOrWhiteSpace(imageLocalPath) && File.Exists(imageLocalPath)
-            ? imageLocalPath
-            : null;
+        if (string.IsNullOrWhiteSpace(imageLocalPath))
+            return null;
+
+        foreach (var root in trustedRoots)
+        {
+            if (!string.IsNullOrWhiteSpace(root) &&
+                TrustedMediaPath.TryResolveExistingFileWithinRoot(root, imageLocalPath, out var resolvedPath))
+            {
+                return resolvedPath;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolveExplicitMessageImagePath(string ntDataRoot, string? imageLocalPath)
+    {
+        return ResolveExplicitLocalImagePathWithinSubdirectories(
+            ntDataRoot,
+            imageLocalPath,
+            "Pic",
+            "Emoji");
+    }
+
+    private static string? ResolveExplicitLocalImagePathWithinSubdirectories(
+        string ntDataRoot,
+        string? imageLocalPath,
+        params string[] subdirectories)
+    {
+        if (string.IsNullOrWhiteSpace(imageLocalPath))
+            return null;
+
+        foreach (var subdirectory in subdirectories)
+        {
+            if (TrustedMediaPath.TryResolveExistingFileWithinSubdirectory(
+                    ntDataRoot,
+                    subdirectory,
+                    imageLocalPath,
+                    out var resolvedPath))
+            {
+                return resolvedPath;
+            }
+        }
+
+        return null;
     }
 
     private static string GetMediaMonthDirectory(string ntDataPath, SubMessageType subMessageType, string month)
@@ -119,27 +175,36 @@ internal static class QqNtLocalMediaPathResolver
         }
     }
 
-    private static string? ResolveOriginalImagePath(string picMonthDirectory, string imageFileName)
+    private static string? ResolveOriginalImagePath(
+        string trustedRoot,
+        string picMonthDirectory,
+        string imageFileName)
     {
         var oriDirectory = Path.Combine(picMonthDirectory, "Ori");
-        return ResolveExistingFile(oriDirectory, imageFileName) ??
-               ResolveExistingFile(oriDirectory, imageFileName.ToLowerInvariant());
+        return ResolveExistingFile(trustedRoot, oriDirectory, imageFileName) ??
+               ResolveExistingFile(trustedRoot, oriDirectory, imageFileName.ToLowerInvariant());
     }
 
-    private static string? ResolveMediaPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
+    private static string? ResolveMediaPath(
+        string trustedRoot,
+        string mediaMonthDirectory,
+        IReadOnlyList<string> candidateFileNames)
     {
-        var originalPath = ResolveMediaOriginalPath(mediaMonthDirectory, candidateFileNames);
+        var originalPath = ResolveMediaOriginalPath(trustedRoot, mediaMonthDirectory, candidateFileNames);
         if (originalPath is not null)
             return originalPath;
 
-        return ResolveMediaThumbnailPath(mediaMonthDirectory, candidateFileNames);
+        return ResolveMediaThumbnailPath(trustedRoot, mediaMonthDirectory, candidateFileNames);
     }
 
-    private static string? ResolveMediaOriginalPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
+    private static string? ResolveMediaOriginalPath(
+        string trustedRoot,
+        string mediaMonthDirectory,
+        IReadOnlyList<string> candidateFileNames)
     {
         foreach (var imageFileName in candidateFileNames)
         {
-            var result = ResolveOriginalImagePath(mediaMonthDirectory, imageFileName);
+            var result = ResolveOriginalImagePath(trustedRoot, mediaMonthDirectory, imageFileName);
             if (result is not null)
                 return result;
         }
@@ -147,17 +212,20 @@ internal static class QqNtLocalMediaPathResolver
         return null;
     }
 
-    private static string? ResolveMediaThumbnailPath(string mediaMonthDirectory, IReadOnlyList<string> candidateFileNames)
+    private static string? ResolveMediaThumbnailPath(
+        string trustedRoot,
+        string mediaMonthDirectory,
+        IReadOnlyList<string> candidateFileNames)
     {
         foreach (var imageFileName in candidateFileNames)
         {
             var thumbDirectory = Path.Combine(mediaMonthDirectory, "Thumb");
-            var directResult = ResolveExistingFile(thumbDirectory, imageFileName) ??
-                               ResolveExistingFile(thumbDirectory, imageFileName.ToLowerInvariant());
+            var directResult = ResolveExistingFile(trustedRoot, thumbDirectory, imageFileName) ??
+                               ResolveExistingFile(trustedRoot, thumbDirectory, imageFileName.ToLowerInvariant());
             if (directResult is not null)
                 return directResult;
 
-            var result = ResolveThumbnailImagePath(mediaMonthDirectory, imageFileName);
+            var result = ResolveThumbnailImagePath(trustedRoot, mediaMonthDirectory, imageFileName);
             if (result is not null)
                 return result;
         }
@@ -165,14 +233,22 @@ internal static class QqNtLocalMediaPathResolver
         return null;
     }
 
-    private static string? ResolveVoicePath(string voiceOriginalDirectory, IEnumerable<string> candidateFileNames)
+    private static string? ResolveVoicePath(
+        string trustedRoot,
+        string voiceOriginalDirectory,
+        IEnumerable<string> candidateFileNames)
     {
-        if (!Directory.Exists(voiceOriginalDirectory))
+        if (!TrustedMediaPath.TryResolveExistingDirectoryWithinRoot(
+                trustedRoot,
+                voiceOriginalDirectory,
+                out var resolvedVoiceDirectory))
+        {
             return null;
+        }
 
         foreach (var fileName in candidateFileNames)
         {
-            var result = ResolveExistingFile(voiceOriginalDirectory, fileName);
+            var result = ResolveExistingFile(trustedRoot, resolvedVoiceDirectory, fileName);
             if (result is not null)
                 return result;
         }
@@ -180,11 +256,19 @@ internal static class QqNtLocalMediaPathResolver
         return null;
     }
 
-    private static string? ResolveThumbnailImagePath(string picMonthDirectory, string imageFileName)
+    private static string? ResolveThumbnailImagePath(
+        string trustedRoot,
+        string picMonthDirectory,
+        string imageFileName)
     {
         var thumbDirectory = Path.Combine(picMonthDirectory, "Thumb");
-        if (!Directory.Exists(thumbDirectory))
+        if (!TrustedMediaPath.TryResolveExistingDirectoryWithinRoot(
+                trustedRoot,
+                thumbDirectory,
+                out var resolvedThumbDirectory))
+        {
             return null;
+        }
 
         var imageName = Path.GetFileNameWithoutExtension(imageFileName);
         if (string.IsNullOrWhiteSpace(imageName))
@@ -192,8 +276,13 @@ internal static class QqNtLocalMediaPathResolver
 
         var preferredExtension = Path.GetExtension(imageFileName);
         var thumbNamePrefix = imageName.ToLowerInvariant();
-        var candidates = Directory.EnumerateFiles(thumbDirectory, $"{thumbNamePrefix}_*.*")
-            .Select(path => CreateThumbnailCandidate(path, thumbNamePrefix, preferredExtension))
+        var candidates = ArchiveFile.EnumerateFiles(resolvedThumbDirectory, $"{thumbNamePrefix}_*.*")
+            .Select(path => TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                    trustedRoot,
+                    path,
+                    out var resolvedPath)
+                ? CreateThumbnailCandidate(resolvedPath, thumbNamePrefix, preferredExtension)
+                : null)
             .Where(candidate => candidate is not null)
             .Select(candidate => candidate!.Value)
             .ToList();
@@ -230,9 +319,28 @@ internal static class QqNtLocalMediaPathResolver
         return new ThumbnailCandidate(path, spec, matchesPreferredExtension);
     }
 
-    private static string? ResolveExistingFile(string directory, string fileName)
+    private static string? ResolveExistingFile(string trustedRoot, string directory, string fileName)
     {
         var path = Path.Combine(directory, fileName);
-        return File.Exists(path) ? path : null;
+        return TrustedMediaPath.TryResolveExistingFileWithinRoot(trustedRoot, path, out var resolvedPath)
+            ? resolvedPath
+            : null;
+    }
+
+    private static bool TryResolveNtDataRoot(string? ntDataPath, out string ntDataRoot)
+    {
+        ntDataRoot = string.Empty;
+        if (string.IsNullOrWhiteSpace(ntDataPath))
+            return false;
+
+        try
+        {
+            ntDataRoot = Path.GetFullPath(ntDataPath);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
     }
 }

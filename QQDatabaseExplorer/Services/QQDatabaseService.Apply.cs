@@ -53,6 +53,8 @@ public partial class QQDatabaseService
         RemoveQQNTDatabases(clearConfig: false);
 
         _qqNtDatabases = QQNtDatabaseRuntimeGroup.FromPrepared(ntDatabases);
+        prepared.Detach();
+        RebuildDatabaseGroups();
 
         if (ntDatabases is not null)
         {
@@ -61,8 +63,6 @@ public partial class QQDatabaseService
                 await NotifyDatabaseAddedAsync(database);
             }
         }
-
-        RebuildDatabaseGroups();
     }
 
     private async Task ApplyPreparedPCQQDatabaseAsync(PreparedDatabaseConfig prepared)
@@ -73,10 +73,11 @@ public partial class QQDatabaseService
         _pcqqDatabase = prepared.PCQQMessageDatabase is null
             ? PCQQDatabaseRuntimeGroup.Empty
             : PCQQDatabaseRuntimeGroup.Create(prepared.PCQQMessageDatabase, prepared.PCQQDataPath);
+        prepared.Detach();
+        RebuildDatabaseGroups();
+
         if (PCQQMessageDatabase is not null)
             await NotifyDatabaseAddedAsync(PCQQMessageDatabase);
-
-        RebuildDatabaseGroups();
     }
 
     private async Task ApplyPreparedAndroidMobileQQDatabaseAsync(PreparedDatabaseConfig prepared)
@@ -90,10 +91,11 @@ public partial class QQDatabaseService
                 prepared.AndroidMobileQQMessageDatabase,
                 prepared.AndroidMobileQQMediaPath,
                 prepared.AndroidMobileQQChatPicPath);
+        prepared.Detach();
+        RebuildDatabaseGroups();
+
         if (AndroidMobileQQMessageDatabase is not null)
             await NotifyDatabaseAddedAsync(AndroidMobileQQMessageDatabase);
-
-        RebuildDatabaseGroups();
     }
 
     private async Task ApplyPreparedIcalinguaDatabaseAsync(PreparedDatabaseConfig prepared)
@@ -104,10 +106,13 @@ public partial class QQDatabaseService
                 prepared.IcalinguaMessageDatabase,
                 prepared.Config,
                 prepared.IcalinguaDataPath);
-            await NotifyDatabaseAddedAsync(prepared.IcalinguaMessageDatabase);
+            prepared.Detach();
         }
 
         RebuildDatabaseGroups();
+
+        if (prepared.IcalinguaMessageDatabase is not null)
+            await NotifyDatabaseAddedAsync(prepared.IcalinguaMessageDatabase);
     }
 
     private async Task ApplyPreparedIcalinguaDatabasesAsync(IEnumerable<PreparedDatabaseConfig> preparedDatabases)
@@ -130,10 +135,10 @@ public partial class QQDatabaseService
             prepared.Detach();
         }
 
+        RebuildDatabaseGroups();
+
         if (notificationDatabase is not null)
             await NotifyDatabaseAddedAsync(notificationDatabase);
-
-        RebuildDatabaseGroups();
     }
 
     private void AddIcalinguaDatabase(

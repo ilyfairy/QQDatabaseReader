@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
@@ -63,20 +64,27 @@ internal sealed class MessageDatabaseChangeCoordinator
 
     public async Task HandleDatabaseAddedAsync(IQQDatabase database)
     {
-        try
+        if (await _conversationDatabaseSynchronizer.TryApplyAsync(database))
         {
-            if (await _conversationDatabaseSynchronizer.TryApplyAsync(database))
-            {
-                _refreshFilteredGroups();
-            }
-            else if (database is QQProfileInfoReader profileInfoDatabase)
-            {
-                await Task.Run(() => _participantResolver.PreloadProfileInfoCache(profileInfoDatabase));
-                ApplyProfileInfoNames();
-            }
+            _refreshFilteredGroups();
         }
-        catch
+        else if (database is QQProfileInfoReader profileInfoDatabase)
         {
+            var conversations = _getConversations().ToArray();
+            var visibleMessages = _getVisibleMessages().ToArray();
+            var selectedConversation = _getSelectedConversation();
+            var lookupRequests = _profileInfoApplier.CreateLookupRequests(
+                conversations,
+                visibleMessages,
+                selectedConversation);
+            var resolvedNames = await Task.Run(() => _participantResolver.PreloadProfileInfoCache(
+                profileInfoDatabase,
+                lookupRequests));
+            ApplyProfileInfoNames(
+                conversations,
+                visibleMessages,
+                selectedConversation,
+                resolvedNames);
         }
     }
 
@@ -99,7 +107,23 @@ internal sealed class MessageDatabaseChangeCoordinator
 
     private void ApplyProfileInfoNames()
     {
-        if (_profileInfoApplier.Apply(_getConversations(), _getVisibleMessages(), _getSelectedConversation()))
+        ApplyProfileInfoNames(
+            _getConversations(),
+            _getVisibleMessages(),
+            _getSelectedConversation());
+    }
+
+    private void ApplyProfileInfoNames(
+        IEnumerable<AvaQQGroup> conversations,
+        IEnumerable<AvaQQMessage> visibleMessages,
+        AvaQQGroup? selectedConversation,
+        IReadOnlyDictionary<ProfileInfoLookupRequest, string>? resolvedNames = null)
+    {
+        if (_profileInfoApplier.Apply(
+                conversations,
+                visibleMessages,
+                selectedConversation,
+                resolvedNames))
         {
             _refreshFilteredGroups();
         }

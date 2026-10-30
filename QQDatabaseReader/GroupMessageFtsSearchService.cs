@@ -2,6 +2,8 @@ using System.Data;
 using System.Data.Common;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using QQDatabaseReader.Database;
 
@@ -52,6 +54,78 @@ public sealed class GroupMessageFtsSearchService
         }
     }
 
+    public GroupMessageFtsSearchPage SearchPage(
+        GroupMessageFtsSearchRequest request,
+        int maxScanRows,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+            return new GroupMessageFtsSearchPage([], null, false);
+        if (request.Order != GroupMessageFtsSearchOrder.Newest)
+            throw new ArgumentException("Bounded FTS paging requires newest order.", nameof(request));
+        if (maxScanRows <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxScanRows));
+
+        var limit = Math.Max(request.Limit ?? 100, 1);
+        var matchQuery = CreateMatchQuery(request.Query);
+        try
+        {
+            lock (_gate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var connection = _dbContext.Database.GetDbConnection();
+                if (connection.State != ConnectionState.Open)
+                    connection.Open();
+
+                var scanLimit = request.HasConversationFilter
+                    ? maxScanRows
+                    : Math.Min(limit, maxScanRows);
+                var rowIds = ReadMatchRowIds(
+                    connection,
+                    matchQuery,
+                    request.BeforeRowId,
+                    scanLimit,
+                    cancellationToken);
+                if (rowIds.Count == 0)
+                    return new GroupMessageFtsSearchPage([], null, false);
+
+                var rows = LoadSearchResultsByRowIds(
+                    connection,
+                    rowIds,
+                    includeUnreadableRows: true,
+                    cancellationToken: cancellationToken);
+                var results = new List<GroupMessageFtsSearchResult>(Math.Min(limit, rows.Count));
+                var examinedCount = 0;
+                foreach (var row in rows)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    examinedCount++;
+                    if (!request.HasConversationFilter || IsConversationMatch(row, request))
+                        results.Add(row);
+                    if (results.Count == limit)
+                        break;
+                }
+
+                var nextBeforeRowId = rowIds[examinedCount - 1];
+                var hasMore = examinedCount < rowIds.Count || rowIds.Count == scanLimit;
+                return new GroupMessageFtsSearchPage(results, nextBeforeRowId, hasMore);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            cancellationToken.IsCancellationRequested &&
+            IsSqliteInterrupt(exception))
+        {
+            throw new OperationCanceledException(
+                "QQNT FTS message search was canceled.",
+                exception,
+                cancellationToken);
+        }
+    }
+
     public long Count(GroupMessageFtsCountRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Query))
@@ -67,7 +141,13 @@ public sealed class GroupMessageFtsSearchService
 
             var matchQuery = CreateMatchQuery(request.Query);
             if (request.HasConversationFilter)
-                return CountConversationMatches(connection, matchQuery, request.GroupId, request.PeerUin, request.PrivateConversationIds);
+                return CountConversationMatches(
+                    connection,
+                    matchQuery,
+                    request.GroupId,
+                    request.PeerUin,
+                    request.PeerUid,
+                    request.PrivateConversationIds);
 
             using var command = connection.CreateCommand();
             command.CommandText = CreateCountSql();
@@ -136,7 +216,10 @@ public sealed class GroupMessageFtsSearchService
         if (limit is null)
         {
             var rowIds = ReadAllMatchRowIds(connection, matchQuery, request.BeforeRowId);
-            return LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
+            var rows = LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
+            return request.HasConversationFilter
+                ? rows.Where(result => IsConversationMatch(result, request)).ToArray()
+                : rows;
         }
 
         if (!request.HasConversationFilter)
@@ -145,33 +228,12 @@ public sealed class GroupMessageFtsSearchService
             return LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
         }
 
-        var results = new List<GroupMessageFtsSearchResult>(limit.Value);
-        var beforeRowId = request.BeforeRowId;
         var scanLimit = Math.Max(GroupFilterScanPageSize, limit.Value * GroupFilterScanMultiplier);
-        while (results.Count < limit.Value)
-        {
-            var rowIds = ReadMatchRowIds(connection, matchQuery, beforeRowId, scanLimit);
-            if (rowIds.Count == 0)
-                break;
-
-            var rows = LoadSearchResultsByRowIds(connection, rowIds, includeUnreadableRows: true);
-            foreach (var row in rows)
-            {
-                if (!IsConversationMatch(row, request))
-                    continue;
-
-                results.Add(row);
-                if (results.Count == limit.Value)
-                    break;
-            }
-
-            if (results.Count == limit.Value || rowIds.Count < scanLimit)
-                break;
-
-            beforeRowId = rowIds[^1];
-        }
-
-        return results;
+        var filteredRowIds = ReadMatchRowIds(connection, matchQuery, request.BeforeRowId, scanLimit);
+        return LoadSearchResultsByRowIds(connection, filteredRowIds, includeUnreadableRows: true)
+            .Where(result => IsConversationMatch(result, request))
+            .Take(limit.Value)
+            .ToArray();
     }
 
     private IReadOnlyList<GroupMessageFtsSearchResult> SearchByRank(
@@ -232,8 +294,10 @@ public sealed class GroupMessageFtsSearchService
         DbConnection connection,
         string matchQuery,
         long? beforeRowId,
-        int limit)
+        int limit,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var command = connection.CreateCommand();
         command.CommandText = CreateRowIdSearchSql(beforeRowId is not null);
         AddParameter(command, "$query", matchQuery);
@@ -243,10 +307,14 @@ public sealed class GroupMessageFtsSearchService
             AddParameter(command, "$beforeRowId", beforeRowId.Value);
         }
 
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => TryCancelCommand((DbCommand)state!),
+            command);
         using var reader = command.ExecuteReader();
         var results = new List<long>(limit);
         while (reader.Read())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             results.Add(ReadInt64(reader, 0));
         }
 
@@ -256,15 +324,17 @@ public sealed class GroupMessageFtsSearchService
     private IReadOnlyList<GroupMessageFtsSearchResult> LoadSearchResultsByRowIds(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
-        bool includeUnreadableRows)
+        bool includeUnreadableRows,
+        CancellationToken cancellationToken = default)
     {
         var rowMap = new Dictionary<long, GroupMessageFtsSearchResult>();
         foreach (var batch in rowIds.Chunk(DetailLookupBatchSize))
         {
-            ReadSearchResultBatch(connection, batch, rowMap);
+            cancellationToken.ThrowIfCancellationRequested();
+            ReadSearchResultBatch(connection, batch, rowMap, cancellationToken);
             if (batch.Any(rowId => !rowMap.ContainsKey(rowId)))
             {
-                RepairMissingSearchResultRows(connection, batch, rowMap);
+                RepairMissingSearchResultRows(connection, batch, rowMap, cancellationToken);
             }
         }
 
@@ -318,15 +388,21 @@ public sealed class GroupMessageFtsSearchService
     private void ReadSearchResultBatch(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
-        Dictionary<long, GroupMessageFtsSearchResult> rowMap)
+        Dictionary<long, GroupMessageFtsSearchResult> rowMap,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         using var command = connection.CreateCommand();
         command.CommandText = CreateDetailLookupSql(rowIds.Count);
         AddRowIdParameters(command, rowIds);
 
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => TryCancelCommand((DbCommand)state!),
+            command);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var result = ReadSearchResult(reader, rankOrdinal: null);
             rowMap[result.RowId] = result;
         }
@@ -335,14 +411,16 @@ public sealed class GroupMessageFtsSearchService
     private void RepairMissingSearchResultRows(
         DbConnection connection,
         IReadOnlyList<long> rowIds,
-        Dictionary<long, GroupMessageFtsSearchResult> rowMap)
+        Dictionary<long, GroupMessageFtsSearchResult> rowMap,
+        CancellationToken cancellationToken = default)
     {
         foreach (var rowId in rowIds)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (rowMap.ContainsKey(rowId))
                 continue;
 
-            ReadSearchResultBatch(connection, [rowId], rowMap);
+            ReadSearchResultBatch(connection, [rowId], rowMap, cancellationToken);
         }
     }
 
@@ -389,6 +467,7 @@ public sealed class GroupMessageFtsSearchService
         string matchQuery,
         uint? groupId,
         uint? peerUin,
+        string? peerUid,
         IReadOnlyList<long>? privateConversationIds)
     {
         long count = 0;
@@ -401,7 +480,7 @@ public sealed class GroupMessageFtsSearchService
 
             foreach (var row in LoadMatchScanRowsByRowIds(connection, rowIds, includeUnreadableRows: false))
             {
-                if (IsConversationMatch(row, groupId, peerUin, privateConversationIds))
+                if (IsConversationMatch(row, groupId, peerUin, peerUid, privateConversationIds))
                     count++;
             }
 
@@ -415,12 +494,33 @@ public sealed class GroupMessageFtsSearchService
 
     private static bool IsConversationMatch(GroupMessageFtsSearchResult result, GroupMessageFtsSearchRequest request)
     {
-        return IsConversationMatch(result.ChatType, result.GroupId, result.PrivateConversationId, result.PeerUid, request.GroupId, request.PeerUin, request.PrivateConversationIds);
+        return IsConversationMatch(
+            result.ChatType,
+            result.GroupId,
+            result.PrivateConversationId,
+            result.PeerUid,
+            request.GroupId,
+            request.PeerUin,
+            request.PeerUid,
+            request.PrivateConversationIds);
     }
 
-    private static bool IsConversationMatch(GroupMessageFtsMatchScanRow result, uint? groupId, uint? peerUin, IReadOnlyList<long>? privateConversationIds)
+    private static bool IsConversationMatch(
+        GroupMessageFtsMatchScanRow result,
+        uint? groupId,
+        uint? peerUin,
+        string? peerUid,
+        IReadOnlyList<long>? privateConversationIds)
     {
-        return IsConversationMatch(result.ChatType, result.GroupId, result.PrivateConversationId, result.PeerUid, groupId, peerUin, privateConversationIds);
+        return IsConversationMatch(
+            result.ChatType,
+            result.GroupId,
+            result.PrivateConversationId,
+            result.PeerUid,
+            groupId,
+            peerUin,
+            peerUid,
+            privateConversationIds);
     }
 
     private static bool IsConversationMatch(
@@ -430,6 +530,7 @@ public sealed class GroupMessageFtsSearchService
         string? peerUid,
         uint? requestedGroupId,
         uint? requestedPeerUin,
+        string? requestedPeerUid,
         IReadOnlyList<long>? requestedPrivateConversationIds)
     {
         if (requestedGroupId is { } groupFilter &&
@@ -444,6 +545,12 @@ public sealed class GroupMessageFtsSearchService
 
         if (requestedPrivateConversationIds is { Count: > 0 } conversationIds &&
             conversationIds.Contains(privateConversationId))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestedPeerUid) &&
+            string.Equals(peerUid, requestedPeerUid, StringComparison.Ordinal))
         {
             return true;
         }
@@ -627,6 +734,11 @@ WHERE {_ftsTableName} MATCH $query
             filters.Add("([40010] = $privateChatType AND [40021] = $peerUinText)");
         }
 
+        if (!string.IsNullOrWhiteSpace(request.PeerUid))
+        {
+            filters.Add("([40010] = $privateChatType AND [40021] = $peerUid)");
+        }
+
         if (request.PrivateConversationIds is { Count: > 0 } conversationIds)
         {
             var parameters = Enumerable.Range(0, conversationIds.Count)
@@ -691,6 +803,27 @@ WHERE {_ftsTableName} MATCH $query
         command.Parameters.Add(parameter);
     }
 
+    private static void TryCancelCommand(DbCommand command)
+    {
+        try
+        {
+            command.Cancel();
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsSqliteInterrupt(Exception exception)
+    {
+        return (exception is SqliteException sqliteException &&
+                sqliteException.SqliteErrorCode == SQLitePCL.raw.SQLITE_INTERRUPT) ||
+               (exception is InvalidOperationException &&
+                exception.Message.Contains(
+                    $"code {SQLitePCL.raw.SQLITE_INTERRUPT}",
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
     private static void AddConversationFilterParameters(DbCommand command, GroupMessageFtsSearchRequest request)
     {
         if (!request.HasConversationFilter)
@@ -703,7 +836,9 @@ WHERE {_ftsTableName} MATCH $query
             AddParameter(command, "$groupIdText", groupId.ToString());
         }
 
-        if (request.PeerUin is not null || request.PrivateConversationIds is { Count: > 0 })
+        if (request.PeerUin is not null ||
+            !string.IsNullOrWhiteSpace(request.PeerUid) ||
+            request.PrivateConversationIds is { Count: > 0 })
         {
             AddParameter(command, "$privateChatType", (int)ChatType.PrivateMessage);
         }
@@ -711,6 +846,11 @@ WHERE {_ftsTableName} MATCH $query
         if (request.PeerUin is { } peerUin)
         {
             AddParameter(command, "$peerUinText", peerUin.ToString());
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.PeerUid))
+        {
+            AddParameter(command, "$peerUid", request.PeerUid);
         }
 
         if (request.PrivateConversationIds is not { Count: > 0 } conversationIds)
@@ -760,18 +900,33 @@ public sealed record GroupMessageFtsSearchRequest(
     GroupMessageFtsSearchOrder Order = GroupMessageFtsSearchOrder.Relevance,
     long? BeforeRowId = null,
     IReadOnlyList<long>? PrivateConversationIds = null,
-    uint? PeerUin = null)
+    uint? PeerUin = null,
+    string? PeerUid = null)
 {
-    public bool HasConversationFilter => GroupId is not null || PeerUin is not null || PrivateConversationIds is { Count: > 0 };
+    public bool HasConversationFilter =>
+        GroupId is not null ||
+        PeerUin is not null ||
+        !string.IsNullOrWhiteSpace(PeerUid) ||
+        PrivateConversationIds is { Count: > 0 };
 }
+
+public sealed record GroupMessageFtsSearchPage(
+    IReadOnlyList<GroupMessageFtsSearchResult> Results,
+    long? NextBeforeRowId,
+    bool HasMore);
 
 public sealed record GroupMessageFtsCountRequest(
     string Query,
     uint? GroupId = null,
     IReadOnlyList<long>? PrivateConversationIds = null,
-    uint? PeerUin = null)
+    uint? PeerUin = null,
+    string? PeerUid = null)
 {
-    public bool HasConversationFilter => GroupId is not null || PeerUin is not null || PrivateConversationIds is { Count: > 0 };
+    public bool HasConversationFilter =>
+        GroupId is not null ||
+        PeerUin is not null ||
+        !string.IsNullOrWhiteSpace(PeerUid) ||
+        PrivateConversationIds is { Count: > 0 };
 }
 
 public sealed record GroupMessageFtsMatchScanRequest(

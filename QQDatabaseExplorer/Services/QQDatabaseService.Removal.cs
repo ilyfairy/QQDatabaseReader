@@ -116,6 +116,11 @@ public partial class QQDatabaseService
 
         if (qqDatabase.Equals(ProfileInfoDatabase))
         {
+            // 资料库要关闭了, 旧版消息表不再按 nt_uid 换算 QQ 号
+            if (MessageDatabase is not null)
+                MessageDatabase.UinResolver = null;
+            if (AndroidMessageDatabase is not null)
+                AndroidMessageDatabase.UinResolver = null;
             _qqNtDatabases = _qqNtDatabases.WithoutProfileInfoDatabase();
             ClearQQNTConfigItem(LoadedDatabaseItemKind.ProfileInfoDb);
             return true;

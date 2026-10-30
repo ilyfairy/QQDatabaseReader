@@ -3,6 +3,7 @@ using System.IO;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -171,7 +172,7 @@ internal sealed class QqNtMessageMediaResolver
         {
             return new ResolvedSegmentMediaPath(
                 localPath,
-                string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath));
+                string.IsNullOrWhiteSpace(localPath) || !ArchiveFile.Exists(localPath));
         }
     }
 }

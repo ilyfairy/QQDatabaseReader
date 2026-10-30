@@ -8,12 +8,15 @@ namespace QQDatabaseExplorer.ViewModels;
 
 internal sealed class ConversationMessageSearchResultStore
 {
+    internal const int MaxRetainedResults = 8192;
+
     private readonly ObservableList<AvaGroupMessageSearchGroup> _groups;
     private List<AvaGroupMessageSearchResult> _allResults = [];
     private readonly List<AvaGroupMessageSearchResult> _discoveryResults = [];
     private readonly Dictionary<string, AvaGroupMessageSearchGroup> _groupMap = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SearchCursor?> _groupNextCursors = new(StringComparer.Ordinal);
     private readonly HashSet<string> _groupsWithMoreResults = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _groupsAtResultLimit = new(StringComparer.Ordinal);
 
     public ConversationMessageSearchResultStore(ObservableList<AvaGroupMessageSearchGroup> groups)
     {
@@ -32,6 +35,8 @@ internal sealed class ConversationMessageSearchResultStore
 
     public bool IsDiscoveryComplete { get; private set; }
 
+    public bool IsDiscoveryResultLimitReached { get; private set; }
+
     public bool HasConversationCursor(AvaGroupMessageSearchGroup group)
     {
         return _groupNextCursors.ContainsKey(GetGroupKey(group));
@@ -40,6 +45,11 @@ internal sealed class ConversationMessageSearchResultStore
     public bool HasMoreConversationResults(AvaGroupMessageSearchGroup group)
     {
         return _groupsWithMoreResults.Contains(GetGroupKey(group));
+    }
+
+    public bool HasReachedConversationResultLimit(AvaGroupMessageSearchGroup group)
+    {
+        return _groupsAtResultLimit.Contains(GetGroupKey(group));
     }
 
     public bool TryGetConversationCursor(AvaGroupMessageSearchGroup group, out string groupKey, out SearchCursor? cursor)
@@ -56,17 +66,18 @@ internal sealed class ConversationMessageSearchResultStore
         AvaGroupMessageSearchGroup? selectedGroup,
         bool sortGroups)
     {
-        if (page.Results.Count == 0)
-        {
-            HasMoreDiscoveryResults = false;
+        var remainingCapacity = Math.Max(0, MaxRetainedResults - _discoveryResults.Count);
+        var acceptedResults = page.Results.Take(remainingCapacity).ToArray();
+        IsDiscoveryResultLimitReached = acceptedResults.Length < page.Results.Count ||
+            page.HasMore && acceptedResults.Length == remainingCapacity;
+        NextDiscoveryCursor = IsDiscoveryResultLimitReached ? null : page.NextCursor;
+        HasMoreDiscoveryResults = page.HasMore && !IsDiscoveryResultLimitReached;
+        if (acceptedResults.Length == 0)
             return selectedGroup;
-        }
 
-        _discoveryResults.AddRange(page.Results);
-        NextDiscoveryCursor = page.NextCursor;
-        HasMoreDiscoveryResults = page.HasMore;
+        _discoveryResults.AddRange(acceptedResults);
 
-        foreach (var result in page.Results)
+        foreach (var result in acceptedResults)
         {
             var key = GetGroupKey(result);
             if (_groupMap.TryGetValue(key, out var group))
@@ -117,17 +128,28 @@ internal sealed class ConversationMessageSearchResultStore
 
     public void AppendGroupPage(string groupKey, SearchPage page)
     {
-        _groupNextCursors[groupKey] = page.NextCursor;
+        var remainingCapacity = Math.Max(0, MaxRetainedResults - _allResults.Count);
+        var acceptedResults = page.Results.Take(remainingCapacity).ToArray();
+        var reachedCapacity = acceptedResults.Length < page.Results.Count ||
+            page.HasMore && acceptedResults.Length == remainingCapacity;
+        _groupNextCursors[groupKey] = reachedCapacity ? null : page.NextCursor;
+        if (reachedCapacity)
+            _groupsAtResultLimit.Add(groupKey);
+        else
+            _groupsAtResultLimit.Remove(groupKey);
 
-        if (page.Results.Count == 0)
+        if (acceptedResults.Length == 0)
         {
-            _groupsWithMoreResults.Remove(groupKey);
+            if (page.HasMore && !reachedCapacity)
+                _groupsWithMoreResults.Add(groupKey);
+            else
+                _groupsWithMoreResults.Remove(groupKey);
             return;
         }
 
-        _allResults.AddRange(page.Results);
+        _allResults.AddRange(acceptedResults);
 
-        if (page.HasMore)
+        if (page.HasMore && !reachedCapacity)
             _groupsWithMoreResults.Add(groupKey);
         else
             _groupsWithMoreResults.Remove(groupKey);
@@ -162,10 +184,12 @@ internal sealed class ConversationMessageSearchResultStore
         _groupMap.Clear();
         _groupNextCursors.Clear();
         _groupsWithMoreResults.Clear();
+        _groupsAtResultLimit.Clear();
         _groups.Clear();
         NextDiscoveryCursor = null;
         HasMoreDiscoveryResults = false;
         IsDiscoveryComplete = false;
+        IsDiscoveryResultLimitReached = false;
     }
 
     public static string GetGroupKey(AvaGroupMessageSearchResult result)

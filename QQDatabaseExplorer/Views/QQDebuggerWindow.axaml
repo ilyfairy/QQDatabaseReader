@@ -7,7 +7,7 @@
         Width="400"
         Height="300"
         x:Class="QQDatabaseExplorer.QQDebuggerWindow"
-        Title="QQDebuggerWindow"
+        Title="获取 QQNT 密钥"
         x:DataType="vm:QQDebuggerWindowViewModel"
         WindowStartupLocation="CenterOwner">
 
@@ -22,10 +22,12 @@
                     <TextBlock Text="数据库Key: " VerticalAlignment="Center" />
                     <TextBox Text="{Binding Key}" IsReadOnly="True" />
                 </DockPanel>
+                <CheckBox Content="获取到密钥后自动关闭这个 QQ" IsChecked="{Binding KillQQAfterKeyFound}"
+                          ToolTip.Tip="只结束这次被调试启动的 QQ (含它的子进程), 获取失败时不关闭" />
             </StackPanel>
             <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12"
                         HorizontalAlignment="Right" VerticalAlignment="Bottom">
-                <Button Content="开始调试" Command="{Binding StartDebugCommand}" />
+                <Button Content="开始获取" Command="{Binding StartDebugCommand}" />
                 <Button Content="关闭" Command="{Binding CloseCommand}" />
             </StackPanel>
         </Grid>

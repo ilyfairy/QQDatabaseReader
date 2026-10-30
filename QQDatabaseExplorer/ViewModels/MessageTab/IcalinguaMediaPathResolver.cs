@@ -11,12 +11,24 @@ namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
 internal static class IcalinguaMediaPathResolver
 {
+    private static readonly string[] MediaDirectoryNames =
+    [
+        "downloads",
+        "download",
+        "images",
+        "image",
+        "files",
+        "records",
+        "stickers",
+    ];
+
     public static string? ResolveLocalFilePath(
         IcalinguaMessageFile file,
         AvaQQGroup? conversation,
         IcalinguaMessageDatabaseSet? databases)
     {
-        foreach (var candidate in CreateLocalFileCandidates(file, conversation, databases))
+        var roots = CreateMediaSearchRoots(conversation, databases).ToArray();
+        foreach (var candidate in CreateLocalFileCandidates(file, roots))
         {
             if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
                 return candidate;
@@ -31,30 +43,53 @@ internal static class IcalinguaMediaPathResolver
         AvaQQGroup? conversation,
         IcalinguaMessageDatabaseSet? databases)
     {
-        if (!string.IsNullOrWhiteSpace(videoPath))
-        {
-            var directory = Path.GetDirectoryName(videoPath);
-            var nameWithoutExtension = Path.GetFileNameWithoutExtension(videoPath);
-            if (!string.IsNullOrWhiteSpace(directory) && !string.IsNullOrWhiteSpace(nameWithoutExtension))
-            {
-                foreach (var extension in new[] { ".jpg", ".jpeg", ".png", ".webp" })
-                {
-                    var candidate = Path.Combine(directory, nameWithoutExtension + extension);
-                    if (LocalImageFile.IsDisplayableImageFile(candidate))
-                        return candidate;
-                }
-            }
-        }
+        var roots = CreateMediaSearchRoots(conversation, databases).ToArray();
+        var coverPath = ResolveVideoCoverPathWithinRoots(videoPath, roots);
+        if (coverPath is not null)
+            return coverPath;
 
         return IsImageType(file.Type)
             ? ResolveLocalFilePath(file, conversation, databases)
             : null;
     }
 
+    private static string? ResolveVideoCoverPathWithinRoots(
+        string? videoPath,
+        IReadOnlyList<string> roots)
+    {
+        if (string.IsNullOrWhiteSpace(videoPath))
+            return null;
+
+        foreach (var root in roots)
+        {
+            if (!TrustedMediaPath.TryResolveExistingFileWithinRoot(root, videoPath, out var resolvedVideoPath))
+                continue;
+
+            var directory = Path.GetDirectoryName(resolvedVideoPath);
+            var nameWithoutExtension = Path.GetFileNameWithoutExtension(resolvedVideoPath);
+            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(nameWithoutExtension))
+                continue;
+
+            foreach (var extension in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+            {
+                var candidate = Path.Combine(directory, nameWithoutExtension + extension);
+                if (TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                        root,
+                        candidate,
+                        out var resolvedCoverPath) &&
+                    LocalImageFile.IsDisplayableImageFile(resolvedCoverPath))
+                {
+                    return resolvedCoverPath;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static IEnumerable<string> CreateLocalFileCandidates(
         IcalinguaMessageFile file,
-        AvaQQGroup? conversation,
-        IcalinguaMessageDatabaseSet? databases)
+        IReadOnlyList<string> roots)
     {
         foreach (var rawPath in new[] { file.Url, file.Name, file.Fid })
         {
@@ -64,21 +99,31 @@ internal static class IcalinguaMediaPathResolver
             var normalized = rawPath.Trim();
             if (Uri.TryCreate(normalized, UriKind.Absolute, out var uri) && uri.IsFile)
             {
-                yield return uri.LocalPath;
+                foreach (var root in roots)
+                {
+                    if (TrustedMediaPath.TryResolveWithinRoot(root, uri.LocalPath, out var localPath))
+                        yield return localPath;
+                }
                 continue;
             }
 
             if (Path.IsPathFullyQualified(normalized))
-                yield return normalized;
+            {
+                foreach (var root in roots)
+                {
+                    if (TrustedMediaPath.TryResolveWithinRoot(root, normalized, out var localPath))
+                        yield return localPath;
+                }
+            }
         }
 
         var fileNames = CreateFileNameCandidates(file).ToArray();
-        var roots = CreateMediaSearchRoots(conversation, databases).ToArray();
         foreach (var root in roots)
         {
             foreach (var fileName in fileNames)
             {
-                yield return Path.Combine(root, fileName);
+                if (TrustedMediaPath.TryResolveWithinRoot(root, fileName, out var localPath))
+                    yield return localPath;
             }
         }
     }
@@ -115,6 +160,34 @@ internal static class IcalinguaMediaPathResolver
         AvaQQGroup? conversation,
         IcalinguaMessageDatabaseSet? databases)
     {
+        var basePaths = new List<string>();
+        void AddBasePath(string? path)
+        {
+            if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                basePaths.Add(Path.GetFullPath(path));
+        }
+
+        if (databases is not null)
+        {
+            foreach (var dataPath in databases.DataPaths)
+                AddBasePath(dataPath);
+            foreach (var entry in databases.Databases)
+            {
+                var databaseDirectory = Path.GetDirectoryName(entry.Reader.DatabaseFilePath);
+                if (IsIcalinguaDatabaseDirectory(databaseDirectory))
+                    AddBasePath(Path.GetDirectoryName(Path.GetFullPath(databaseDirectory!)));
+                else
+                    AddBasePath(databaseDirectory);
+            }
+        }
+
+        return CreateTrustedMediaRoots(basePaths, conversation?.IcalinguaDownloadPath);
+    }
+
+    private static IReadOnlyList<string> CreateTrustedMediaRoots(
+        IEnumerable<string> basePaths,
+        string? conversationDownloadPath)
+    {
         var roots = new List<string>();
         void AddRoot(string? path)
         {
@@ -122,38 +195,50 @@ internal static class IcalinguaMediaPathResolver
                 roots.Add(Path.GetFullPath(path));
         }
 
-        AddRoot(conversation?.IcalinguaDownloadPath);
-        if (databases is not null)
+        void AddDerivedRoot(string anchor, string path)
         {
-            foreach (var dataPath in databases.DataPaths)
-                AddRoot(dataPath);
-            foreach (var entry in databases.Databases)
+            if (Directory.Exists(path) &&
+                TrustedMediaPath.TryResolveSubdirectoryWithinAnchor(anchor, path, out var resolvedPath))
             {
-                var databaseDirectory = Path.GetDirectoryName(entry.Reader.DatabaseFilePath);
-                AddRoot(databaseDirectory);
-                if (IsIcalinguaDatabaseDirectory(databaseDirectory))
-                    AddRoot(Path.GetDirectoryName(Path.GetFullPath(databaseDirectory!)));
+                roots.Add(resolvedPath);
             }
         }
 
-        foreach (var root in roots.ToArray())
+        foreach (var basePath in basePaths)
         {
-            if (IsIcalinguaDataDirectory(root))
-                AddRoot(Path.GetDirectoryName(Path.GetFullPath(root)));
+            var fullBasePath = Path.GetFullPath(basePath);
+            if (IsMediaDirectory(fullBasePath))
+                AddRoot(fullBasePath);
+
+            foreach (var directoryName in MediaDirectoryNames)
+            {
+                AddDerivedRoot(fullBasePath, Path.Combine(fullBasePath, directoryName));
+                AddDerivedRoot(fullBasePath, Path.Combine(fullBasePath, "data", directoryName));
+            }
         }
 
-        foreach (var root in roots.ToArray())
+        var distinctRoots = roots
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (!string.IsNullOrWhiteSpace(conversationDownloadPath))
         {
-            AddRoot(Path.Combine(root, "downloads"));
-            AddRoot(Path.Combine(root, "download"));
-            AddRoot(Path.Combine(root, "images"));
-            AddRoot(Path.Combine(root, "image"));
-            AddRoot(Path.Combine(root, "files"));
-            AddRoot(Path.Combine(root, "records"));
-            AddRoot(Path.Combine(root, "stickers"));
+            try
+            {
+                var fullDownloadPath = Path.GetFullPath(conversationDownloadPath);
+                if (Directory.Exists(fullDownloadPath) &&
+                    distinctRoots.Any(root =>
+                        string.Equals(fullDownloadPath, root, StringComparison.OrdinalIgnoreCase) ||
+                        TrustedMediaPath.TryResolveWithinRoot(root, fullDownloadPath, out _)))
+                {
+                    distinctRoots.Add(fullDownloadPath);
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+            }
         }
 
-        return roots.Distinct(StringComparer.OrdinalIgnoreCase);
+        return distinctRoots.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static bool IsIcalinguaDatabaseDirectory(string? path)
@@ -162,10 +247,10 @@ internal static class IcalinguaMediaPathResolver
                string.Equals(Path.GetFileName(Path.GetFullPath(path)), "databases", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsIcalinguaDataDirectory(string? path)
+    private static bool IsMediaDirectory(string path)
     {
-        return !string.IsNullOrWhiteSpace(path) &&
-               string.Equals(Path.GetFileName(Path.GetFullPath(path)), "data", StringComparison.OrdinalIgnoreCase);
+        var directoryName = Path.GetFileName(Path.TrimEndingDirectorySeparator(path));
+        return MediaDirectoryNames.Contains(directoryName, StringComparer.OrdinalIgnoreCase);
     }
 
     private static bool IsImageType(string? type)

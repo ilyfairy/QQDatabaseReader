@@ -18,7 +18,6 @@ namespace QQDatabaseReader.Sqlite;
 public static unsafe class PCQQPageDecryptVfs
 {
     public const string VfsName = "pcqq-vfs";
-    public static ReadOnlySpan<byte> VfsNameUtf8 => "pcqq-vfs"u8;
 
     public const int HeaderSize = 1024;
     public const int PageSize = 8192;
@@ -28,11 +27,11 @@ public static unsafe class PCQQPageDecryptVfs
     private const int SQLITE_IOERR = 10;
     private const int SQLITE_IOERR_SHORT_READ = SQLITE_IOERR | (2 << 8);
 
-    private static bool _registered;
-    private static uint _k0;
-    private static uint _k1;
-    private static uint _k2;
-    private static uint _k3;
+    private static readonly object RegistrationGate = new();
+    private static readonly Dictionary<string, VfsRegistration> ActiveRegistrationsByKey = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, VfsRegistration> RegistrationsByName = new(StringComparer.Ordinal);
+    private static readonly Dictionary<nint, VfsRegistration> RegistrationsByState = new();
+    private static int _registrationId;
 
     private static readonly sqlite3_io_methods _ioMethods = new()
     {
@@ -58,87 +57,249 @@ public static unsafe class PCQQPageDecryptVfs
     private static sqlite3_io_methods* IoMethodsPtr =>
         (sqlite3_io_methods*)Unsafe.AsPointer(ref Unsafe.AsRef(in _ioMethods));
 
-    private static sqlite3_vfs _vfs = new()
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PCQQSqlite3File
     {
-        iVersion = 1,
-        szOsFile = sizeof(sqlite3_file),
-        mxPathname = 260,
-        zName = (byte*)Unsafe.AsPointer(in VfsNameUtf8.GetPinnableReference()),
-        pAppData = null,
-        xOpen = &xOpen,
-        xDelete = &xDelete,
-        xAccess = &xAccess,
-        xFullPathname = &xFullPathname,
-        xDlOpen = &xDlOpen,
-        xDlError = &xDlError,
-        xDlSym = &xDlSym,
-        xDlClose = &xDlClose,
-        xRandomness = &xRandomness,
-        xSleep = &xSleep,
-        xCurrentTime = &xCurrentTime,
-        xGetLastError = &xGetLastError,
-    };
+        public sqlite3_file Base;
+        public uint K0;
+        public uint K1;
+        public uint K2;
+        public uint K3;
+        public VfsRegistrationState* RegistrationState;
+    }
 
-    public static void Register(string key) => Register(PcqqDatabaseDecryptor.ParseKey(key));
+    [StructLayout(LayoutKind.Sequential)]
+    private struct VfsRegistrationState
+    {
+        public sqlite3_vfs* OriginalVfs;
+        public uint K0;
+        public uint K1;
+        public uint K2;
+        public uint K3;
+    }
 
-    public static void Register(ReadOnlySpan<byte> key)
+    private sealed class VfsRegistration(string keyId, string name, nint vfs, nint state, nint nameUtf8)
+    {
+        public string KeyId { get; } = keyId;
+        public string Name { get; } = name;
+        public nint Vfs { get; } = vfs;
+        public nint State { get; } = state;
+        public nint NameUtf8 { get; } = nameUtf8;
+        public int ClientReferenceCount { get; set; } = 1;
+        public int OpenFileCount { get; set; }
+        public bool IsUnregistered { get; set; }
+    }
+
+    public static string Register(string key) => Register(PcqqDatabaseDecryptor.ParseKey(key));
+
+    public static string Register(ReadOnlySpan<byte> key)
     {
         if (key.Length != 16)
             throw new ArgumentException("PCQQ VFS key must be exactly 16 bytes.", nameof(key));
 
-        _k0 = BinaryPrimitives.ReadUInt32LittleEndian(key[0..4]);
-        _k1 = BinaryPrimitives.ReadUInt32LittleEndian(key[4..8]);
-        _k2 = BinaryPrimitives.ReadUInt32LittleEndian(key[8..12]);
-        _k3 = BinaryPrimitives.ReadUInt32LittleEndian(key[12..16]);
+        var keyId = Convert.ToHexString(key);
+        lock (RegistrationGate)
+        {
+            if (ActiveRegistrationsByKey.TryGetValue(keyId, out var existing))
+            {
+                existing.ClientReferenceCount++;
+                return existing.Name;
+            }
 
-        if (_registered)
+            nint defaultVfsPtr = raw.sqlite3_vfs_find(null);
+            if (defaultVfsPtr == IntPtr.Zero)
+                throw new InvalidOperationException("Failed to find default VFS.");
+
+            var name = VfsName + "-" + (++_registrationId).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var nameUtf8 = Marshal.StringToCoTaskMemUTF8(name);
+            var state = (VfsRegistrationState*)NativeMemory.AllocZeroed((nuint)sizeof(VfsRegistrationState));
+            var vfs = (sqlite3_vfs*)NativeMemory.AllocZeroed((nuint)sizeof(sqlite3_vfs));
+            var registered = false;
+            try
+            {
+                var originalVfs = (sqlite3_vfs*)defaultVfsPtr;
+                state->OriginalVfs = originalVfs;
+                state->K0 = BinaryPrimitives.ReadUInt32LittleEndian(key[0..4]);
+                state->K1 = BinaryPrimitives.ReadUInt32LittleEndian(key[4..8]);
+                state->K2 = BinaryPrimitives.ReadUInt32LittleEndian(key[8..12]);
+                state->K3 = BinaryPrimitives.ReadUInt32LittleEndian(key[12..16]);
+
+                *vfs = new sqlite3_vfs
+                {
+                    iVersion = 1,
+                    szOsFile = sizeof(PCQQSqlite3File) + originalVfs->szOsFile,
+                    mxPathname = originalVfs->mxPathname,
+                    zName = (byte*)nameUtf8,
+                    pAppData = state,
+                    xOpen = &xOpen,
+                    xDelete = &xDelete,
+                    xAccess = &xAccess,
+                    xFullPathname = &xFullPathname,
+                    xDlOpen = &xDlOpen,
+                    xDlError = &xDlError,
+                    xDlSym = &xDlSym,
+                    xDlClose = &xDlClose,
+                    xRandomness = &xRandomness,
+                    xSleep = &xSleep,
+                    xCurrentTime = &xCurrentTime,
+                    xGetLastError = &xGetLastError,
+                };
+
+                int rc = raw.sqlite3_vfs_register((nint)vfs, 0);
+                if (rc != raw.SQLITE_OK)
+                    throw new InvalidOperationException($"Failed to register {name}: sqlite rc={rc}.");
+                registered = true;
+
+                var registration = new VfsRegistration(keyId, name, (nint)vfs, (nint)state, nameUtf8);
+                ActiveRegistrationsByKey.Add(keyId, registration);
+                RegistrationsByName.Add(name, registration);
+                RegistrationsByState.Add((nint)state, registration);
+                return name;
+            }
+            catch
+            {
+                ActiveRegistrationsByKey.Remove(keyId);
+                RegistrationsByName.Remove(name);
+                RegistrationsByState.Remove((nint)state);
+                if (registered)
+                    raw.sqlite3_vfs_unregister((nint)vfs);
+                NativeMemory.Free(vfs);
+                NativeMemory.Free(state);
+                Marshal.FreeCoTaskMem(nameUtf8);
+                throw;
+            }
+        }
+    }
+
+    public static void Release(string? vfsName)
+    {
+        if (string.IsNullOrWhiteSpace(vfsName))
             return;
 
-        nint defaultVfsPtr = raw.sqlite3_vfs_find(null);
-        if (defaultVfsPtr == IntPtr.Zero)
-            throw new InvalidOperationException("Failed to find default VFS.");
+        lock (RegistrationGate)
+        {
+            if (!RegistrationsByName.TryGetValue(vfsName, out var registration) ||
+                registration.ClientReferenceCount <= 0)
+                return;
 
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)defaultVfsPtr;
-        _vfs.pAppData = (void*)defaultVfsPtr;
-        _vfs.szOsFile = sizeof(sqlite3_file) + origVfs->szOsFile;
+            registration.ClientReferenceCount--;
+            if (registration.ClientReferenceCount > 0)
+                return;
 
-        int rc = raw.sqlite3_vfs_register((nint)Unsafe.AsPointer(ref _vfs), 0);
-        if (rc != raw.SQLITE_OK)
-            throw new InvalidOperationException($"Failed to register {VfsName}: sqlite rc={rc}.");
+            var rc = raw.sqlite3_vfs_unregister(registration.Vfs);
+            if (rc != raw.SQLITE_OK)
+                return;
 
-        _registered = true;
+            registration.IsUnregistered = true;
+            if (ActiveRegistrationsByKey.TryGetValue(registration.KeyId, out var active) &&
+                ReferenceEquals(active, registration))
+            {
+                ActiveRegistrationsByKey.Remove(registration.KeyId);
+            }
+
+            TryFreeRegistration(registration);
+        }
+    }
+
+    private static bool TryAddOpenFileReference(VfsRegistrationState* state)
+    {
+        lock (RegistrationGate)
+        {
+            if (!RegistrationsByState.TryGetValue((nint)state, out var registration))
+                return false;
+
+            registration.OpenFileCount++;
+            return true;
+        }
+    }
+
+    private static void ReleaseOpenFileReference(VfsRegistrationState* state)
+    {
+        lock (RegistrationGate)
+        {
+            if (!RegistrationsByState.TryGetValue((nint)state, out var registration))
+                return;
+
+            if (registration.OpenFileCount > 0)
+                registration.OpenFileCount--;
+            TryFreeRegistration(registration);
+        }
+    }
+
+    private static void TryFreeRegistration(VfsRegistration registration)
+    {
+        if (!registration.IsUnregistered ||
+            registration.ClientReferenceCount != 0 ||
+            registration.OpenFileCount != 0)
+        {
+            return;
+        }
+
+        RegistrationsByName.Remove(registration.Name);
+        RegistrationsByState.Remove(registration.State);
+        if (ActiveRegistrationsByKey.TryGetValue(registration.KeyId, out var active) &&
+            ReferenceEquals(active, registration))
+        {
+            ActiveRegistrationsByKey.Remove(registration.KeyId);
+        }
+        NativeMemory.Free((void*)registration.Vfs);
+        NativeMemory.Free((void*)registration.State);
+        Marshal.FreeCoTaskMem(registration.NameUtf8);
     }
 
     private static sqlite3_file* GetOrigFile(sqlite3_file* pFile)
     {
-        byte* basePtr = (byte*)pFile;
-        return (sqlite3_file*)(basePtr + sizeof(sqlite3_file));
+        return (sqlite3_file*)((byte*)pFile + sizeof(PCQQSqlite3File));
+    }
+
+    private static PCQQSqlite3File* GetPCQQFile(sqlite3_file* pFile)
+    {
+        return (PCQQSqlite3File*)pFile;
     }
 
     [UnmanagedCallersOnly]
     private static int xOpen(sqlite3_vfs* pVfs, SqliteUtf8String zName, sqlite3_file* pFile, int flags, int* pOutFlags)
     {
+        var state = (VfsRegistrationState*)pVfs->pAppData;
+        var openFileReferenceAdded = false;
         try
         {
-            sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+            sqlite3_vfs* origVfs = state->OriginalVfs;
             bool isMainDb = (flags & raw.SQLITE_OPEN_MAIN_DB) != 0;
             bool isTempDb = (flags & (0x00000008 | 0x00000010)) != 0;
 
             if (!isMainDb || isTempDb)
                 return origVfs->xOpen(origVfs, zName, pFile, flags, pOutFlags);
 
+            if (!TryAddOpenFileReference(state))
+                return SQLITE_IOERR;
+            openFileReferenceAdded = true;
+
             sqlite3_file* origFile = GetOrigFile(pFile);
             new Span<byte>(origFile, origVfs->szOsFile).Clear();
 
             int rc = origVfs->xOpen(origVfs, zName, origFile, flags, pOutFlags);
             if (rc != raw.SQLITE_OK)
+            {
+                ReleaseOpenFileReference(state);
+                openFileReferenceAdded = false;
                 return rc;
+            }
 
+            var pcqqFile = GetPCQQFile(pFile);
+            pcqqFile->K0 = state->K0;
+            pcqqFile->K1 = state->K1;
+            pcqqFile->K2 = state->K2;
+            pcqqFile->K3 = state->K3;
+            pcqqFile->RegistrationState = state;
             pFile->pMethods = IoMethodsPtr;
+            openFileReferenceAdded = false;
             return raw.SQLITE_OK;
         }
         catch
         {
+            if (openFileReferenceAdded)
+                ReleaseOpenFileReference(state);
             return SQLITE_IOERR;
         }
     }
@@ -146,8 +307,16 @@ public static unsafe class PCQQPageDecryptVfs
     [UnmanagedCallersOnly]
     private static int xClose(sqlite3_file* pFile)
     {
+        var state = GetPCQQFile(pFile)->RegistrationState;
         sqlite3_file* origFile = GetOrigFile(pFile);
-        return origFile->pMethods->xClose(origFile);
+        try
+        {
+            return origFile->pMethods->xClose(origFile);
+        }
+        finally
+        {
+            ReleaseOpenFileReference(state);
+        }
     }
 
     [UnmanagedCallersOnly]
@@ -194,7 +363,14 @@ public static unsafe class PCQQPageDecryptVfs
                     if (rc != raw.SQLITE_OK)
                         return rc;
 
-                    DecryptPageInPlace(encryptedPage.AsSpan(0, PageSize), words.AsSpan(0, PageSize / 4));
+                    var pcqqFile = GetPCQQFile(pFile);
+                    DecryptPageInPlace(
+                        encryptedPage.AsSpan(0, PageSize),
+                        words.AsSpan(0, PageSize / 4),
+                        pcqqFile->K0,
+                        pcqqFile->K1,
+                        pcqqFile->K2,
+                        pcqqFile->K3);
                     encryptedPage.AsSpan(pageOffset, take).CopyTo(output[copied..]);
                     copied += take;
                 }
@@ -314,86 +490,92 @@ public static unsafe class PCQQPageDecryptVfs
     [UnmanagedCallersOnly]
     private static int xDelete(sqlite3_vfs* pVfs, SqliteUtf8String zName, int syncDir)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xDelete(origVfs, zName, syncDir);
     }
 
     [UnmanagedCallersOnly]
     private static int xAccess(sqlite3_vfs* pVfs, SqliteUtf8String zName, int flags, int* pResOut)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xAccess(origVfs, zName, flags, pResOut);
     }
 
     [UnmanagedCallersOnly]
     private static int xFullPathname(sqlite3_vfs* pVfs, SqliteUtf8String zName, int nOut, byte* zOut)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xFullPathname(origVfs, zName, nOut, zOut);
     }
 
     [UnmanagedCallersOnly]
     private static void* xDlOpen(sqlite3_vfs* pVfs, SqliteUtf8String zFilename)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xDlOpen(origVfs, zFilename);
     }
 
     [UnmanagedCallersOnly]
     private static void xDlError(sqlite3_vfs* pVfs, int nByte, SqliteUtf8String zErrMsg)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         origVfs->xDlError(origVfs, nByte, zErrMsg);
     }
 
     [UnmanagedCallersOnly]
     private static delegate* unmanaged<void> xDlSym(sqlite3_vfs* pVfs, void* pHandle, SqliteUtf8String zSymbol)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xDlSym(origVfs, pHandle, zSymbol);
     }
 
     [UnmanagedCallersOnly]
     private static void xDlClose(sqlite3_vfs* pVfs, void* pHandle)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         origVfs->xDlClose(origVfs, pHandle);
     }
 
     [UnmanagedCallersOnly]
     private static int xRandomness(sqlite3_vfs* pVfs, int nByte, char* zOut)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xRandomness(origVfs, nByte, zOut);
     }
 
     [UnmanagedCallersOnly]
     private static int xSleep(sqlite3_vfs* pVfs, int microseconds)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xSleep(origVfs, microseconds);
     }
 
     [UnmanagedCallersOnly]
     private static int xCurrentTime(sqlite3_vfs* pVfs, double* pTime)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xCurrentTime(origVfs, pTime);
     }
 
     [UnmanagedCallersOnly]
     private static int xGetLastError(sqlite3_vfs* pVfs, int nByte, char* zErrMsg)
     {
-        sqlite3_vfs* origVfs = (sqlite3_vfs*)pVfs->pAppData;
+        sqlite3_vfs* origVfs = ((VfsRegistrationState*)pVfs->pAppData)->OriginalVfs;
         return origVfs->xGetLastError(origVfs, nByte, zErrMsg);
     }
 
-    private static void DecryptPageInPlace(Span<byte> page, Span<uint> words)
+    private static void DecryptPageInPlace(
+        Span<byte> page,
+        Span<uint> words,
+        uint k0,
+        uint k1,
+        uint k2,
+        uint k3)
     {
         for (int i = 0; i < PageSize / 4; i++)
             words[i] = BinaryPrimitives.ReadUInt32LittleEndian(page[(i * 4)..]);
 
-        Span<uint> key = stackalloc uint[4] { _k0, _k1, _k2, _k3 };
+        Span<uint> key = stackalloc uint[4] { k0, k1, k2, k3 };
         Btea(words[..(PageSize / 4)], key, -(PageSize / 4));
 
         for (int i = 0; i < PageSize / 4; i++)

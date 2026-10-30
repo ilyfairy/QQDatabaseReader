@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Labs.Gif;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Controls;
 
@@ -184,7 +185,7 @@ public class LocalMessageImage : ContentControl
 
     public static bool CanDisplayImage(string? sourcePath)
     {
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        if (string.IsNullOrWhiteSpace(sourcePath) || !ArchiveFile.Exists(sourcePath))
             return false;
 
         return ImageDisplayabilityCache
@@ -224,7 +225,7 @@ public class LocalMessageImage : ContentControl
     private static Stream CreateImageStream(string sourcePath)
     {
         if (!LocalImageFile.IsMarketFaceEncodedGifImage(sourcePath))
-            return File.OpenRead(sourcePath);
+            return ArchiveFile.OpenRead(sourcePath);
 
         return new MemoryStream(GetOrReadImageBytes(sourcePath), writable: false);
     }

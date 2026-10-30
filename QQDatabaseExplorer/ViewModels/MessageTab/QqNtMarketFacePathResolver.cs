@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using QQDatabaseExplorer.Controls;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
@@ -11,36 +12,44 @@ internal static class QqNtMarketFacePathResolver
 {
     public static string? ResolvePath(string? ntDataPath, QQMessageSegment segment)
     {
-        if (string.IsNullOrWhiteSpace(ntDataPath) ||
+        if (!TryResolveNtDataRoot(ntDataPath, out var ntDataRoot) ||
             segment.MarketFacePackageId is not { } packageId)
         {
             return null;
         }
 
-        var packageDirectory = Path.Combine(ntDataPath, "Emoji", "marketface", packageId.ToString());
-        if (!Directory.Exists(packageDirectory))
+        var packageDirectory = Path.Combine(ntDataRoot, "Emoji", "marketface", packageId.ToString());
+        if (!TrustedMediaPath.TryResolveExistingDirectoryWithinRoot(
+                ntDataRoot,
+                packageDirectory,
+                out var resolvedPackageDirectory))
+        {
             return null;
+        }
 
         var imageId = segment.MarketFaceImageId;
         var result = string.IsNullOrWhiteSpace(imageId)
             ? null
-            : ResolveImagePath(packageDirectory, imageId);
+            : ResolveImagePath(ntDataRoot, resolvedPackageDirectory, imageId);
         if (result is not null)
             return result;
 
-        imageId = ResolveImageIdFromMetadata(ntDataPath, packageId, segment.MarketFaceName);
+        imageId = ResolveImageIdFromMetadata(ntDataRoot, packageId, segment.MarketFaceName);
         return string.IsNullOrWhiteSpace(imageId)
             ? null
-            : ResolveImagePath(packageDirectory, imageId);
+            : ResolveImagePath(ntDataRoot, resolvedPackageDirectory, imageId);
     }
 
-    private static string? ResolveImagePath(string packageDirectory, string imageId)
+    private static string? ResolveImagePath(
+        string trustedRoot,
+        string packageDirectory,
+        string imageId)
     {
         var normalizedImageId = NormalizeImageId(imageId);
         if (string.IsNullOrWhiteSpace(normalizedImageId))
             return null;
 
-        var originalPath = ResolveExistingFile(packageDirectory, normalizedImageId);
+        var originalPath = ResolveExistingFile(trustedRoot, packageDirectory, normalizedImageId);
         if (LocalImageFile.IsDisplayableImageFile(originalPath))
             return originalPath;
 
@@ -59,12 +68,17 @@ internal static class QqNtMarketFacePathResolver
             return null;
 
         var metadataPath = Path.Combine(ntDataPath, "Emoji", "marketface", "json", $"{packageId}.jtmp");
-        if (!File.Exists(metadataPath))
+        if (!TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                ntDataPath,
+                metadataPath,
+                out var resolvedMetadataPath))
+        {
             return null;
+        }
 
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(metadataPath));
+            using var document = JsonDocument.Parse(File.ReadAllText(resolvedMetadataPath));
             if (!document.RootElement.TryGetProperty("imgs", out var images) ||
                 images.ValueKind != JsonValueKind.Array)
             {
@@ -147,9 +161,28 @@ internal static class QqNtMarketFacePathResolver
         return Path.GetFileNameWithoutExtension(imageId.Trim()).ToLowerInvariant();
     }
 
-    private static string? ResolveExistingFile(string directory, string fileName)
+    private static string? ResolveExistingFile(string trustedRoot, string directory, string fileName)
     {
         var path = Path.Combine(directory, fileName);
-        return File.Exists(path) ? path : null;
+        return TrustedMediaPath.TryResolveExistingFileWithinRoot(trustedRoot, path, out var resolvedPath)
+            ? resolvedPath
+            : null;
+    }
+
+    private static bool TryResolveNtDataRoot(string? ntDataPath, out string ntDataRoot)
+    {
+        ntDataRoot = string.Empty;
+        if (string.IsNullOrWhiteSpace(ntDataPath))
+            return false;
+
+        try
+        {
+            ntDataRoot = Path.GetFullPath(ntDataPath);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
     }
 }

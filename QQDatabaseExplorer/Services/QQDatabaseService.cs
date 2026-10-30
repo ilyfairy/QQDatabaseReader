@@ -9,6 +9,8 @@ namespace QQDatabaseExplorer.Services;
 
 public partial class QQDatabaseService
 {
+    internal QQNtDatabaseQueryGate QQNtDatabaseQueryGate { get; } = new();
+
     public event Action<IQQDatabase>? DatabaseAdded;
     public event Func<IQQDatabase, Task>? DatabaseAddedAsync;
     public event Action<IQQDatabase>? DatabaseRemoved;
@@ -90,6 +92,12 @@ public partial class QQDatabaseService
     private void NotifyDatabaseRemoved(IQQDatabase database)
     {
         DatabaseRemoved?.Invoke(database);
+        if (database is QQGroupInfoReader or QQMessageReader or QQAndroidMessageReader or QQProfileInfoReader or QQGroupMessageFtsReader)
+        {
+            QQNtDatabaseQueryGate.Run(database.Dispose);
+            return;
+        }
+
         database.Dispose();
     }
 

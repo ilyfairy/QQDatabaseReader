@@ -7,48 +7,71 @@ namespace QQDatabaseKeyDump;
 
 public class QQDebugger
 {
-    public static string? NewProcess(string qqntFilePath)
+    /// <param name="killAfterKeyFound">拿到密钥后结束这个 QQ (连同它启动的子进程), 没拿到时不结束</param>
+    public static string? NewProcess(string qqntFilePath, bool killAfterKeyFound = false)
     {
-        using var proc = Process.Start(qqntFilePath);
+        using var proc = Process.Start(new ProcessStartInfo
+        {
+            FileName = qqntFilePath,
+            UseShellExecute = false,
+        }) ?? throw new InvalidOperationException("Failed to start QQ.");
         proc.WaitForInputIdle();
 
-        int pid = proc.Id;
+        string? key;
+        using (var debugger = new NativeDebugger(proc.Id))
+        {
+            key = From(debugger);
+        }
 
-        var debugger = new NativeDebugger(pid);
+        if (key is not null && killAfterKeyFound)
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch (Exception) when (proc.HasExited)
+            {
+                // Already closed by the user
+            }
+        }
 
-        return From(debugger);
+        return key;
     }
 
     public static string? From(NativeDebugger debugger)
     {
-        debugger.Attach();
-        if (!TryFindCodeOffset(debugger, out var codeAddress, out var codeOffset))
+        try
         {
-            return null;
-        }
+            debugger.Attach();
+            if (!TryFindCodeOffset(debugger, out var codeAddress, out _))
+                return null;
 
-        string? key = null;
+            string? key = null;
 
-        // 设置软件断点
-        debugger.SetSoftwareBreakpoint((ulong)codeAddress, ctx =>
-        {
-            Span<byte> main = stackalloc byte[4];
-            debugger.ReadBytes(ctx.Rdx, 4, ref main[0]);
-            if (main.SequenceEqual("main"u8))
+            debugger.SetSoftwareBreakpoint((ulong)codeAddress, ctx =>
             {
-                var r8 = debugger.ReadBytes(ctx.R8, 16);
-                var tempKey = Encoding.ASCII.GetString(r8);
-                if (IsBestKey(tempKey))
+                Span<byte> main = stackalloc byte[4];
+                debugger.ReadBytes(ctx.Rdx, 4, ref main[0]);
+                if (main.SequenceEqual("main"u8))
                 {
-                    key = tempKey;
-                    debugger.Detach();
+                    var r8 = debugger.ReadBytes(ctx.R8, 16);
+                    var tempKey = Encoding.ASCII.GetString(r8);
+                    if (IsBestKey(tempKey))
+                    {
+                        key = tempKey;
+                        debugger.RequestStop();
+                    }
                 }
-            }
-        });
+            });
 
-        debugger.Run();
+            debugger.Run();
 
-        return key;
+            return key;
+        }
+        finally
+        {
+            debugger.Detach();
+        }
     }
 
     public static bool IsBestKey(string key)
@@ -92,30 +115,18 @@ public class QQDebugger
             debugger.ReadBytes(textSection.Value.StartAddress, (int)textSection.Value.VirtualSize, ref textMemoryPtr[0]);
             var textSpan = new Span<byte>(textMemoryPtr, (int)textSection.Value.VirtualSize);
 
-            /**
-             * 
-             * 基地址: 0x00007FF9973E1000
-             * 代码(.text):    0x00007FF999450A35  0x206FA35
-             * 字符串(.rdata): 0x00007FF99A955D63  0x3574D63
-             * 
-             * 0x3574D63 - 0x206FA35 = 字符串地址 - 代码地址 - 代码大小 = 0x1505327 在内存中是27 53 50 01
-             * 加上指令前缀 =  48 8D15 27 53 50 01
-             * 
-             * x64dbg: 00007FF999450A35  | 48:8D15 27535001    | lea rdx,qword ptr ds:[7FF99A955D63]
-             * 
-             */
-
-            Span<byte> findValue = stackalloc byte[7] { 0x48, 0x8D, 0x15, 0, 0, 0, 0 }; // 48 8D 15 x x x x
+            // 在 .text 中定位引用密钥格式字符串的 LEA 指令。
+            Span<byte> findValue = stackalloc byte[7] { 0x48, 0x8D, 0x15, 0, 0, 0, 0 };
             Span<byte> pinnedInstructionSpan = findValue[..3];
             Span<byte> offsetAddrSpan = findValue[3..];
             for (int i = 0; i < textSpan.Length - findValue.Length; i++)
             {
                 var currentSpan = textSpan[i..(i + findValue.Length)];
-                if (currentSpan[..3].SequenceEqual(pinnedInstructionSpan)) // 先找指令部分
+                if (currentSpan[..3].SequenceEqual(pinnedInstructionSpan))
                 {
                     int value = (int)(keyStringOffset - i - findValue.Length);
                     Unsafe.As<byte, int>(ref offsetAddrSpan[0]) = value;
-                    if (currentSpan[3..].SequenceEqual(offsetAddrSpan)) // 再找地址部分
+                    if (currentSpan[3..].SequenceEqual(offsetAddrSpan))
                     {
                         codeOffset = (int)(textSection.Value.StartAddress - (ulong)module.Value.hModule + (ulong)i);
                         codeAddress = module.Value.hModule + codeOffset;

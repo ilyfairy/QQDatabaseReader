@@ -41,16 +41,21 @@ internal static class QQNtRecentMessageMatchRepository
         if (keys.Length == 0)
             return new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
 
-        var messageIds = keys
-            .Select(key => key.MessageId)
-            .Distinct()
-            .ToArray();
-        var messages = messageDatabase.DbContext.PrivateMessages
-            .Where(message => messageIds.Contains(message.MessageId))
-            .Where(message => message.MessageType != MessageType.Empty)
-            .AsEnumerable()
-            .Select(MessageRecordFactory.FromQQNtPrivate)
-            .ToDictionary(message => message.MessageId);
+        var messages = new Dictionary<long, MessageRecord>();
+        foreach (var messageIdBatch in keys
+                     .Select(key => key.MessageId)
+                     .Distinct()
+                     .Chunk(500))
+        {
+            foreach (var message in messageDatabase.DbContext.PrivateMessages
+                         .Where(message => messageIdBatch.Contains(message.MessageId))
+                         .Where(message => message.MessageType != MessageType.Empty)
+                         .AsEnumerable()
+                         .Select(MessageRecordFactory.FromQQNtPrivate))
+            {
+                messages[message.MessageId] = message;
+            }
+        }
 
         var result = new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
         foreach (var key in keys)
@@ -106,20 +111,6 @@ internal static class QQNtRecentMessageMatchRepository
                 .FirstOrDefault();
             if (exactMessage is not null)
                 return exactMessage;
-        }
-
-        if (key.MessageRandom != 0)
-        {
-            var randomMessage = query
-                .Where(message => message.MessageRandom == key.MessageRandom)
-                .OrderByDescending(message => message.MessageSeq)
-                .ThenByDescending(message => message.MessageId)
-                .Take(1)
-                .AsEnumerable()
-                .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtGroup(message))
-                .FirstOrDefault();
-            if (randomMessage is not null)
-                return randomMessage;
         }
 
         if (key.MessageSeq == 0)

@@ -89,9 +89,18 @@ internal sealed class MessageTimelineFacade
             .ToList();
     }
 
-    public IReadOnlyList<MessageRecord> LoadAllMessages(AvaQQGroup conversation, int pageSize)
+    public List<MessageRecord> LoadEarliestMessagesForExport(AvaQQGroup conversation, int pageSize)
     {
-        return _query.LoadAllMessages(conversation, pageSize);
+        return _query.LoadEarliestMessagesForExport(conversation, pageSize);
+    }
+
+    public List<MessageRecord> LoadNewerMessagesForExport(
+        AvaQQGroup conversation,
+        long messageSeq,
+        long messageId,
+        int pageSize)
+    {
+        return _query.LoadNewerMessagesForExport(conversation, messageSeq, messageId, pageSize);
     }
 
     private MessageFilterCriteria GetCurrentFilter(AvaQQGroup conversation)

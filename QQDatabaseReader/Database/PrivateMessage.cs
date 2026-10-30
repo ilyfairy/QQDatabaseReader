@@ -118,15 +118,17 @@ public class PrivateMessage
     public byte[]? Unknown2 { get; set; }
 
     /// <summary>
-    /// 对方 QQ 号。
+    /// 对方 QQ 号。旧版 QQNT 没有这一列, 由 40021 (nt_uid) 换算
     /// </summary>
     [Column("40030")]
+    [LegacyColumn(QQNtUinFunction.Name + "([40021])")]
     public uint PeerUin { get; set; }
 
     /// <summary>
-    /// 发送者 QQ 号。
+    /// 发送者 QQ 号。旧版 QQNT 没有这一列, 由 40020 (nt_uid) 换算
     /// </summary>
     [Column("40033")]
+    [LegacyColumn(QQNtUinFunction.Name + "([40020])")]
     public uint SenderId { get; set; }
 
     [Column("40062")]

@@ -28,11 +28,16 @@ internal sealed record SearchCursor(
 
 internal sealed record ConversationSearchFilter(
     uint? GroupOrPeerId,
+    string? PrivatePeerUid,
     IReadOnlyList<long> PrivateConversationIds,
     IReadOnlyList<long> IcalinguaRoomIds)
 {
-    public static ConversationSearchFilter Empty { get; } = new(null, [], []);
+    public static ConversationSearchFilter Empty { get; } = new(null, null, [], []);
 }
+
+internal sealed record PrivateConversationSearchIdentity(
+    string? PeerUid,
+    IReadOnlyList<long> ConversationIds);
 
 internal static class SearchConversationKey
 {
@@ -198,7 +203,7 @@ internal sealed class ConversationSearchFilterParser
         {
             filter = roomId > 0 && roomId <= uint.MaxValue
                 ? CreateUnsignedFilter((uint)roomId)
-                : new ConversationSearchFilter(null, [], [roomId]);
+                : new ConversationSearchFilter(null, null, [], [roomId]);
             return true;
         }
 
@@ -208,9 +213,11 @@ internal sealed class ConversationSearchFilterParser
 
     private ConversationSearchFilter CreateUnsignedFilter(uint uinOrGroupId)
     {
+        var privateIdentity = _metadataLoader.LoadPrivateConversationIdentityByPeerUin(uinOrGroupId);
         return new ConversationSearchFilter(
             uinOrGroupId,
-            _metadataLoader.LoadPrivateConversationIdsByPeerUin(uinOrGroupId),
+            privateIdentity.PeerUid,
+            privateIdentity.ConversationIds,
             CreateIcalinguaRoomFilterCandidates(uinOrGroupId));
     }
 
@@ -234,22 +241,25 @@ internal static class ConversationMessageSearchStatusFormatter
         int conversationCount,
         bool isCountingConversations,
         bool hasMoreResults,
+        bool isResultLimitReached,
         SearchDatabaseKind databaseKind)
     {
         if (discoveryResultCount == 0)
-            return "没有找到匹配的聊天记录";
+            return hasMoreResults
+                ? "当前扫描范围没有匹配记录，可继续加载后续范围"
+                : "没有找到匹配的聊天记录";
 
-        var suffix = hasMoreResults
-            ? isCountingConversations
-                ? "，正在加载更多"
-                : "，继续向下滚动加载更多"
-            : string.Empty;
+        var suffix = isResultLimitReached
+            ? $"，已达到 {ConversationMessageSearchResultStore.MaxRetainedResults} 条显示上限"
+            : hasMoreResults
+                ? "，继续向下滚动加载更多"
+                : string.Empty;
         var totalText = totalMatchCount is { } totalCount
             ? $"共 {totalCount} 条匹配，"
             : string.Empty;
         var targetName = GetSearchTargetName(databaseKind);
         var groupText = isCountingConversations
-            ? $"已找到 {conversationCount} 个{targetName}，正在继续搜索"
+            ? $"已找到 {conversationCount} 个{targetName}"
             : $"来自 {conversationCount} 个{targetName}";
         return $"{totalText}已显示 {discoveryResultCount} 条最新匹配记录，{groupText}{suffix}";
     }

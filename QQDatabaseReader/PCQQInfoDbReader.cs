@@ -5,8 +5,8 @@ using System.Text;
 namespace QQDatabaseReader;
 
 /// <summary>
-/// 读取 PCQQ 的 Info.db。Info.db 是 OLE/CFB 复合文件，内部 ES stream 需要 QQ TEA 解密，
-/// 解密后通常还要 zlib 解压，最后得到 TD/TA 结构的业务数据。
+/// 读取 PCQQ 的 Info.db。Info.db 是 OLE/CFB 复合文件，内部 ES stream 需要解密，
+/// 解密后通常还要 zlib 解压，最后得到业务数据。
 /// </summary>
 public sealed class PCQQInfoDbReader
 {

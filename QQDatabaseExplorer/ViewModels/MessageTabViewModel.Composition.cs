@@ -21,6 +21,7 @@ public partial class MessageTabViewModel
         _messageSelection = new MessageSelectionState(_messages);
         _conversationList = new ConversationListState(_groups, _filteredGroups);
         _qqDatabaseService = qqDatabaseService;
+        _messageDatabaseQueryRunner = new MessageDatabaseQueryRunner(qqDatabaseService.QQNtDatabaseQueryGate);
         _appSettingsService = appSettingsService;
         _dialogService = dialogService;
         _chatExportService = chatExportService;
@@ -29,7 +30,8 @@ public partial class MessageTabViewModel
         _participantResolver = new MessageParticipantResolver(
             () => _qqDatabaseService.ProfileInfoDatabase,
             () => _qqDatabaseService.GroupInfoDatabase,
-            () => _qqDatabaseService.NtDataPath);
+            () => _qqDatabaseService.NtDataPath,
+            _qqDatabaseService.QQNtDatabaseQueryGate);
         _conversationApplier = new MessageConversationListApplier(
             _groups,
             _conversationList,
@@ -169,7 +171,8 @@ public partial class MessageTabViewModel
         var conversationDirectoryLoader = new MessageConversationDirectoryLoader(
             latestMessagePreviewFactory,
             participantResolver,
-            () => databaseService.IcalinguaMessageDatabases);
+            () => databaseService.IcalinguaMessageDatabases,
+            databaseService.QQNtDatabaseQueryGate);
         var conversationDatabaseSynchronizer = new MessageConversationDatabaseSynchronizer(
             conversationDirectoryLoader,
             conversationApplier);

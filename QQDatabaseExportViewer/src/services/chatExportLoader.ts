@@ -1,4 +1,5 @@
 import type { ChatExportChat, ChatExportDocument, ChatExportMessage } from '@/types/chat-export'
+import { localAssetUrl } from './safeUrl.ts'
 
 export async function loadChatExport(): Promise<ChatExportDocument> {
   const existing = window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT__
@@ -21,7 +22,37 @@ export async function loadChatExport(): Promise<ChatExportDocument> {
 
 export async function loadChatExportFromFile(file: File): Promise<ChatExportDocument> {
   const text = await file.text()
-  return JSON.parse(text) as ChatExportDocument
+  return parseImportedChatExport(text)
+}
+
+export function parseImportedChatExport(text: string): ChatExportDocument {
+  const document = JSON.parse(text) as unknown
+  if (!isRecord(document)) {
+    throw new Error('聊天记录 JSON 的根节点必须是对象')
+  }
+
+  rejectMessageChunkManifest(document, '根节点')
+  if (Array.isArray(document.chats)) {
+    document.chats.forEach((chat, index) => {
+      if (isRecord(chat)) {
+        rejectMessageChunkManifest(chat, `chats[${index}]`)
+      }
+    })
+  }
+
+  return document as unknown as ChatExportDocument
+}
+
+function rejectMessageChunkManifest(value: Record<string, unknown>, location: string) {
+  if (Object.prototype.hasOwnProperty.call(value, 'messageChunks')) {
+    throw new Error(
+      `手动导入的 JSON 不支持 ${location}.messageChunks；请选择包含内联 messages 的 chat.json`,
+    )
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 const chunkPromises = new Map<string, Promise<ChatExportMessage[]>>()
@@ -42,8 +73,8 @@ export async function loadMessageChunk(source: ChatExportDocument | ChatExportCh
   let promise = chunkPromises.get(chunkKey)
   if (!promise) {
     promise = loadMessageChunkScript(chunkKey, chunk.path)
+      .finally(() => chunkPromises.delete(chunkKey))
     chunkPromises.set(chunkKey, promise)
-    promise.finally(() => chunkPromises.delete(chunkKey))
   }
 
   return promise
@@ -54,8 +85,14 @@ async function loadChatExportScript() {
     const script = document.createElement('script')
     script.src = './resources/chat-data.js'
     script.async = true
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('script load failed'))
+    script.onload = () => {
+      script.remove()
+      resolve()
+    }
+    script.onerror = () => {
+      script.remove()
+      reject(new Error('script load failed'))
+    }
     document.head.append(script)
   })
 }
@@ -67,9 +104,14 @@ async function loadMessageChunkScript(key: string, path: string) {
     return existing
   }
 
+  const scriptUrl = localAssetUrl(path)
+  if (!scriptUrl) {
+    throw new Error(`message chunk path is not a local export resource: ${path}`)
+  }
+
   await new Promise<void>((resolve, reject) => {
     const script = document.createElement('script')
-    script.src = `./${path}`
+    script.src = scriptUrl
     script.async = true
     script.onload = () => {
       script.remove()

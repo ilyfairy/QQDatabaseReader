@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
@@ -37,34 +38,47 @@ internal static class PreparedDatabaseConfigLoader
         QQAndroidMessageReader? androidMessageDatabase = null;
         QQGroupMessageFtsReader? groupMessageFtsDatabase = null;
         QQGroupMessageFtsReader? buddyMessageFtsDatabase = null;
+        // 同一组数据库的 HMAC 算法相同; 旧配置没有这一项时按 HMAC_SHA1
+        var hmac = config.CipherHmacAlgorithm.ToHashAlgorithmName();
 
         try
         {
             if (!string.IsNullOrWhiteSpace(config.GroupInfoDbPath))
-                groupInfoDatabase = CreateGroupInfoDatabase(config.GroupInfoDbPath, config.GroupInfoDbPassword);
+                groupInfoDatabase = CreateGroupInfoDatabase(config.GroupInfoDbPath, config.GroupInfoDbPassword, hmac);
 
             if (!string.IsNullOrWhiteSpace(config.ProfileInfoDbPath))
-                profileInfoDatabase = CreateProfileInfoDatabase(config.ProfileInfoDbPath, config.ProfileInfoDbPassword);
+                profileInfoDatabase = CreateProfileInfoDatabase(config.ProfileInfoDbPath, config.ProfileInfoDbPassword, hmac);
 
             if (!string.IsNullOrWhiteSpace(config.MessageDbPath) &&
                 platformType is DatabasePlatformType.AndroidQQNT)
             {
-                androidMessageDatabase = CreateAndroidMessageDatabase(config.MessageDbPath, config.MessageDbPassword);
+                androidMessageDatabase = CreateAndroidMessageDatabase(config.MessageDbPath, config.MessageDbPassword, hmac);
             }
             else if (!string.IsNullOrWhiteSpace(config.MessageDbPath))
             {
-                messageDatabase = CreateMessageDatabase(config.MessageDbPath, config.MessageDbPassword);
+                messageDatabase = CreateMessageDatabase(config.MessageDbPath, config.MessageDbPassword, hmac);
             }
 
             if (!string.IsNullOrWhiteSpace(config.GroupMessageFtsDbPath))
                 groupMessageFtsDatabase = CreateGroupMessageFtsDatabase(
                     config.GroupMessageFtsDbPath,
-                    config.GroupMessageFtsDbPassword);
+                    config.GroupMessageFtsDbPassword,
+                    hmac);
 
             if (!string.IsNullOrWhiteSpace(config.BuddyMessageFtsDbPath))
                 buddyMessageFtsDatabase = CreateBuddyMessageFtsDatabase(
                     config.BuddyMessageFtsDbPath,
-                    config.BuddyMessageFtsDbPassword);
+                    config.BuddyMessageFtsDbPassword,
+                    hmac);
+
+            // 旧版 QQNT 的消息表没有 QQ 号列, 按 nt_uid 从资料库换算
+            if (profileInfoDatabase is not null)
+            {
+                if (messageDatabase is not null)
+                    messageDatabase.UinResolver = profileInfoDatabase.FindUinByUid;
+                if (androidMessageDatabase is not null)
+                    androidMessageDatabase.UinResolver = profileInfoDatabase.FindUinByUid;
+            }
 
             var ntDatabases = new PreparedNtDatabaseGroup(
                 groupInfoDatabase,
@@ -205,56 +219,56 @@ internal static class PreparedDatabaseConfigLoader
         }
     }
 
-    private static QQGroupInfoReader CreateGroupInfoDatabase(string databasePath, string? password)
+    private static QQGroupInfoReader CreateGroupInfoDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = password is null
             ? new QQGroupInfoReader(databasePath)
-            : new QQGroupInfoReader(databasePath, password);
+            : new QQGroupInfoReader(databasePath, password, cipherHmacAlgorithm: hmac);
         database.Initialize();
         return database;
     }
 
-    private static QQMessageReader CreateMessageDatabase(string databasePath, string? password)
+    private static QQMessageReader CreateMessageDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = password is null
             ? new QQMessageReader(databasePath)
-            : new QQMessageReader(databasePath, password);
+            : new QQMessageReader(databasePath, password, cipherHmacAlgorithm: hmac);
         database.Initialize();
         return database;
     }
 
-    private static QQAndroidMessageReader CreateAndroidMessageDatabase(string databasePath, string? password)
+    private static QQAndroidMessageReader CreateAndroidMessageDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = password is null
             ? new QQAndroidMessageReader(databasePath)
-            : new QQAndroidMessageReader(databasePath, password);
+            : new QQAndroidMessageReader(databasePath, password, cipherHmacAlgorithm: hmac);
         database.Initialize();
         return database;
     }
 
-    private static QQProfileInfoReader CreateProfileInfoDatabase(string databasePath, string? password)
+    private static QQProfileInfoReader CreateProfileInfoDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = password is null
             ? new QQProfileInfoReader(databasePath)
-            : new QQProfileInfoReader(databasePath, password);
+            : new QQProfileInfoReader(databasePath, password, cipherHmacAlgorithm: hmac);
         database.Initialize();
         return database;
     }
 
-    private static QQGroupMessageFtsReader CreateGroupMessageFtsDatabase(string databasePath, string? password)
+    private static QQGroupMessageFtsReader CreateGroupMessageFtsDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = string.IsNullOrWhiteSpace(password)
             ? new QQGroupMessageFtsReader(databasePath)
-            : new QQGroupMessageFtsReader(databasePath, password);
+            : new QQGroupMessageFtsReader(databasePath, password, cipherHmacAlgorithm: hmac);
         database.Initialize();
         return database;
     }
 
-    private static QQGroupMessageFtsReader CreateBuddyMessageFtsDatabase(string databasePath, string? password)
+    private static QQGroupMessageFtsReader CreateBuddyMessageFtsDatabase(string databasePath, string? password, HashAlgorithmName hmac)
     {
         var database = string.IsNullOrWhiteSpace(password)
             ? new QQGroupMessageFtsReader(databasePath, contentTableName: "buddy_msg_fts")
-            : new QQGroupMessageFtsReader(databasePath, password, contentTableName: "buddy_msg_fts");
+            : new QQGroupMessageFtsReader(databasePath, password, cipherHmacAlgorithm: hmac, contentTableName: "buddy_msg_fts");
         database.Initialize();
         return database;
     }
@@ -309,6 +323,7 @@ internal static class PreparedDatabaseConfigLoader
                     BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                     ProfileInfoDbPath = config.ProfileInfoDbPath,
                     ProfileInfoDbPassword = config.ProfileInfoDbPassword,
+                    CipherHmacAlgorithm = config.CipherHmacAlgorithm,
                 },
             };
         }
@@ -329,6 +344,7 @@ internal static class PreparedDatabaseConfigLoader
                 BuddyMessageFtsDbPassword = config.BuddyMessageFtsDbPassword,
                 ProfileInfoDbPath = config.ProfileInfoDbPath,
                 ProfileInfoDbPassword = config.ProfileInfoDbPassword,
+                CipherHmacAlgorithm = config.CipherHmacAlgorithm,
             },
         };
     }

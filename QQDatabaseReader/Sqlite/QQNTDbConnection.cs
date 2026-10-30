@@ -140,7 +140,8 @@ internal class QQSqliteCommand : DbCommand
 
     public override void Cancel()
     {
-        // SQLite 不支持取消
+        if (_connection is not null)
+            raw.sqlite3_interrupt(_connection.Handle);
     }
 
     public override int ExecuteNonQuery()
@@ -409,7 +410,7 @@ internal static class QQSqliteBindHelpers
 }
 
 /// <summary>
-/// 自定义的 DbDataReader 实现，支持智能跳过损坏数据块
+/// 自定义的 DbDataReader 实现。
 /// </summary>
 internal class QQSqliteDataReader : DbDataReader
 {
@@ -418,14 +419,6 @@ internal class QQSqliteDataReader : DbDataReader
     private readonly string _originalSql;
     private bool _hasRow;
     private bool _closed;
-    private int _consecutiveErrors = 0;
-    private long _skipJump = 10000;
-    private int _totalErrorBlocks = 0;
-    
-    // 用于智能跳过的状态
-    private bool _isRowIdQuery = false;
-    private int _rowIdColumnIndex = -1;
-    private long _lastSuccessRowId = 0;
 
     // 接受已预编译并绑定过参数的 stmt
     public QQSqliteDataReader(sqlite3 db, sqlite3_stmt preparedStmt, string sql)
@@ -453,37 +446,19 @@ internal class QQSqliteDataReader : DbDataReader
         if (rc == raw.SQLITE_ROW)
         {
             _hasRow = true;
-            _consecutiveErrors = 0; // 重置错误计数
-            _skipJump = 10000; // 重置跳跃步长
-            
-            // 如果是 ROWID 查询，记录最后成功的 ROWID
-            if (_isRowIdQuery && _rowIdColumnIndex >= 0 && _rowIdColumnIndex < FieldCount)
-            {
-                try
-                {
-                    _lastSuccessRowId = raw.sqlite3_column_int64(_stmt, _rowIdColumnIndex);
-                }
-                catch { }
-            }
-            
             return true;
         }
-        else if (rc == raw.SQLITE_DONE)
+
+        _hasRow = false;
+        if (rc == raw.SQLITE_DONE)
         {
             return false;
         }
-        else if (rc == raw.SQLITE_CORRUPT || rc == raw.SQLITE_IOERR)
-        {
-            var error = raw.sqlite3_errmsg(_db).utf8_to_string();
-            Console.WriteLine($"[DataReader] 读取数据失败: {error} (错误码: {rc})");
-            return false;
-        }
-        else
-        {
-            var error = raw.sqlite3_errmsg(_db).utf8_to_string();
-            Console.WriteLine($"[DataReader] 读取数据失败: {error} (错误码: {rc})");
-            return false;
-        }
+
+        var error = raw.sqlite3_errmsg(_db).utf8_to_string();
+        Close();
+        throw new InvalidOperationException(
+            $"SQL 读取失败: {error} (code {rc}). SQL: {_originalSql}");
     }
     
 
@@ -679,4 +654,3 @@ internal class QQSqliteTransaction : DbTransaction
         base.Dispose(disposing);
     }
 }
-

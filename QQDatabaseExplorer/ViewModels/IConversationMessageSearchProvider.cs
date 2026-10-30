@@ -1,3 +1,4 @@
+using System.Threading;
 using QQDatabaseExplorer.Models;
 
 namespace QQDatabaseExplorer.ViewModels;
@@ -9,10 +10,12 @@ internal interface IConversationMessageSearchProvider
     SearchPage SearchDiscovery(
         string query,
         ConversationSearchFilter filter,
-        SearchCursor? cursor);
+        SearchCursor? cursor,
+        CancellationToken cancellationToken);
 
     SearchPage SearchConversation(
         string query,
         AvaGroupMessageSearchGroup conversation,
-        SearchCursor? cursor);
+        SearchCursor? cursor,
+        CancellationToken cancellationToken);
 }

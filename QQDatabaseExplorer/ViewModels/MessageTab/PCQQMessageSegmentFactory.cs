@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
@@ -82,12 +83,19 @@ internal sealed class PCQQMessageSegmentFactory
             return null;
 
         var imageRoot = Path.Combine(pcqqDataPath, "Image");
-        var localPath = Path.GetFullPath(Path.Combine(imageRoot, relativePath));
+        if (!TrustedMediaPath.TryResolveWithinRoot(imageRoot, relativePath, out var localPath))
+            return null;
+
         if (File.Exists(localPath))
             return localPath;
 
         var thumbnailPath = CreateThumbnailPath(localPath);
-        return File.Exists(thumbnailPath) ? thumbnailPath : null;
+        return TrustedMediaPath.TryResolveExistingFileWithinRoot(
+            imageRoot,
+            thumbnailPath,
+            out var resolvedThumbnailPath)
+            ? resolvedThumbnailPath
+            : null;
     }
 
     private static string NormalizeImageRelativePath(string imageRelativePath)

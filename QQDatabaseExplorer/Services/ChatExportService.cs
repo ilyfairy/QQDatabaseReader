@@ -1,18 +1,23 @@
 using System;
+using System.Buffers;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Services;
 
@@ -24,10 +29,27 @@ public sealed class ChatExportService
     private const string MhtmlBaseUrl = "https://qqdatabaseexport.local/";
     private const string ExportResourceDirectory = "resources";
     private const int ViewerMessageChunkSize = 1000;
+    private const int MaxViewerMessageChunkEntries = 65_536;
+    private const int MaxAvatarDownloadBytes = 4 * 1024 * 1024;
+    private const int MaxAvatarRedirects = 3;
+    private const int MaxReplyMessageIndexEntries = 65_536;
+    private const int MaxReplyMessageIndexConversationKeyLength = 512;
+    private const int MaxReplyMessageIndexStoredKeyLength = 1024;
+    private const int MaxExportParticipantEntries = 8_192;
+    private const int MaxExportParticipantKeyLength = 512;
+    private const int MaxExportParticipantUidLength = 512;
+    private const int MaxExportParticipantNameLength = 1024;
+    private const int MaxExportParticipantAvatarValueLength = 2048;
+    private const int MaxExportMediaCacheEntries = 8_192;
+    private const int MaxExportMediaCacheKeyLength = 1024;
+    private const int MaxExportMediaCacheValueLength = 2048;
+    private const int ErrorFileExists = 80;
+    private const int ErrorAlreadyExists = 183;
+    private static readonly object ExportDirectoryClaimLock = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new(ChatExportJsonContext.Default.Options)
     {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
     };
     private static readonly JsonSerializerOptions JsonOnlyOptions = new(JsonOptions)
     {
@@ -64,21 +86,13 @@ public sealed class ChatExportService
         if (sources.Count == 0)
             throw new ArgumentException("Export sources are empty.", nameof(sources));
 
-        progress?.Report(new ChatExportProgress("准备导出", "创建导出目录", 0, 1));
-        var exportRoot = CreateExportRoot(parentDirectory, conversation);
-        Directory.CreateDirectory(exportRoot);
-
-        var isJsonOnly = options.Format == ChatExportFormat.Json;
-        progress?.Report(new ChatExportProgress("整理消息", "转换聊天记录数据", 0, sources.Sum(static source => source.Messages.Count)));
-        var mediaStore = new ExportMediaStore(exportRoot, isJsonOnly ? ChatExportContentOptions.None : options.Content);
-        var document = CreateDocument(conversation, sources, mediaStore, progress, cancellationToken);
-        if (isJsonOnly)
-            document = RemoveAvatarUrls(document);
-
-        var primaryOutputPath = await WriteExportAsync(exportRoot, document, options.Format, progress, cancellationToken);
-
-        progress?.Report(new ChatExportProgress("完成", "聊天记录导出完成", 1, 1));
-        return new ChatExportResult(exportRoot, primaryOutputPath, document.Metadata.MessageCount, sources.Count);
+        return await ExportDirectAsync(
+            [new ChatExportConversationExport(conversation, sources)],
+            parentDirectory,
+            options,
+            progress,
+            isMerged: false,
+            cancellationToken);
     }
 
     public async Task<ChatExportResult> ExportMergedAsync(
@@ -93,42 +107,123 @@ public sealed class ChatExportService
         if (conversations.Count == 0)
             throw new ArgumentException("Export conversations are empty.", nameof(conversations));
 
+        return await ExportDirectAsync(
+            conversations,
+            parentDirectory,
+            options,
+            progress,
+            isMerged: true,
+            cancellationToken);
+    }
+
+    private async Task<ChatExportResult> ExportDirectAsync(
+        IReadOnlyList<ChatExportConversationExport> conversations,
+        string parentDirectory,
+        ChatExportOptions options,
+        IProgress<ChatExportProgress>? progress,
+        bool isMerged,
+        CancellationToken cancellationToken)
+    {
         progress?.Report(new ChatExportProgress("准备导出", "创建导出目录", 0, 1));
-        var exportRoot = CreateMergedExportRoot(parentDirectory, conversations.Select(static item => item.Conversation));
-        Directory.CreateDirectory(exportRoot);
+        var exportRoot = isMerged
+            ? ClaimMergedExportRoot(
+                parentDirectory,
+                conversations.Select(static item => item.Conversation))
+            : ClaimExportRoot(parentDirectory, conversations[0].Conversation);
 
         var isJsonOnly = options.Format == ChatExportFormat.Json;
-        var totalMessages = conversations.Sum(static conversation => conversation.Sources.Sum(static source => source.Messages.Count));
-        progress?.Report(new ChatExportProgress("整理消息", "转换聊天记录数据", 0, totalMessages));
-        var mediaStore = new ExportMediaStore(exportRoot, isJsonOnly ? ChatExportContentOptions.None : options.Content);
-        var document = CreateMergedDocument(conversations, mediaStore, progress, cancellationToken);
+        var mediaStore = new ExportMediaStore(
+            exportRoot,
+            isJsonOnly ? ChatExportContentOptions.None : options.Content,
+            collectForMhtml: options.Format == ChatExportFormat.Mhtml,
+            cancellationToken);
+
+        ChatExportDocument document;
+        if (isMerged)
+        {
+            var documents = new ChatExportDocument[conversations.Count];
+            for (var index = 0; index < conversations.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var item = conversations[index];
+                progress?.Report(new ChatExportProgress(
+                    "整理消息",
+                    $"{item.Conversation.DisplayName} ({index + 1}/{conversations.Count})",
+                    index,
+                    conversations.Count));
+                documents[index] = await CreateDirectDocumentAsync(
+                    item.Conversation,
+                    item.Sources,
+                    mediaStore,
+                    null,
+                    cancellationToken);
+            }
+
+            document = CreateMergedDocument(documents);
+        }
+        else
+        {
+            var item = conversations[0];
+            document = await CreateDirectDocumentAsync(
+                item.Conversation,
+                item.Sources,
+                mediaStore,
+                progress,
+                cancellationToken);
+        }
+
         if (isJsonOnly)
             document = RemoveAvatarUrls(document);
 
-        var primaryOutputPath = await WriteExportAsync(exportRoot, document, options.Format, progress, cancellationToken);
-
+        var primaryOutputPath = await WriteExportAsync(
+            exportRoot,
+            document,
+            options.Format,
+            mediaStore,
+            progress,
+            cancellationToken);
         progress?.Report(new ChatExportProgress("完成", "聊天记录导出完成", 1, 1));
         return new ChatExportResult(
             exportRoot,
             primaryOutputPath,
             document.Metadata.MessageCount,
-            conversations.Sum(static conversation => conversation.Sources.Count));
+            conversations.Sum(static item => item.Sources.Count));
     }
 
-    private static ChatExportDocument CreateDocument(
+    private async Task<ChatExportDocument> CreateDirectDocumentAsync(
         AvaQQGroup conversation,
         IReadOnlyList<ChatExportSource> sources,
         ExportMediaStore mediaStore,
         IProgress<ChatExportProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var messages = sources
-            .SelectMany(static source => source.Messages)
-            .GroupBy(static message => CreateMergedMessageKey(message), StringComparer.Ordinal)
-            .Select(static group => group
-                .OrderBy(static message => message.ConversationKey, StringComparer.Ordinal)
-                .First())
-            .ToArray();
+        var messagesByKey = new Dictionary<string, AvaQQMessage>(StringComparer.Ordinal);
+        var loadedCount = 0;
+        foreach (var source in sources)
+        {
+            await foreach (var message in source.ReadMessagesAsync(cancellationToken))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var key = CreateMergedMessageKey(message);
+                if (!messagesByKey.TryGetValue(key, out var current) ||
+                    string.CompareOrdinal(message.ConversationKey, current.ConversationKey) < 0)
+                {
+                    messagesByKey[key] = message;
+                }
+
+                loadedCount++;
+                if (loadedCount % 1000 == 0)
+                {
+                    progress?.Report(new ChatExportProgress(
+                        "读取消息",
+                        $"已读取 {loadedCount.ToString(CultureInfo.InvariantCulture)} 条消息",
+                        loadedCount,
+                        0));
+                }
+            }
+        }
+
+        var messages = messagesByKey.Values.ToArray();
         var participants = CreateParticipants(messages, mediaStore);
         var participantLookup = participants.ToDictionary(static participant => participant.Key, StringComparer.Ordinal);
         var orderedMessages = messages
@@ -138,18 +233,20 @@ public sealed class ChatExportService
             .ToArray();
         var exportedMessages = new ChatExportMessage[orderedMessages.Length];
 
-        progress?.Report(new ChatExportProgress("整理消息", "转换聊天记录数据", 0, orderedMessages.Length));
-        for (var i = 0; i < orderedMessages.Length; i++)
+        for (var index = 0; index < orderedMessages.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            exportedMessages[i] = CreateMessage(orderedMessages[i], mediaStore, depth: 0, participantLookup);
-
-            var current = i + 1;
-            if (current == orderedMessages.Length || current % 25 == 0)
+            exportedMessages[index] = CreateMessage(
+                orderedMessages[index],
+                mediaStore,
+                depth: 0,
+                participantLookup);
+            var current = index + 1;
+            if (current == orderedMessages.Length || current % 100 == 0)
             {
                 progress?.Report(new ChatExportProgress(
                     "整理消息",
-                    $"转换聊天记录数据 {current}/{orderedMessages.Length}",
+                    $"已转换 {current.ToString(CultureInfo.InvariantCulture)} 条消息",
                     current,
                     orderedMessages.Length));
             }
@@ -158,44 +255,24 @@ public sealed class ChatExportService
         var exportConversation = CreateConversation(conversation, sources, mediaStore);
         return new ChatExportDocument(
             SchemaVersion,
-            new ChatExportMetadata(
-                DateTimeOffset.Now,
-                ExporterName,
-                ViewerName,
-                exportedMessages.Length),
+            new ChatExportMetadata(DateTimeOffset.Now, ExporterName, ViewerName, exportedMessages.Length),
             exportConversation,
             [exportConversation],
             participants,
             exportedMessages);
     }
 
-    private static ChatExportDocument CreateMergedDocument(
-        IReadOnlyList<ChatExportConversationExport> conversations,
-        ExportMediaStore mediaStore,
-        IProgress<ChatExportProgress>? progress,
-        CancellationToken cancellationToken)
+    private static ChatExportDocument CreateMergedDocument(IReadOnlyList<ChatExportDocument> documents)
     {
-        var documents = new ChatExportDocument[conversations.Count];
-        for (var i = 0; i < conversations.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var conversation = conversations[i];
-            progress?.Report(new ChatExportProgress(
-                "整理消息",
-                $"{conversation.Conversation.DisplayName} ({i + 1}/{conversations.Count})",
-                i,
-                conversations.Count));
-            documents[i] = CreateDocument(conversation.Conversation, conversation.Sources, mediaStore, null, cancellationToken);
-        }
-
         var participants = documents
             .SelectMany(static document => document.Participants)
             .GroupBy(static participant => participant.Key, StringComparer.Ordinal)
             .Select(static group => group.First())
             .OrderBy(static participant => participant.DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(static participant => participant.Uin)
+            .Take(MaxExportParticipantEntries)
             .ToArray();
-        var exportConversations = documents
+        var conversations = documents
             .Select(static document => document.Conversation)
             .DistinctBy(static conversation => conversation.Key, StringComparer.Ordinal)
             .ToArray();
@@ -215,11 +292,85 @@ public sealed class ChatExportService
                 ExporterName,
                 ViewerName,
                 chats.Sum(static chat => chat.MessageCount)),
-            CreateMergedConversation(exportConversations),
-            exportConversations,
+            CreateMergedConversation(conversations),
+            conversations,
             participants,
             null,
             Chats: chats);
+    }
+
+    private static IReadOnlyList<ChatExportParticipant> CreateParticipants(
+        IReadOnlyList<AvaQQMessage> messages,
+        ExportMediaStore mediaStore)
+    {
+        var participants = new Dictionary<string, ChatExportParticipant>(StringComparer.Ordinal);
+        foreach (var group in messages.GroupBy(
+                     static message => CreateParticipantKey(message),
+                     StringComparer.Ordinal))
+        {
+            AddOrUpdateParticipant(
+                participants,
+                CreateParticipantRef(ChooseParticipantMessage(group), mediaStore));
+        }
+
+        return participants.Values
+            .OrderBy(static participant => participant.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(static participant => participant.Uin)
+            .ToArray();
+    }
+
+    private static AvaQQMessage ChooseParticipantMessage(IEnumerable<AvaQQMessage> messages)
+    {
+        AvaQQMessage? first = null;
+        AvaQQMessage? firstWithUrl = null;
+        foreach (var message in messages)
+        {
+            first ??= message;
+            if (!string.IsNullOrWhiteSpace(message.AvatarLocalPath) && ArchiveFile.Exists(message.AvatarLocalPath))
+                return message;
+            if (firstWithUrl is null && !string.IsNullOrWhiteSpace(message.AvatarUrl))
+                firstWithUrl = message;
+        }
+
+        return firstWithUrl ?? first ?? throw new InvalidOperationException("Participant group is empty.");
+    }
+
+    private static void AddOrUpdateParticipant(
+        IDictionary<string, ChatExportParticipant> participants,
+        ChatExportParticipantRef participantRef)
+    {
+        if (participantRef.Key.Length > MaxExportParticipantKeyLength ||
+            (participantRef.Uid?.Length ?? 0) > MaxExportParticipantUidLength ||
+            participantRef.DisplayName.Length > MaxExportParticipantNameLength ||
+            (participantRef.AvatarUrl?.Length ?? 0) > MaxExportParticipantAvatarValueLength ||
+            (participantRef.AvatarPath?.Length ?? 0) > MaxExportParticipantAvatarValueLength)
+        {
+            return;
+        }
+
+        var candidate = new ChatExportParticipant(
+            participantRef.Key,
+            participantRef.Uin,
+            participantRef.Uid,
+            participantRef.DisplayName,
+            participantRef.AvatarUrl,
+            participantRef.AvatarPath);
+        if (participants.TryGetValue(candidate.Key, out var current))
+        {
+            if (GetParticipantQuality(candidate) > GetParticipantQuality(current))
+                participants[candidate.Key] = candidate;
+            return;
+        }
+
+        if (participants.Count < MaxExportParticipantEntries)
+            participants[candidate.Key] = candidate;
+    }
+
+    private static int GetParticipantQuality(ChatExportParticipant participant)
+    {
+        if (!string.IsNullOrWhiteSpace(participant.AvatarPath))
+            return 2;
+        return !string.IsNullOrWhiteSpace(participant.AvatarUrl) ? 1 : 0;
     }
 
     private static ChatExportConversation CreateMergedConversation(IReadOnlyList<ChatExportConversation> conversations)
@@ -284,45 +435,6 @@ public sealed class ChatExportService
             conversation.PrivateUid,
             conversation.AndroidMobileQQPeerUin,
             conversation.IcalinguaRoomId);
-    }
-
-    private static IReadOnlyList<ChatExportParticipant> CreateParticipants(
-        IReadOnlyList<AvaQQMessage> messages,
-        ExportMediaStore mediaStore)
-    {
-        return messages
-            .GroupBy(static message => CreateParticipantKey(message), StringComparer.Ordinal)
-            .Select(group => CreateParticipantRef(ChooseParticipantMessage(group), mediaStore))
-            .OrderBy(static participant => participant.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(static participant => participant.Uin)
-            .Select(static participant => new ChatExportParticipant(
-                participant.Key,
-                participant.Uin,
-                participant.Uid,
-                participant.DisplayName,
-                participant.AvatarUrl,
-                participant.AvatarPath))
-            .ToArray();
-    }
-
-    private static AvaQQMessage ChooseParticipantMessage(IEnumerable<AvaQQMessage> messages)
-    {
-        AvaQQMessage? first = null;
-        AvaQQMessage? firstWithUrl = null;
-        foreach (var message in messages)
-        {
-            first ??= message;
-            if (!string.IsNullOrWhiteSpace(message.AvatarLocalPath) &&
-                File.Exists(message.AvatarLocalPath))
-            {
-                return message;
-            }
-
-            if (firstWithUrl is null && !string.IsNullOrWhiteSpace(message.AvatarUrl))
-                firstWithUrl = message;
-        }
-
-        return firstWithUrl ?? first ?? throw new InvalidOperationException("Participant group is empty.");
     }
 
     private static ChatExportMessage CreateMessage(
@@ -399,16 +511,18 @@ public sealed class ChatExportService
                 participant.AvatarPath);
         }
 
+        var senderUid = GetSenderUid(message);
         var name = FirstNonEmpty(
             message.Name,
             message.SenderId == 0 ? null : message.SenderId.ToString(CultureInfo.InvariantCulture),
+            senderUid,
             message.PeerUid,
             "未知");
 
         return new ChatExportParticipantRef(
             key,
             message.SenderId,
-            message.PeerUid,
+            senderUid,
             name,
             message.AvatarUrl,
             mediaStore.CopyAvatar(message.AvatarLocalPath, message.AvatarUrl));
@@ -416,9 +530,19 @@ public sealed class ChatExportService
 
     private static string CreateParticipantKey(AvaQQMessage message)
     {
-        return !string.IsNullOrWhiteSpace(message.PeerUid) && message.SenderId == 0
-            ? "uid:" + message.PeerUid
+        var senderUid = GetSenderUid(message);
+        return !string.IsNullOrWhiteSpace(senderUid) && message.SenderId == 0
+            ? "uid:" + senderUid
             : "uin:" + message.SenderId.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string? GetSenderUid(AvaQQMessage message)
+    {
+        return !string.IsNullOrWhiteSpace(message.RawData?.SenderUid)
+            ? message.RawData.SenderUid
+            : message.SenderId == 0
+                ? message.PeerUid
+                : null;
     }
 
     private static ChatExportReply? CreateReply(AvaReplyMessage? reply, ExportMediaStore mediaStore)
@@ -617,9 +741,36 @@ public sealed class ChatExportService
         ChatExportDocument document,
         CancellationToken cancellationToken)
     {
+        var viewerData = CreateViewerData(document, cancellationToken);
+        foreach (var resource in viewerData.MessageChunks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var resourcePath = Path.Combine(
+                exportRoot,
+                resource.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(resourcePath)!);
+            await File.WriteAllTextAsync(
+                resourcePath,
+                CreateViewerMessageChunkScript(resource),
+                new UTF8Encoding(false),
+                cancellationToken);
+        }
+
         var resourceDirectory = Path.Combine(exportRoot, ExportResourceDirectory);
         Directory.CreateDirectory(resourceDirectory);
+        var dataPath = Path.Combine(resourceDirectory, "chat-data.js");
+        await File.WriteAllTextAsync(
+            dataPath,
+            viewerData.ManifestScript,
+            new UTF8Encoding(false),
+            cancellationToken);
+    }
 
+    private static ViewerDataExport CreateViewerData(
+        ChatExportDocument document,
+        CancellationToken cancellationToken)
+    {
+        var messageChunkResources = new List<ViewerScriptResource>();
         ChatExportDocument manifest;
         if (document.Chats is { Count: > 0 } chats)
         {
@@ -629,10 +780,10 @@ public sealed class ChatExportService
                 cancellationToken.ThrowIfCancellationRequested();
                 var chat = chats[i];
                 var messages = chat.Messages ?? [];
-                var chunks = await WriteViewerMessageChunksAsync(
-                    resourceDirectory,
+                var chunks = CreateViewerMessageChunks(
                     messages,
                     $"chat-{i:000}",
+                    messageChunkResources,
                     cancellationToken);
                 exportedChats[i] = chat with
                 {
@@ -655,7 +806,11 @@ public sealed class ChatExportService
         else
         {
             var messages = document.Messages ?? [];
-            var chunks = await WriteViewerMessageChunksAsync(resourceDirectory, messages, null, cancellationToken);
+            var chunks = CreateViewerMessageChunks(
+                messages,
+                null,
+                messageChunkResources,
+                cancellationToken);
             manifest = document with
             {
                 Messages = null,
@@ -665,52 +820,76 @@ public sealed class ChatExportService
             };
         }
 
-        var dataPath = Path.Combine(resourceDirectory, "chat-data.js");
         var json = JsonSerializer.Serialize(manifest, JsonOnlyContext.ChatExportDocument);
         var script = "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT__=" + json + ";";
-        await File.WriteAllTextAsync(dataPath, script, new UTF8Encoding(false), cancellationToken);
+        return new ViewerDataExport(script, messageChunkResources);
     }
 
-    private static async Task<IReadOnlyList<ChatExportMessageChunk>> WriteViewerMessageChunksAsync(
-        string resourceDirectory,
+    private static IReadOnlyList<ChatExportMessageChunk> CreateViewerMessageChunks(
         IReadOnlyList<ChatExportMessage> messages,
         string? chunkGroupKey,
+        ICollection<ViewerScriptResource> resources,
         CancellationToken cancellationToken)
     {
         if (messages.Count == 0)
             return [];
 
-        var messageDirectory = string.IsNullOrWhiteSpace(chunkGroupKey)
-            ? Path.Combine(resourceDirectory, "messages")
-            : Path.Combine(resourceDirectory, "messages", chunkGroupKey);
-        Directory.CreateDirectory(messageDirectory);
-        var chunks = new List<ChatExportMessageChunk>((messages.Count + ViewerMessageChunkSize - 1) / ViewerMessageChunkSize);
-        for (var start = 0; start < messages.Count; start += ViewerMessageChunkSize)
+        var chunkSize = GetViewerMessageChunkSize(messages.Count);
+        var chunkCount = (int)(((long)messages.Count + chunkSize - 1) / chunkSize);
+        var chunks = new List<ChatExportMessageChunk>(chunkCount);
+        for (var start = 0; start < messages.Count; start += chunkSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var chunkIndex = chunks.Count;
-            var count = Math.Min(ViewerMessageChunkSize, messages.Count - start);
-            var chunkMessages = messages.Skip(start).Take(count).ToArray();
+            var count = Math.Min(chunkSize, messages.Count - start);
             var chunkKey = string.IsNullOrWhiteSpace(chunkGroupKey)
                 ? chunkIndex.ToString(CultureInfo.InvariantCulture)
                 : $"{chunkGroupKey}:{chunkIndex.ToString(CultureInfo.InvariantCulture)}";
             var relativePath = string.IsNullOrWhiteSpace(chunkGroupKey)
                 ? $"{ExportResourceDirectory}/messages/message-{chunkIndex:00000}.js"
                 : $"{ExportResourceDirectory}/messages/{chunkGroupKey}/message-{chunkIndex:00000}.js";
-            var chunkPath = Path.Combine(messageDirectory, $"message-{chunkIndex:00000}.js");
-            var json = JsonSerializer.Serialize(chunkMessages, JsonContext.IReadOnlyListChatExportMessage);
-            var script =
-                "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__=window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__||{};" +
-                "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__[" +
-                JsonSerializer.Serialize(chunkKey, JsonOptions) +
-                "]=" +
-                json +
-                ";";
-            await File.WriteAllTextAsync(chunkPath, script, new UTF8Encoding(false), cancellationToken);
+            resources.Add(new ViewerScriptResource(relativePath, chunkKey, messages, start, count));
             chunks.Add(new ChatExportMessageChunk(chunkIndex, chunkKey, start, count, relativePath));
         }
 
         return chunks;
+    }
+
+    private sealed record ViewerDataExport(
+        string ManifestScript,
+        IReadOnlyList<ViewerScriptResource> MessageChunks);
+
+    private static string CreateViewerMessageChunkScript(ViewerScriptResource resource)
+    {
+        var chunkMessages = resource.Messages
+            .Skip(resource.Start)
+            .Take(resource.Count)
+            .ToArray();
+        var json = JsonSerializer.Serialize(chunkMessages, JsonContext.IReadOnlyListChatExportMessage);
+        return
+            "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__=window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__||{};" +
+            "window.__QQ_DATABASE_EXPLORER_CHAT_EXPORT_MESSAGE_CHUNKS__[" +
+            JsonSerializer.Serialize(resource.ChunkKey, JsonOptions) +
+            "]=" +
+            json +
+            ";";
+    }
+
+    private sealed record ViewerScriptResource(
+        string RelativePath,
+        string ChunkKey,
+        IReadOnlyList<ChatExportMessage> Messages,
+        int Start,
+        int Count);
+
+    private static int GetViewerMessageChunkSize(int messageCount)
+    {
+        if (messageCount <= 0)
+            return ViewerMessageChunkSize;
+
+        var minimumBoundedSize = checked((int)(((long)messageCount + MaxViewerMessageChunkEntries - 1) /
+                                                MaxViewerMessageChunkEntries));
+        return Math.Max(ViewerMessageChunkSize, minimumBoundedSize);
     }
 
     private static IReadOnlyList<ChatExportTimelineDate> CreateTimelineDates(IReadOnlyList<ChatExportMessage> messages)
@@ -742,9 +921,7 @@ public sealed class ChatExportService
 
     private static IReadOnlyList<ChatExportMessageIndex> CreateMessageIndex(IReadOnlyList<ChatExportMessage> messages)
     {
-        var messageSeqs = new HashSet<string>(StringComparer.Ordinal);
-        var messageIds = new HashSet<string>(StringComparer.Ordinal);
-        var messageRandoms = new HashSet<string>(StringComparer.Ordinal);
+        var targets = new ReplyMessageIndexTargets();
         foreach (var message in messages)
         {
             var reply = message.Reply;
@@ -752,27 +929,32 @@ public sealed class ChatExportService
                 continue;
 
             var conversationKey = message.Raw.ConversationKey;
-            AddIfNotZero(messageSeqs, conversationKey, reply.MessageSeq);
-            AddIfNotZero(messageSeqs, conversationKey, reply.AlternateMessageSeq);
-            AddIfNotZero(messageIds, conversationKey, reply.MessageId);
-            AddIfNotZero(messageIds, conversationKey, reply.InternalMessageId);
-            AddIfNotZero(messageRandoms, conversationKey, reply.MessageRandom);
+            targets.AddMessageSeq(conversationKey, reply.MessageSeq);
+            targets.AddMessageSeq(conversationKey, reply.AlternateMessageSeq);
+            targets.AddMessageId(conversationKey, reply.MessageId);
+            targets.AddMessageId(conversationKey, reply.InternalMessageId);
+            targets.AddMessageRandom(conversationKey, reply.MessageRandom);
         }
 
-        if (messageSeqs.Count == 0 && messageIds.Count == 0 && messageRandoms.Count == 0)
+        if (targets.IsEmpty)
             return [];
 
-        var indexes = new List<ChatExportMessageIndex>();
+        var indexes = new List<ChatExportMessageIndex>(Math.Min(targets.Count, messages.Count));
         for (var index = 0; index < messages.Count; index++)
         {
             var message = messages[index];
             var conversationKey = message.Raw.ConversationKey;
-            if (!messageSeqs.Contains(CreateMessageIndexKey(conversationKey, message.MessageSeq)) &&
-                !messageIds.Contains(CreateMessageIndexKey(conversationKey, message.MessageId)) &&
-                !messageRandoms.Contains(CreateMessageIndexKey(conversationKey, message.MessageRandom)))
+            if (conversationKey.Length > MaxReplyMessageIndexConversationKeyLength ||
+                message.Key.Length > MaxReplyMessageIndexStoredKeyLength ||
+                (!targets.MessageSeqs.Contains(CreateMessageIndexKey(conversationKey, message.MessageSeq)) &&
+                 !targets.MessageIds.Contains(CreateMessageIndexKey(conversationKey, message.MessageId)) &&
+                 !targets.MessageRandoms.Contains(CreateMessageIndexKey(conversationKey, message.MessageRandom))))
             {
                 continue;
             }
+
+            if (indexes.Count >= MaxReplyMessageIndexEntries)
+                return [];
 
             indexes.Add(new ChatExportMessageIndex(
                     index,
@@ -786,21 +968,55 @@ public sealed class ChatExportService
         return indexes;
     }
 
-    private static void AddIfNotZero(HashSet<string> values, string conversationKey, long value)
-    {
-        if (value != 0)
-            values.Add(CreateMessageIndexKey(conversationKey, value));
-    }
-
     private static string CreateMessageIndexKey(string conversationKey, long value)
     {
         return $"{conversationKey}\0{value.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    private sealed class ReplyMessageIndexTargets
+    {
+        private int _count;
+        private bool _disabled;
+
+        public HashSet<string> MessageSeqs { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> MessageIds { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> MessageRandoms { get; } = new(StringComparer.Ordinal);
+        public int Count => _count;
+        public bool IsEmpty => _count == 0;
+
+        public void AddMessageSeq(string conversationKey, long value) => Add(MessageSeqs, conversationKey, value);
+        public void AddMessageId(string conversationKey, long value) => Add(MessageIds, conversationKey, value);
+        public void AddMessageRandom(string conversationKey, long value) => Add(MessageRandoms, conversationKey, value);
+
+        private void Add(HashSet<string> values, string conversationKey, long value)
+        {
+            if (_disabled || value == 0 || conversationKey.Length > MaxReplyMessageIndexConversationKeyLength)
+                return;
+
+            var key = CreateMessageIndexKey(conversationKey, value);
+            if (values.Contains(key))
+                return;
+
+            if (_count >= MaxReplyMessageIndexEntries)
+            {
+                MessageSeqs.Clear();
+                MessageIds.Clear();
+                MessageRandoms.Clear();
+                _count = 0;
+                _disabled = true;
+                return;
+            }
+
+            values.Add(key);
+            _count++;
+        }
     }
 
     private static async Task<string> WriteExportAsync(
         string exportRoot,
         ChatExportDocument document,
         ChatExportFormat format,
+        ExportMediaStore mediaStore,
         IProgress<ChatExportProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -816,18 +1032,21 @@ public sealed class ChatExportService
             return await WriteMarkdownAsync(exportRoot, document, cancellationToken);
         }
 
+        if (format == ChatExportFormat.Mhtml)
+        {
+            progress?.Report(new ChatExportProgress("打包 MHTML", "直接写入 index.mhtml", 0, 1));
+            return await WriteMhtmlDirectAsync(
+                exportRoot,
+                document,
+                mediaStore,
+                progress,
+                cancellationToken);
+        }
+
         progress?.Report(new ChatExportProgress("复制查看器", "写入离线查看器", 0, 1));
         await CopyViewerAsync(exportRoot, cancellationToken);
         progress?.Report(new ChatExportProgress("写入数据", "保存 resources/chat-data.js", 0, 1));
         await WriteViewerDataAsync(exportRoot, document, cancellationToken);
-
-        if (format == ChatExportFormat.Mhtml)
-        {
-            progress?.Report(new ChatExportProgress("打包 MHTML", "打包查看器、数据和资源", 0, 1));
-            var mhtmlPath = await WriteMhtmlAsync(exportRoot, progress, cancellationToken);
-            DeleteMhtmlStagingFiles(exportRoot, mhtmlPath);
-            return mhtmlPath;
-        }
 
         return Path.Combine(exportRoot, "index.html");
     }
@@ -970,7 +1189,7 @@ public sealed class ChatExportService
         if (string.IsNullOrWhiteSpace(media.RelativePath))
             return EscapeMarkdown(FirstNonEmpty(media.DisplayText, segment.DisplayText, text));
 
-        var url = EscapeMarkdownUrl(media.RelativePath);
+        var url = EscapeRelativeUrl(media.RelativePath);
         return media.Kind == ChatExportMediaKind.Image
             ? $"![{text}]({url})"
             : $"[{text}]({url})";
@@ -1069,96 +1288,157 @@ public sealed class ChatExportService
             };
     }
 
-    private static async Task<string> WriteMhtmlAsync(
+    private static async Task<string> WriteMhtmlDirectAsync(
         string exportRoot,
+        ChatExportDocument document,
+        ExportMediaStore mediaStore,
         IProgress<ChatExportProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var indexPath = Path.Combine(exportRoot, "index.html");
-        if (!File.Exists(indexPath))
-            throw new FileNotFoundException("Export viewer index.html was not found.", indexPath);
-
         var boundary = "----=_QQDatabaseExplorer_" + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         var outputPath = Path.Combine(exportRoot, "index.mhtml");
-        await using var stream = File.Create(outputPath);
-        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-
-        await writer.WriteLineAsync("MIME-Version: 1.0");
-        await writer.WriteLineAsync($"Content-Type: multipart/related; type=\"text/html\"; boundary=\"{boundary}\"");
-        await writer.WriteLineAsync();
-
-        var resourceFiles = Directory.EnumerateFiles(exportRoot, "*", SearchOption.AllDirectories)
-            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
-            .Where(filePath =>
-                !string.Equals(filePath, indexPath, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(filePath, outputPath, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(
-                    Path.GetRelativePath(exportRoot, filePath).Replace('\\', '/'),
-                    $"{ExportResourceDirectory}/chat-data.js",
-                    StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        var totalParts = resourceFiles.Length + 1;
-
-        var indexHtml = await File.ReadAllTextAsync(indexPath, cancellationToken);
-        var chatScript = await File.ReadAllTextAsync(Path.Combine(exportRoot, ExportResourceDirectory, "chat-data.js"), cancellationToken);
-        indexHtml = InjectMhtmlDataScript(indexHtml, chatScript);
-        await WriteMhtmlPartAsync(
-            writer,
-            boundary,
-            "text/html; charset=utf-8",
-            MhtmlBaseUrl + "index.html",
-            Encoding.UTF8.GetBytes(indexHtml),
-            cancellationToken);
-        progress?.Report(new ChatExportProgress("打包 MHTML", "写入查看器和聊天数据", 1, totalParts));
-
-        for (var i = 0; i < resourceFiles.Length; i++)
+        try
         {
-            var filePath = resourceFiles[i];
-            cancellationToken.ThrowIfCancellationRequested();
+            var viewerDist = FindViewerDistDirectory();
+            var indexHtml = viewerDist is null
+                ? GetFallbackViewerHtml()
+                : await File.ReadAllTextAsync(Path.Combine(viewerDist, "index.html"), cancellationToken);
+            var viewerData = CreateViewerData(document, cancellationToken);
+            var embeddedIndex = InjectMhtmlDataScript(indexHtml, viewerData.ManifestScript);
+            var viewerResources = viewerDist is null
+                ? []
+                : Directory.EnumerateFiles(viewerDist, "*", SearchOption.AllDirectories)
+                    .Where(path => !string.Equals(
+                        Path.GetRelativePath(viewerDist, path),
+                        "index.html",
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(path => new MhtmlSourceResource(
+                        Path.GetRelativePath(viewerDist, path).Replace('\\', '/'),
+                        path,
+                        false))
+                    .ToArray();
+            var mediaResources = mediaStore.MhtmlResources
+                .OrderBy(static resource => resource.RelativePath, StringComparer.Ordinal)
+                .ToArray();
+            var totalParts = checked(
+                1 + viewerData.MessageChunks.Count + viewerResources.Length + mediaResources.Length);
 
-            var relativePath = Path.GetRelativePath(exportRoot, filePath).Replace('\\', '/');
+            await using var stream = new FileStream(
+                outputPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                128 * 1024,
+                FileOptions.SequentialScan);
+            await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+
+            await writer.WriteLineAsync("MIME-Version: 1.0");
+            await writer.WriteLineAsync($"Content-Type: multipart/related; type=\"text/html\"; boundary=\"{boundary}\"");
+            await writer.WriteLineAsync();
+
             await WriteMhtmlPartAsync(
                 writer,
                 boundary,
-                GetContentType(filePath),
-                MhtmlBaseUrl + EscapeRelativeUrl(relativePath),
-                filePath,
+                "text/html; charset=utf-8",
+                MhtmlBaseUrl + "index.html",
+                Encoding.UTF8.GetBytes(embeddedIndex),
                 cancellationToken);
             progress?.Report(new ChatExportProgress(
                 "打包 MHTML",
-                $"写入资源 {i + 1}/{resourceFiles.Length}",
-                i + 2,
+                "写入查看器和聊天数据",
+                1,
                 totalParts));
-        }
 
-        await writer.WriteLineAsync($"--{boundary}--");
-        return outputPath;
+            var completedParts = 1;
+            foreach (var resource in viewerData.MessageChunks)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await WriteMhtmlPartAsync(
+                    writer,
+                    boundary,
+                    "text/javascript; charset=utf-8",
+                    MhtmlBaseUrl + EscapeRelativeUrl(resource.RelativePath),
+                    Encoding.UTF8.GetBytes(CreateViewerMessageChunkScript(resource)),
+                    cancellationToken);
+                completedParts++;
+                ReportMhtmlResourceProgress(progress, completedParts, totalParts);
+            }
+
+            foreach (var resource in viewerResources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await WriteMhtmlPartAsync(
+                    writer,
+                    boundary,
+                    GetContentType(resource.SourcePath),
+                    MhtmlBaseUrl + EscapeRelativeUrl(resource.RelativePath),
+                    resource.SourcePath,
+                    resource.DecodeMarketFace,
+                    cancellationToken);
+                completedParts++;
+                ReportMhtmlResourceProgress(progress, completedParts, totalParts);
+            }
+
+            foreach (var resource in mediaResources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (resource.Content is not null)
+                {
+                    await WriteMhtmlPartAsync(
+                        writer,
+                        boundary,
+                        GetContentType(resource.RelativePath),
+                        MhtmlBaseUrl + EscapeRelativeUrl(resource.RelativePath),
+                        resource.Content,
+                        cancellationToken);
+                }
+                else
+                {
+                    await WriteMhtmlPartAsync(
+                        writer,
+                        boundary,
+                        GetContentType(resource.RelativePath),
+                        MhtmlBaseUrl + EscapeRelativeUrl(resource.RelativePath),
+                        resource.SourcePath!,
+                        resource.DecodeMarketFace,
+                        cancellationToken);
+                }
+
+                completedParts++;
+                ReportMhtmlResourceProgress(progress, completedParts, totalParts);
+            }
+
+            await writer.WriteLineAsync($"--{boundary}--");
+            return outputPath;
+        }
+        catch
+        {
+            TryDeleteFile(outputPath);
+            throw;
+        }
+    }
+
+    private static void ReportMhtmlResourceProgress(
+        IProgress<ChatExportProgress>? progress,
+        int completedParts,
+        int totalParts)
+    {
+        progress?.Report(new ChatExportProgress(
+            "打包 MHTML",
+            $"写入资源 {completedParts - 1}/{totalParts - 1}",
+            completedParts,
+            totalParts));
     }
 
     private static string InjectMhtmlDataScript(string indexHtml, string chatScript)
     {
-        var dataScript = "<script>" + chatScript + "</script>";
+        var inlineSafeScript = chatScript.Replace("</script", "<\\/script", StringComparison.OrdinalIgnoreCase);
+        var dataScript = "<script>" + inlineSafeScript + "</script>";
         var headEnd = indexHtml.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
         if (headEnd >= 0)
             return indexHtml.Insert(headEnd, "    " + dataScript + Environment.NewLine);
 
         return dataScript + Environment.NewLine + indexHtml;
-    }
-
-    private static void DeleteMhtmlStagingFiles(string exportRoot, string mhtmlPath)
-    {
-        foreach (var file in Directory.EnumerateFiles(exportRoot, "*", SearchOption.AllDirectories)
-                     .OrderByDescending(static path => path.Length))
-        {
-            if (!string.Equals(file, mhtmlPath, StringComparison.OrdinalIgnoreCase))
-                TryDeleteFile(file);
-        }
-
-        foreach (var directory in Directory.EnumerateDirectories(exportRoot, "*", SearchOption.AllDirectories)
-                     .OrderByDescending(static path => path.Length))
-        {
-            TryDeleteDirectory(directory);
-        }
     }
 
     private static async Task WriteMhtmlPartAsync(
@@ -1191,6 +1471,7 @@ public sealed class ChatExportService
         string contentType,
         string contentLocation,
         string filePath,
+        bool decodeMarketFace,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1200,19 +1481,69 @@ public sealed class ChatExportService
         await writer.WriteLineAsync($"Content-Location: {contentLocation}");
         await writer.WriteLineAsync();
 
-        await using var fileStream = File.OpenRead(filePath);
-        using var transform = new ToBase64Transform();
-        using var cryptoStream = new CryptoStream(fileStream, transform, CryptoStreamMode.Read);
-        using var reader = new StreamReader(cryptoStream, Encoding.ASCII);
-
-        var buffer = new char[76];
-        int read;
-        while ((read = await reader.ReadAsync(buffer, cancellationToken)) > 0)
-        {
-            await writer.WriteLineAsync(buffer.AsMemory(0, read), cancellationToken);
-        }
+        await using var fileStream = OpenSourceFile(filePath);
+        await WriteBase64StreamAsync(writer, fileStream, decodeMarketFace, cancellationToken);
 
         await writer.WriteLineAsync();
+    }
+
+    private static async Task WriteBase64StreamAsync(
+        TextWriter writer,
+        Stream source,
+        bool decodeMarketFace,
+        CancellationToken cancellationToken)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(128 * 1024 + 2);
+        try
+        {
+            var carryCount = 0;
+            long sourceOffset = 0;
+            while (true)
+            {
+                var read = await source.ReadAsync(
+                    buffer.AsMemory(carryCount, buffer.Length - carryCount),
+                    cancellationToken);
+                if (read > 0 && decodeMarketFace)
+                    ExportMediaStore.DecodeMarketFaceBytes(buffer.AsSpan(carryCount, read), sourceOffset);
+                sourceOffset += read;
+
+                var available = carryCount + read;
+                var processed = read == 0 ? available : available - available % 3;
+                if (processed > 0)
+                {
+                    var base64 = Convert.ToBase64String(buffer, 0, processed);
+                    for (var i = 0; i < base64.Length; i += 76)
+                    {
+                        await writer.WriteLineAsync(
+                            base64.AsMemory(i, Math.Min(76, base64.Length - i)),
+                            cancellationToken);
+                    }
+                }
+
+                carryCount = available - processed;
+                if (carryCount > 0)
+                    Buffer.BlockCopy(buffer, processed, buffer, 0, carryCount);
+                if (read == 0)
+                    break;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private sealed record MhtmlSourceResource(
+        string RelativePath,
+        string SourcePath,
+        bool DecodeMarketFace);
+
+    // 导出的媒体可能在 tar / zip 归档里 (例如 sdcard.tar\Tencent\MobileQQ\chatpic\...)
+    private static Stream OpenSourceFile(string path)
+    {
+        return File.Exists(path)
+            ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan)
+            : ArchiveFile.OpenRead(path);
     }
 
     private static void TryDeleteFile(string path)
@@ -1221,18 +1552,6 @@ public sealed class ChatExportService
         {
             if (File.Exists(path))
                 File.Delete(path);
-        }
-        catch
-        {
-        }
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
-                Directory.Delete(path);
         }
         catch
         {
@@ -1282,20 +1601,25 @@ public sealed class ChatExportService
         {
             await File.WriteAllTextAsync(
                 Path.Combine(exportRoot, "index.html"),
-                """
-                <!doctype html>
-                <meta charset="utf-8">
-                <title>QQ Chat Export</title>
-                <body>
-                <p>导出查看器尚未构建。请先构建 QQDatabaseExportViewer。</p>
-                </body>
-                """,
+                GetFallbackViewerHtml(),
                 new UTF8Encoding(false),
                 cancellationToken);
             return;
         }
 
         CopyDirectory(viewerDist, exportRoot, cancellationToken);
+    }
+
+    private static string GetFallbackViewerHtml()
+    {
+        return """
+               <!doctype html>
+               <meta charset="utf-8">
+               <title>QQ Chat Export</title>
+               <body>
+               <p>导出查看器尚未构建。请先构建 QQDatabaseExportViewer。</p>
+               </body>
+               """;
     }
 
     private static string? FindViewerDistDirectory()
@@ -1371,12 +1695,16 @@ public sealed class ChatExportService
         }
     }
 
-    private static string CreateExportRoot(string parentDirectory, AvaQQGroup conversation)
+    private static string ClaimExportRoot(
+        string parentDirectory,
+        AvaQQGroup conversation)
     {
-        return CreateExportRoot(parentDirectory, conversation.DisplayName);
+        return ClaimExportRoot(parentDirectory, conversation.DisplayName);
     }
 
-    private static string CreateMergedExportRoot(string parentDirectory, IEnumerable<AvaQQGroup> conversations)
+    private static string ClaimMergedExportRoot(
+        string parentDirectory,
+        IEnumerable<AvaQQGroup> conversations)
     {
         var titles = conversations
             .Select(static conversation => conversation.DisplayName)
@@ -1390,27 +1718,56 @@ public sealed class ChatExportService
             _ => $"合并_{titles[0]}_等",
         };
 
-        return CreateExportRoot(parentDirectory, title);
+        return ClaimExportRoot(parentDirectory, title);
     }
 
-    private static string CreateExportRoot(string parentDirectory, string titleValue)
+    private static string ClaimExportRoot(
+        string parentDirectory,
+        string titleValue)
     {
+        Directory.CreateDirectory(parentDirectory);
         var title = SanitizeFileName(titleValue);
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var directoryName = string.IsNullOrWhiteSpace(title)
             ? $"ChatExport_{timestamp}"
             : $"ChatExport_{title}_{timestamp}";
-        var path = Path.Combine(parentDirectory, directoryName);
-        if (!Directory.Exists(path))
-            return path;
 
-        for (var i = 2;; i++)
+        for (var i = 1;; i++)
         {
-            var candidate = Path.Combine(parentDirectory, $"{directoryName}_{i}");
-            if (!Directory.Exists(candidate))
+            var candidateName = i == 1 ? directoryName : $"{directoryName}_{i}";
+            var candidate = Path.Combine(parentDirectory, candidateName);
+            if (TryClaimExportDirectory(candidate))
                 return candidate;
         }
     }
+
+    private static bool TryClaimExportDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (CreateDirectoryW(path, IntPtr.Zero))
+                return true;
+
+            var error = Marshal.GetLastWin32Error();
+            if (error is ErrorFileExists or ErrorAlreadyExists)
+                return false;
+            throw new IOException(
+                $"Unable to create export directory '{path}': {new Win32Exception(error).Message}",
+                new Win32Exception(error));
+        }
+
+        lock (ExportDirectoryClaimLock)
+        {
+            if (Directory.Exists(path) || File.Exists(path))
+                return false;
+            Directory.CreateDirectory(path);
+            return true;
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectoryW(string path, IntPtr securityAttributes);
 
     private static string CreateMessageKey(AvaQQMessage message)
     {
@@ -1448,7 +1805,26 @@ public sealed class ChatExportService
             "text",
             message.MessageTime.ToString(CultureInfo.InvariantCulture),
             message.SenderId.ToString(CultureInfo.InvariantCulture),
-            message.DisplayText);
+            CreateStableTextFingerprint(message.DisplayText));
+    }
+
+    private static string CreateStableTextFingerprint(string value)
+    {
+        const ulong firstOffset = 14695981039346656037UL;
+        const ulong secondOffset = 7809847782465536322UL;
+        const ulong firstPrime = 1099511628211UL;
+        const ulong secondPrime = 14029467366897019727UL;
+        var first = firstOffset;
+        var second = secondOffset;
+        foreach (var character in value)
+        {
+            first = unchecked((first ^ character) * firstPrime);
+            second = unchecked((second ^ (character + 0x9E37U)) * secondPrime);
+        }
+
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{value.Length:x8}:{first:x16}{second:x16}");
     }
 
     private static string FormatMessageTime(int messageTime)
@@ -1462,8 +1838,8 @@ public sealed class ChatExportService
     {
         try
         {
-            return !string.IsNullOrWhiteSpace(path) && File.Exists(path)
-                ? new FileInfo(path).Length
+            return !string.IsNullOrWhiteSpace(path) && ArchiveFile.Exists(path)
+                ? ArchiveFile.GetLength(path)
                 : null;
         }
         catch
@@ -1498,19 +1874,34 @@ public sealed class ChatExportService
 
     private sealed class ExportMediaStore
     {
+        private const int FileBufferSize = 128 * 1024;
+        private const int MarketFaceXorChunkSize = 20;
+        private const int MarketFaceCycleSize = 50;
+
         private readonly string _exportRoot;
         private readonly Dictionary<string, string> _copiedFiles = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _copiedFilesByHash = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _copiedImagesByHash = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string?> _downloadedAvatars = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, MhtmlMediaResource> _mhtmlResources = new(StringComparer.OrdinalIgnoreCase);
         private readonly ChatExportContentOptions _options;
+        private readonly bool _collectForMhtml;
+        private readonly CancellationToken _cancellationToken;
         private static readonly HttpClient AvatarHttpClient = CreateAvatarHttpClient();
 
-        public ExportMediaStore(string exportRoot, ChatExportContentOptions options)
+        public ExportMediaStore(
+            string exportRoot,
+            ChatExportContentOptions options,
+            bool collectForMhtml,
+            CancellationToken cancellationToken)
         {
             _exportRoot = exportRoot;
             _options = options;
+            _collectForMhtml = collectForMhtml;
+            _cancellationToken = cancellationToken;
         }
+
+        public IReadOnlyCollection<MhtmlMediaResource> MhtmlResources => _mhtmlResources.Values;
 
         public string? CopyAvatar(string? path, string? url)
         {
@@ -1537,169 +1928,340 @@ public sealed class ChatExportService
             if (string.IsNullOrWhiteSpace(relativePath))
                 return null;
 
+            if (_collectForMhtml)
+            {
+                return _mhtmlResources.TryGetValue(relativePath, out var resource) &&
+                       resource.SourcePath is not null
+                    ? LocalImageFile.TryGetImageSize(resource.SourcePath)
+                    : null;
+            }
+
             var fullPath = Path.GetFullPath(Path.Combine(
                 _exportRoot,
                 relativePath.Replace('/', Path.DirectorySeparatorChar)));
-            var rootPath = Path.GetFullPath(_exportRoot);
-            var relativeToRoot = Path.GetRelativePath(rootPath, fullPath);
-            if (relativeToRoot.StartsWith("..", StringComparison.Ordinal) ||
-                Path.IsPathRooted(relativeToRoot))
-            {
-                return null;
-            }
-
             return LocalImageFile.TryGetImageSize(fullPath);
         }
 
         private string? DownloadAvatar(string? sourceUrl)
         {
-            if (string.IsNullOrWhiteSpace(sourceUrl))
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(sourceUrl) || sourceUrl.Length > 4096)
                 return null;
 
             if (_downloadedAvatars.TryGetValue(sourceUrl, out var cachedPath))
                 return cachedPath;
 
             var relativePath = TryDownloadAvatar(sourceUrl);
-            _downloadedAvatars[sourceUrl] = relativePath;
+            RememberCacheEntry(_downloadedAvatars, sourceUrl, relativePath);
             return relativePath;
         }
 
         private string? TryDownloadAvatar(string sourceUrl)
         {
-            if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) ||
-                uri.Scheme is not ("http" or "https"))
+            if (sourceUrl.Length > 4096 ||
+                !Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri) ||
+                !IsTrustedAvatarDownloadUri(uri))
             {
                 return null;
             }
 
+            byte[]? bytes;
+            string? mediaType;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                using var response = AvatarHttpClient.Send(request);
-                if (!response.IsSuccessStatusCode)
-                    return null;
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken);
+                timeout.CancelAfter(TimeSpan.FromSeconds(10));
+                bytes = null;
+                mediaType = null;
+                for (var redirectCount = 0; redirectCount <= MaxAvatarRedirects; redirectCount++)
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                    using var response = AvatarHttpClient.Send(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeout.Token);
+                    if ((int)response.StatusCode is >= 300 and < 400)
+                    {
+                        if (redirectCount == MaxAvatarRedirects ||
+                            response.Headers.Location is not { } location)
+                        {
+                            return null;
+                        }
 
-                var bytes = response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+                        var redirectedUri = location.IsAbsoluteUri ? location : new Uri(uri, location);
+                        if (!IsTrustedAvatarDownloadUri(redirectedUri))
+                            return null;
+
+                        uri = redirectedUri;
+                        continue;
+                    }
+
+                    if (!response.IsSuccessStatusCode ||
+                        response.Content.Headers.ContentLength is > MaxAvatarDownloadBytes)
+                    {
+                        return null;
+                    }
+
+                    using var contentStream = response.Content.ReadAsStream(timeout.Token);
+                    bytes = ReadBoundedAvatarBytes(contentStream, timeout.Token);
+                    mediaType = response.Content.Headers.ContentType?.MediaType;
+                    break;
+                }
+
+                if (bytes is null)
+                    return null;
                 if (bytes.Length == 0)
                     return null;
-
-                var extension = GetAvatarExtension(bytes, response.Content.Headers.ContentType?.MediaType);
-                if (extension is null)
-                    return null;
-
-                var relativeDirectory = $"{ExportResourceDirectory}/avatars";
-                var targetDirectory = Path.Combine(_exportRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(targetDirectory);
-
-                var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceUrl))).ToLowerInvariant()[..12];
-                var targetPath = Path.Combine(targetDirectory, $"avatar_{hash}{extension}");
-                File.WriteAllBytes(targetPath, bytes);
-
-                return Path.Combine(relativeDirectory, Path.GetFileName(targetPath)).Replace('\\', '/');
+            }
+            catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
                 return null;
+            }
+
+            var extension = GetAvatarExtension(bytes, mediaType);
+            if (extension is null)
+                return null;
+
+            var relativeDirectory = $"{ExportResourceDirectory}/avatars";
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceUrl))).ToLowerInvariant()[..12];
+            var relativePath = $"{relativeDirectory}/avatar_{hash}{extension}";
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (_collectForMhtml)
+            {
+                _mhtmlResources[relativePath] = new MhtmlMediaResource(relativePath, null, bytes, false);
+                return relativePath;
+            }
+
+            var targetPath = Path.Combine(
+                _exportRoot,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            try
+            {
+                File.WriteAllBytes(targetPath, bytes);
+                return relativePath;
+            }
+            catch
+            {
+                TryDeleteFile(targetPath);
+                throw;
+            }
+        }
+
+        private static bool IsTrustedAvatarDownloadUri(Uri uri)
+        {
+            if (uri.Scheme is not ("http" or "https") ||
+                !uri.IsDefaultPort ||
+                !string.IsNullOrEmpty(uri.UserInfo))
+            {
+                return false;
+            }
+
+            var host = uri.IdnHost.TrimEnd('.');
+            return host.Equals("qlogo.cn", StringComparison.OrdinalIgnoreCase) ||
+                   host.EndsWith(".qlogo.cn", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static byte[]? ReadBoundedAvatarBytes(Stream stream, CancellationToken cancellationToken)
+        {
+            using var output = new MemoryStream();
+            var buffer = new byte[64 * 1024];
+            while (true)
+            {
+                var read = stream.ReadAsync(buffer.AsMemory(), cancellationToken)
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+                if (read == 0)
+                    return output.ToArray();
+                if (output.Length + read > MaxAvatarDownloadBytes)
+                    return null;
+
+                output.Write(buffer, 0, read);
             }
         }
 
         private string? Copy(string? sourcePath, string relativeDirectory)
         {
-            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(sourcePath) || !ArchiveFile.Exists(sourcePath))
                 return null;
 
-            try
+            var fullPath = Path.GetFullPath(sourcePath);
+            var pathKey = CreateResourceKey(relativeDirectory, fullPath);
+            if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
+                return copiedRelativePath;
+
+            var fileKey = CreateResourceKey(relativeDirectory, ComputeFileHash(fullPath));
+            if (_copiedFilesByHash.TryGetValue(fileKey, out var existingRelativePath))
             {
-                var fullPath = Path.GetFullPath(sourcePath);
-                var pathKey = CreateResourceKey(relativeDirectory, fullPath);
-                if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
-                    return copiedRelativePath;
-
-                var fileKey = CreateResourceKey(relativeDirectory, ComputeFileHash(fullPath));
-                if (_copiedFilesByHash.TryGetValue(fileKey, out var existingRelativePath))
-                {
-                    _copiedFiles[pathKey] = existingRelativePath;
-                    return existingRelativePath;
-                }
-
-                var targetDirectory = Path.Combine(_exportRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(targetDirectory);
-
-                var fileName = CreateResourceFileName(fullPath, targetDirectory);
-                var targetPath = Path.Combine(targetDirectory, fileName);
-                File.Copy(fullPath, targetPath, overwrite: true);
-
-                var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
-                _copiedFiles[pathKey] = relativePath;
-                _copiedFilesByHash[fileKey] = relativePath;
-                return relativePath;
+                RememberCacheEntry(_copiedFiles, pathKey, existingRelativePath);
+                return existingRelativePath;
             }
-            catch
-            {
-                return null;
-            }
+
+            var fileName = CreateResourceFileName(fullPath, relativeDirectory);
+            var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
+            StoreFileResource(fullPath, relativePath, decodeMarketFace: false);
+
+            RememberCacheEntry(_copiedFiles, pathKey, relativePath);
+            RememberCacheEntry(_copiedFilesByHash, fileKey, relativePath);
+            return relativePath;
         }
 
         private string? CopyDisplayImage(string? sourcePath, string relativeDirectory)
         {
-            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(sourcePath) || !ArchiveFile.Exists(sourcePath))
                 return null;
 
+            var fullPath = Path.GetFullPath(sourcePath);
+            var pathKey = CreateResourceKey(relativeDirectory, fullPath);
+            if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
+                return copiedRelativePath;
+
+            var isEncodedMarketFace = LocalImageFile.IsMarketFaceEncodedGifImage(fullPath);
+            var imageHash = ComputeFileHash(fullPath, isEncodedMarketFace);
+            var imageKey = CreateResourceKey(relativeDirectory, imageHash);
+            if (_copiedImagesByHash.TryGetValue(imageKey, out var existingRelativePath))
+            {
+                RememberCacheEntry(_copiedFiles, pathKey, existingRelativePath);
+                return existingRelativePath;
+            }
+
+            var extension = GetImageFileExtension(fullPath, isEncodedMarketFace) ?? Path.GetExtension(fullPath);
+            var fileName = $"{imageHash}{extension}";
+            var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
+            StoreFileResource(fullPath, relativePath, isEncodedMarketFace);
+
+            RememberCacheEntry(_copiedFiles, pathKey, relativePath);
+            RememberCacheEntry(_copiedImagesByHash, imageKey, relativePath);
+            return relativePath;
+        }
+
+        private void StoreFileResource(string sourcePath, string relativePath, bool decodeMarketFace)
+        {
+            if (_collectForMhtml)
+            {
+                _mhtmlResources[relativePath] = new MhtmlMediaResource(
+                    relativePath,
+                    sourcePath,
+                    null,
+                    decodeMarketFace);
+                return;
+            }
+
+            var targetPath = Path.Combine(
+                _exportRoot,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+            CopyFileWithCancellation(sourcePath, targetPath, decodeMarketFace);
+        }
+
+        private string ComputeFileHash(string fullPath, bool decodeMarketFace = false)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            using var stream = OpenSourceFile(fullPath);
+            var buffer = ArrayPool<byte>.Shared.Rent(FileBufferSize);
             try
             {
-                var fullPath = Path.GetFullPath(sourcePath);
-                var pathKey = CreateResourceKey(relativeDirectory, fullPath);
-                if (_copiedFiles.TryGetValue(pathKey, out var copiedRelativePath))
-                    return copiedRelativePath;
-
-                var isEncodedMarketFace = LocalImageFile.IsMarketFaceEncodedGifImage(fullPath);
-                var bytes = isEncodedMarketFace ? LocalImageFile.ReadDisplayBytes(fullPath) : null;
-                var imageHash = bytes is null
-                    ? ComputeFileHash(fullPath)
-                    : Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-                var imageKey = CreateResourceKey(relativeDirectory, imageHash);
-                if (_copiedImagesByHash.TryGetValue(imageKey, out var existingRelativePath))
+                long offset = 0;
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    _copiedFiles[pathKey] = existingRelativePath;
-                    return existingRelativePath;
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    var data = buffer.AsSpan(0, read);
+                    if (decodeMarketFace)
+                        DecodeMarketFaceBytes(data, offset);
+                    hash.AppendData(data);
+                    offset += read;
                 }
 
-                var targetDirectory = Path.Combine(_exportRoot, relativeDirectory.Replace('/', Path.DirectorySeparatorChar));
-                Directory.CreateDirectory(targetDirectory);
+                return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
 
-                var extension = bytes is null
-                    ? GetImageFileExtension(fullPath) ?? Path.GetExtension(fullPath)
-                    : GetImageFileExtension(bytes, null) ?? Path.GetExtension(fullPath);
-                var fileName = $"{imageHash}{extension}";
-                var targetPath = Path.Combine(targetDirectory, fileName);
-                if (bytes is null)
-                    File.Copy(fullPath, targetPath, overwrite: true);
-                else
-                    File.WriteAllBytes(targetPath, bytes);
+        private string? GetImageFileExtension(string fullPath, bool decodeMarketFace)
+        {
+            Span<byte> header = stackalloc byte[12];
+            using var stream = ArchiveFile.OpenRead(fullPath);
+            var read = stream.Read(header);
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (decodeMarketFace)
+                DecodeMarketFaceBytes(header[..read], 0);
+            return GetImageFileExtension(header[..read].ToArray(), null);
+        }
 
-                var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
-                _copiedFiles[pathKey] = relativePath;
-                _copiedImagesByHash[imageKey] = relativePath;
-                return relativePath;
+        private void CopyFileWithCancellation(
+            string sourcePath,
+            string targetPath,
+            bool decodeMarketFace)
+        {
+            try
+            {
+                using (var source = OpenSourceFile(sourcePath))
+                using (var target = new FileStream(
+                           targetPath,
+                           FileMode.Create,
+                           FileAccess.Write,
+                           FileShare.None,
+                           FileBufferSize,
+                           FileOptions.SequentialScan))
+                {
+                    var buffer = ArrayPool<byte>.Shared.Rent(FileBufferSize);
+                    try
+                    {
+                        long offset = 0;
+                        int read;
+                        while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            _cancellationToken.ThrowIfCancellationRequested();
+                            var data = buffer.AsSpan(0, read);
+                            if (decodeMarketFace)
+                                DecodeMarketFaceBytes(data, offset);
+                            target.Write(data);
+                            offset += read;
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(buffer);
+                    }
+                }
+
+                _cancellationToken.ThrowIfCancellationRequested();
             }
             catch
             {
-                return null;
+                TryDeleteFile(targetPath);
+                throw;
             }
         }
 
-        private static string ComputeFileHash(string fullPath)
+        internal static void DecodeMarketFaceBytes(Span<byte> bytes, long absoluteOffset)
         {
-            using var stream = File.OpenRead(fullPath);
-            return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-        }
+            var index = 0;
+            while (index < bytes.Length)
+            {
+                var cycleOffset = (int)((absoluteOffset + index) % MarketFaceCycleSize);
+                if (cycleOffset < MarketFaceXorChunkSize)
+                {
+                    var count = Math.Min(MarketFaceXorChunkSize - cycleOffset, bytes.Length - index);
+                    for (var i = 0; i < count; i++)
+                        bytes[index + i] ^= 0xFF;
+                    index += count;
+                    continue;
+                }
 
-        private static string? GetImageFileExtension(string fullPath)
-        {
-            Span<byte> header = stackalloc byte[12];
-            using var stream = File.OpenRead(fullPath);
-            var read = stream.Read(header);
-            return GetImageFileExtension(header[..read].ToArray(), null);
+                index += Math.Min(MarketFaceCycleSize - cycleOffset, bytes.Length - index);
+            }
         }
 
         private static string CreateResourceKey(string relativeDirectory, string value)
@@ -1707,16 +2269,54 @@ public sealed class ChatExportService
             return $"{relativeDirectory}|{value}";
         }
 
-        private static string CreateResourceFileName(string fullPath, string targetDirectory)
+        private static void RememberCacheEntry<TValue>(
+            IDictionary<string, TValue> cache,
+            string key,
+            TValue value)
+        {
+            if (key.Length > MaxExportMediaCacheKeyLength ||
+                value is string stringValue && stringValue.Length > MaxExportMediaCacheValueLength)
+            {
+                return;
+            }
+
+            if (cache.ContainsKey(key) || cache.Count < MaxExportMediaCacheEntries)
+                cache[key] = value;
+        }
+
+        private string CreateResourceFileName(string fullPath, string relativeDirectory)
         {
             var fileName = SanitizeFileName(Path.GetFileName(fullPath));
             if (string.IsNullOrWhiteSpace(fileName))
                 fileName = CreateUniqueFileName(fullPath);
 
-            if (!File.Exists(Path.Combine(targetDirectory, fileName)))
+            var relativePath = Path.Combine(relativeDirectory, fileName).Replace('\\', '/');
+            if (!ResourcePathExists(relativePath))
                 return fileName;
 
-            return CreateUniqueFileName(fullPath);
+            var uniqueFileName = CreateUniqueFileName(fullPath);
+            relativePath = Path.Combine(relativeDirectory, uniqueFileName).Replace('\\', '/');
+            if (!ResourcePathExists(relativePath))
+                return uniqueFileName;
+
+            var name = Path.GetFileNameWithoutExtension(uniqueFileName);
+            var extension = Path.GetExtension(uniqueFileName);
+            for (var index = 2;; index++)
+            {
+                var candidate = $"{name}_{index}{extension}";
+                relativePath = Path.Combine(relativeDirectory, candidate).Replace('\\', '/');
+                if (!ResourcePathExists(relativePath))
+                    return candidate;
+            }
+        }
+
+        private bool ResourcePathExists(string relativePath)
+        {
+            return _collectForMhtml
+                ? _mhtmlResources.ContainsKey(relativePath)
+                : File.Exists(Path.Combine(
+                    _exportRoot,
+                    relativePath.Replace('/', Path.DirectorySeparatorChar)));
         }
 
         private static string CreateUniqueFileName(string fullPath, string? extensionOverride = null)
@@ -1787,7 +2387,12 @@ public sealed class ChatExportService
 
         private static HttpClient CreateAvatarHttpClient()
         {
-            var httpClient = new HttpClient
+            var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+            };
+            var httpClient = new HttpClient(handler)
             {
                 Timeout = TimeSpan.FromSeconds(10),
             };
@@ -1825,9 +2430,55 @@ public sealed class ChatExportService
             }
         }
     }
+
+    private sealed record MhtmlMediaResource(
+        string RelativePath,
+        string? SourcePath,
+        byte[]? Content,
+        bool DecodeMarketFace);
 }
 
-public sealed record ChatExportSource(AvaQQGroup Conversation, IReadOnlyList<AvaQQMessage> Messages);
+public sealed class ChatExportSource
+{
+    private readonly Func<CancellationToken, IAsyncEnumerable<AvaQQMessage>>? _messageFactory;
+
+    public ChatExportSource(AvaQQGroup conversation, IReadOnlyList<AvaQQMessage> messages)
+    {
+        Conversation = conversation;
+        Messages = messages;
+    }
+
+    public ChatExportSource(
+        AvaQQGroup conversation,
+        Func<CancellationToken, IAsyncEnumerable<AvaQQMessage>> messageFactory)
+    {
+        Conversation = conversation;
+        Messages = [];
+        _messageFactory = messageFactory ?? throw new ArgumentNullException(nameof(messageFactory));
+    }
+
+    public AvaQQGroup Conversation { get; }
+
+    public IReadOnlyList<AvaQQMessage> Messages { get; }
+
+    internal async IAsyncEnumerable<AvaQQMessage> ReadMessagesAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (_messageFactory is null)
+        {
+            foreach (var message in Messages)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return message;
+            }
+
+            yield break;
+        }
+
+        await foreach (var message in _messageFactory(cancellationToken).WithCancellation(cancellationToken))
+            yield return message;
+    }
+}
 
 public sealed record ChatExportConversationExport(AvaQQGroup Conversation, IReadOnlyList<ChatExportSource> Sources);
 

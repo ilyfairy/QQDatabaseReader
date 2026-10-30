@@ -4,8 +4,8 @@ using System.Text;
 namespace QQDatabaseKeyDumpPCQQ;
 
 /// <summary>
-/// 用于调试 32 位（WOW64）目标进程的最小化 Win32 调试器。
-/// 仅支持设置软件断点 + 命中后立即终止目标进程的工作模式。
+/// 面向 32 位（WOW64）目标进程的轻量密钥捕获辅助。
+/// 支持临时捕获点，命中后可选择结束目标进程。
 /// </summary>
 public sealed class Wow64Debugger : IDisposable
 {
@@ -65,7 +65,7 @@ public sealed class Wow64Debugger : IDisposable
     private bool _shouldExit;
 
     private readonly Dictionary<ulong, Breakpoint> _breakpoints = new();
-    // 单步状态：tid -> 该线程命中后需要重新写回 INT3 的断点地址
+    // 单步状态：tid -> 单步完成后需要重新安装的捕获点地址
     private readonly Dictionary<uint, ulong> _singleStepThreads = new();
 
     public Wow64Debugger(int processId, bool attach)
@@ -178,7 +178,7 @@ public sealed class Wow64Debugger : IDisposable
 
         if (isSingleStep)
         {
-            // 单步完成后，重新放回 INT3 让断点继续生效
+            // 单步完成后重新安装捕获点
             if (_singleStepThreads.TryGetValue(dbgEvent.dwThreadId, out ulong bpAddr))
             {
                 _singleStepThreads.Remove(dbgEvent.dwThreadId);
@@ -198,14 +198,14 @@ public sealed class Wow64Debugger : IDisposable
         ulong ip = (ulong)exRec.ExceptionAddress.ToInt64() & 0xFFFFFFFFUL;
         if (!_breakpoints.TryGetValue(ip, out var bp))
         {
-            // 不是我们的断点（可能是系统初始 BP），忽略并继续
+            // 无关异常，继续执行
             if (VerboseEvents) Console.WriteLine($"[dbg]   -> not our BP (ip=0x{ip:X}), continuing");
             return DBG_CONTINUE;
         }
 
         if (VerboseEvents) Console.WriteLine($"[dbg]   -> hit our BP @ 0x{ip:X}");
 
-        // 还原原始字节，让 CPU 这次能正常执行原指令
+        // 恢复原始指令字节
         WriteByteWithProtect(ip, bp.OriginalByte);
         FlushInstructionCache(_hProcess, (IntPtr)(long)ip, (UIntPtr)1);
 
@@ -238,8 +238,7 @@ public sealed class Wow64Debugger : IDisposable
 
             if (!capture)
             {
-                // 持续模式：把 EIP 回退到 INT3 处（在 WOW64 中 ExceptionAddress 已经是 INT3 地址，
-                // 但 EIP 一般是 INT3+1），并设置 TF 让 CPU 执行完原指令再产生 single-step 异常
+                // 连续捕获：回退 IP，单步执行原指令后再重新安装捕获点
                 uint eip = BitConverter.ToUInt32(ctxBuf, WOW64_OFFSET_EIP);
                 uint eflags = BitConverter.ToUInt32(ctxBuf, WOW64_OFFSET_EFLAGS);
                 if (eip != (uint)ip)
@@ -256,7 +255,7 @@ public sealed class Wow64Debugger : IDisposable
 
         if (capture)
         {
-            // 命中即终止
+            // 捕获完成后结束目标进程
             TerminateProcess(_hProcess, 0);
             _shouldExit = true;
         }
@@ -283,11 +282,11 @@ public sealed class Wow64Debugger : IDisposable
     }
 
     /// <summary>
-    /// 在远程进程一段连续地址范围内搜索字节模式，返回首次匹配的虚拟地址，找不到返回 0。
+    /// 在模块地址范围内查找固定字节序列，返回首次匹配地址；找不到返回 0。
     /// </summary>
     public ulong ScanMemory(ulong baseAddress, uint size, ReadOnlySpan<byte> pattern)
     {
-        // 分块读取，避免一次性 alloc 太大；并支持跨块匹配。
+        // 分块读取，避免一次性分配过大，并支持跨块匹配。
         const int CHUNK = 1 << 20; // 1 MiB
         int patLen = pattern.Length;
         if (patLen == 0 || size < patLen) return 0;

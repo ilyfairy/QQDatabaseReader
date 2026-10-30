@@ -151,15 +151,17 @@ public class GroupMessage
     public byte[]? Unknown2 { get; set; }
 
     /// <summary>
-    /// 群号
+    /// 群号. 旧版 QQNT 没有这一列, 用 40027
     /// </summary>
     [Column("40030")]
+    [LegacyColumn("[40027]")]
     public uint SavedGroupId { get; set; }
-    
+
     /// <summary>
-    /// 发送者QQ号
+    /// 发送者QQ号. 旧版 QQNT 没有这一列, 由 40020 (nt_uid) 换算
     /// </summary>
     [Column("40033")]
+    [LegacyColumn(QQNtUinFunction.Name + "([40020])")]
     public uint SenderId { get; set; }
 
     /// <summary>
@@ -181,6 +183,7 @@ public class GroupMessage
 }
 
 [Table("recent_contact_v3_table")]
+[LegacyTable("recent_contact_table")]
 public class RecentContact
 {
     /// <summary>
@@ -224,8 +227,10 @@ public class RecentContact
 
     /// <summary>
     /// 私聊时通常是 QQ 号；群聊最近联系人中通常为 0。
+    /// 旧版 QQNT 的 recent_contact_table 里私聊也是 0, 由 40021 (nt_uid) 换算
     /// </summary>
     [Column("40030")]
+    [LegacyColumn("COALESCE(NULLIF([40030], 0), " + QQNtUinFunction.Name + "([40021]))", OnLegacyTable = true)]
     public uint Uin { get; set; }
 
     [Column("40051")]
@@ -276,6 +281,7 @@ public class RecentContact
 
 
     [Column("40033")]
+    [LegacyColumn("COALESCE(NULLIF([40033], 0), " + QQNtUinFunction.Name + "([40020]))", OnLegacyTable = true)]
     public uint Uin2 { get; set; }
 
     /// <summary>

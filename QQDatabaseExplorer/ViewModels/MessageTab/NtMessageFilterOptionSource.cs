@@ -20,7 +20,8 @@ internal sealed class NtMessageFilterOptionSource(QQDatabaseService databaseServ
     {
         try
         {
-            return LoadNtMessageDateFilterOptions(conversation);
+            return databaseService.QQNtDatabaseQueryGate.Run(() =>
+                LoadNtMessageDateFilterOptions(conversation));
         }
         catch
         {
@@ -103,17 +104,18 @@ internal sealed class NtMessageFilterOptionSource(QQDatabaseService databaseServ
 
         try
         {
-            var candidates = groupInfoDatabase.DbContext.GroupMembers
-                .Where(member => member.GroupId == groupId)
-                .Where(member => member.Uin != 0)
-                .Select(member => new
-                {
-                    member.Uin,
-                    member.NtUid,
-                    member.MemberName,
-                    member.NickName,
-                })
-                .ToList()
+            var candidates = databaseService.QQNtDatabaseQueryGate.Run(() =>
+                groupInfoDatabase.DbContext.GroupMembers
+                    .Where(member => member.GroupId == groupId)
+                    .Where(member => member.Uin != 0)
+                    .Select(member => new
+                    {
+                        member.Uin,
+                        member.NtUid,
+                        member.MemberName,
+                        member.NickName,
+                    })
+                    .ToList())
                 .Select(member => new MessageSenderFilterOption(
                     member.Uin,
                     MessageFilterOptionText.FirstNonEmpty(member.MemberName, member.NickName, member.Uin.ToString()),

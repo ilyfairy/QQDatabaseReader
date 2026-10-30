@@ -7,10 +7,13 @@ namespace QQDatabaseReader.Database;
 /// <summary>
 /// profile_info.db
 /// </summary>
-public class QQProfileInfoDbContext(DbContextOptions<QQProfileInfoDbContext> options) : DbContext(options)
+public class QQProfileInfoDbContext(DbContextOptions<QQProfileInfoDbContext> options, DatabaseSchema? schema = null)
+    : DbContext(options), ISchemaMappedDbContext
 {
     public DbSet<QQBuddyListEntry> BuddyList { get; set; }
     public DbSet<QQProfileInfoEntry> ProfileInfo { get; set; }
+
+    public DatabaseSchema? Schema => schema;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,6 +24,8 @@ public class QQProfileInfoDbContext(DbContextOptions<QQProfileInfoDbContext> opt
         modelBuilder.Entity<QQProfileInfoEntry>()
             .Property(v => v.Uin)
             .HasConversion(UInt32BitPatternConverter.Instance);
+
+        schema?.Apply(modelBuilder);
     }
 }
 
@@ -42,9 +47,10 @@ public class QQBuddyListEntry
 }
 
 /// <summary>
-/// profile_info.db/profile_info_v6
+/// profile_info.db/profile_info_v6, 旧版 QQNT 是 profile_info_v2
 /// </summary>
 [Table("profile_info_v6")]
+[LegacyTable("profile_info_v2")]
 public class QQProfileInfoEntry
 {
     [Column("1000")]

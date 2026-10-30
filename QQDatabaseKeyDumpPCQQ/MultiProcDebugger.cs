@@ -4,8 +4,8 @@ using System.Text;
 namespace QQDatabaseKeyDumpPCQQ;
 
 /// <summary>
-/// 多进程 32 位 (WOW64) 调试器：用 CreateProcess(DEBUG_PROCESS) 启动目标，
-/// 自动跟踪由其 fork 出来的所有子进程。可在每个子进程加载特定 DLL 后扫描签名 + 设置断点。
+/// 以调试事件方式启动 32 位 (WOW64) 目标进程，并跟踪其子进程。
+/// 模块加载后可注册密钥捕获点。
 /// </summary>
 public sealed class MultiProcDebugger : IDisposable
 {
@@ -61,7 +61,7 @@ public sealed class MultiProcDebugger : IDisposable
 
     public bool VerboseEvents { get; set; } = false;
 
-    /// <summary>每个子进程加载某个 DLL 后触发；可用此回调时调用 SetBreakpoint。</summary>
+    /// <summary>子进程加载模块后触发，用于注册密钥捕获处理。</summary>
     public Action<uint, string, ulong, uint /*size*/> OnDllLoaded { get; set; } = (_, _, _, _) => { };
 
     public void Stop(bool terminateProcesses = true)
@@ -279,9 +279,9 @@ public sealed class MultiProcDebugger : IDisposable
 
         ulong ip = (ulong)er.ExceptionAddress.ToInt64() & 0xFFFFFFFFUL;
         if (!pc.Breakpoints.TryGetValue(ip, out var bp))
-            return DBG_CONTINUE; // 不是我们的（系统初始 BP）
+            return DBG_CONTINUE; // 无关异常，继续执行
 
-        // 还原原指令
+        // 恢复原始指令字节
         WriteByteWithProtect(pc.hProcess, ip, bp.OriginalByte);
         FlushInstructionCache(pc.hProcess, (IntPtr)(long)ip, (UIntPtr)1);
 
@@ -297,7 +297,7 @@ public sealed class MultiProcDebugger : IDisposable
             try { bp.OnHit(ev.dwProcessId, regs); }
             catch (Exception ex) { Console.Error.WriteLine($"BP callback ex: {ex}"); }
 
-            // 持续模式：把 EIP 回退到 INT3 处，设 TF 单步执行原指令后再恢复 INT3
+            // 连续捕获：回退 IP，单步执行原指令后再重新安装捕获点
             uint eip = BitConverter.ToUInt32(ctxBuf, WOW64_OFFSET_EIP);
             uint eflags = BitConverter.ToUInt32(ctxBuf, WOW64_OFFSET_EFLAGS);
             if (eip != (uint)ip) BitConverter.GetBytes((uint)ip).CopyTo(ctxBuf, WOW64_OFFSET_EIP);

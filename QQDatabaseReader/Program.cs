@@ -28,8 +28,15 @@ class Program
                 ? args[3]
                 : Path.ChangeExtension(encryptedDbForSchema, ".schema.md");
 
-            PCQQPageDecryptVfs.Register(schemaKey);
-            DumpSchemaMarkdown(encryptedDbForSchema, markdown, PCQQPageDecryptVfs.VfsName);
+            var vfsName = PCQQPageDecryptVfs.Register(schemaKey);
+            try
+            {
+                DumpSchemaMarkdown(encryptedDbForSchema, markdown, vfsName);
+            }
+            finally
+            {
+                PCQQPageDecryptVfs.Release(vfsName);
+            }
             Console.WriteLine($"schema -> {markdown}");
             return 0;
         }

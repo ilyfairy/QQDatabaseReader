@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
+using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
 
@@ -10,30 +11,55 @@ namespace QQDatabaseExplorer.ViewModels.MessageTab;
 internal sealed class MessageParticipantResolver
 {
     private readonly Func<QQProfileInfoReader?> _getProfileInfoDatabase;
+    private readonly QQNtDatabaseQueryGate _queryGate;
     private readonly MessageAvatarLocalPathCache _avatarLocalPathCache;
     private readonly SystemHintParticipantResolver _systemHintParticipantResolver;
+    private readonly object _profileInfoCacheGate = new();
     private ProfileInfoNameCache? _profileInfoNames;
 
     public MessageParticipantResolver(
         Func<QQProfileInfoReader?> getProfileInfoDatabase,
         Func<QQGroupInfoReader?> getGroupInfoDatabase,
-        Func<string?> getNtDataPath)
+        Func<string?> getNtDataPath,
+        QQNtDatabaseQueryGate queryGate)
     {
         _getProfileInfoDatabase = getProfileInfoDatabase;
+        _queryGate = queryGate;
         _avatarLocalPathCache = new MessageAvatarLocalPathCache(getNtDataPath);
         _systemHintParticipantResolver = new SystemHintParticipantResolver(
             getGroupInfoDatabase,
-            GetProfileInfoNameCache);
+            GetProfileInfoNameCache,
+            queryGate);
     }
 
     public void InvalidateProfileInfoCache()
     {
-        _profileInfoNames = null;
+        lock (_profileInfoCacheGate)
+        {
+            _profileInfoNames = null;
+        }
     }
 
-    public void PreloadProfileInfoCache(QQProfileInfoReader database)
+    public IReadOnlyDictionary<ProfileInfoLookupRequest, string> PreloadProfileInfoCache(
+        QQProfileInfoReader database,
+        IReadOnlyCollection<ProfileInfoLookupRequest> requests)
     {
-        _profileInfoNames = ProfileInfoNameCache.Create(database);
+        ProfileInfoNameCache cache;
+        lock (_profileInfoCacheGate)
+        {
+            cache = ProfileInfoNameCache.Create(database, _queryGate);
+            _profileInfoNames = cache;
+        }
+
+        var resolvedNames = new Dictionary<ProfileInfoLookupRequest, string>();
+        foreach (var request in requests)
+        {
+            resolvedNames[request] = cache.TryGetName(request.Uin, request.NtUid, out var name)
+                ? name
+                : string.Empty;
+        }
+
+        return resolvedNames;
     }
 
     public void ClearAvatarPathCaches()
@@ -159,14 +185,17 @@ internal sealed class MessageParticipantResolver
     private ProfileInfoNameCache GetProfileInfoNameCache()
     {
         var database = _getProfileInfoDatabase();
-        if (_profileInfoNames is { } cache &&
-            ReferenceEquals(cache.Database, database))
+        lock (_profileInfoCacheGate)
         {
-            return cache;
-        }
+            if (_profileInfoNames is { } cache &&
+                ReferenceEquals(cache.Database, database))
+            {
+                return cache;
+            }
 
-        _profileInfoNames = ProfileInfoNameCache.Create(database);
-        return _profileInfoNames;
+            _profileInfoNames = ProfileInfoNameCache.Create(database, _queryGate);
+            return _profileInfoNames;
+        }
     }
 
     private static string FirstNonEmpty(params string?[] values)
@@ -179,3 +208,5 @@ internal readonly record struct ConversationAvatarCacheItem(
     uint PrivateUin,
     string? PrivateUid,
     string? AvatarLocalPath);
+
+internal readonly record struct ProfileInfoLookupRequest(uint Uin, string? NtUid);

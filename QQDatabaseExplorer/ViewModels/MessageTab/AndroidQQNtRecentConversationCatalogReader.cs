@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using QQDatabaseExplorer.Models;
@@ -13,7 +14,9 @@ internal static class AndroidQQNtRecentConversationCatalogReader
         try
         {
             var recentContacts = messageDatabase.DbContext.RecentContacts
-                .Where(v => v.ChatType == ChatType.GroupMessage || v.ChatType == ChatType.PrivateMessage)
+                .Where(v =>
+                    (v.RecentCategory == (int)ChatType.GroupMessage && v.ChatType == ChatType.GroupMessage) ||
+                    (v.RecentCategory == (int)ChatType.PrivateMessage && v.ChatType == ChatType.PrivateMessage))
                 .OrderByDescending(v => v.SortTime == 0 ? v.LastTime : v.SortTime)
                 .Select(v => new
                 {
@@ -128,9 +131,9 @@ internal static class AndroidQQNtRecentConversationCatalogReader
                 .DistinctBy(contact => contact.ConversationKey)
                 .ToList();
         }
-        catch
+        catch (Exception ex)
         {
-            return [];
+            throw new InvalidOperationException("Failed to read the Android QQNT recent-conversation catalog.", ex);
         }
     }
 
@@ -196,78 +199,43 @@ internal static class AndroidQQNtRecentConversationCatalogReader
         if (messageKeys.Count == 0)
             return new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
 
-        var result = new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
-        foreach (var key in messageKeys.Distinct())
+        var keys = messageKeys
+            .Where(key => key.MessageId != 0 && !string.IsNullOrWhiteSpace(key.PeerUid))
+            .Distinct()
+            .ToArray();
+        if (keys.Length == 0)
+            return new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
+
+        var messages = new Dictionary<long, MessageRecord>();
+        foreach (var batch in keys.Select(key => key.MessageId).Distinct().Chunk(500))
         {
-            var latestMessage = FindRecentPrivateMessageCandidate(messageDatabase, key);
-            var conversationMessage = latestMessage ?? FindLatestPrivateConversationMessage(messageDatabase, key.PeerUid);
-            if (conversationMessage is not { } message || message.PrivateConversationId == 0)
+            foreach (var message in messageDatabase.DbContext.PrivateMessages
+                         .Where(message => batch.Contains(message.MessageId))
+                         .Where(message => message.MessageType != MessageType.Empty)
+                         .AsEnumerable()
+                         .Select(MessageRecordFactory.FromQQNtPrivate))
+            {
+                messages[message.MessageId] = message;
+            }
+        }
+
+        var result = new Dictionary<RecentPrivateMessageKey, RecentPrivateMessageMatch>();
+        foreach (var key in keys)
+        {
+            if (!messages.TryGetValue(key.MessageId, out var message) ||
+                message.PrivateConversationId == 0 ||
+                !string.Equals(message.PeerUid, key.PeerUid, StringComparison.Ordinal))
+            {
                 continue;
+            }
 
             result[key] = new RecentPrivateMessageMatch(
                 message.PrivateConversationId,
                 message.PeerUin,
                 message.MessageTime,
-                latestMessage);
+                message);
         }
 
         return result;
-    }
-
-    private static MessageRecord? FindRecentPrivateMessageCandidate(
-        QQAndroidMessageReader messageDatabase,
-        RecentPrivateMessageKey key)
-    {
-        if (string.IsNullOrWhiteSpace(key.PeerUid) ||
-            key.MessageId == 0 && key.MessageSeq == 0)
-        {
-            return null;
-        }
-
-        var query = messageDatabase.DbContext.PrivateMessages
-            .Where(message => message.PeerUid == key.PeerUid)
-            .Where(message => message.MessageType != MessageType.Empty);
-
-        if (key.MessageId != 0)
-        {
-            var idMessage = query
-                .Where(message => message.MessageId == key.MessageId)
-                .Take(1)
-                .AsEnumerable()
-                .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-                .FirstOrDefault();
-            if (idMessage is not null)
-                return idMessage;
-        }
-
-        if (key.MessageSeq == 0)
-            return null;
-
-        return query
-            .Where(message => message.MessageSeq == key.MessageSeq)
-            .OrderByDescending(message => message.MessageId)
-            .Take(1)
-            .AsEnumerable()
-            .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-            .FirstOrDefault();
-    }
-
-    private static MessageRecord? FindLatestPrivateConversationMessage(
-        QQAndroidMessageReader messageDatabase,
-        string peerUid)
-    {
-        if (string.IsNullOrWhiteSpace(peerUid))
-            return null;
-
-        return messageDatabase.DbContext.PrivateMessages
-            .Where(message => message.PeerUid == peerUid)
-            .Where(message => message.ConversationId != 0)
-            .Where(message => message.MessageType != MessageType.Empty)
-            .OrderByDescending(message => message.MessageSeq)
-            .ThenByDescending(message => message.MessageId)
-            .Take(1)
-            .AsEnumerable()
-            .Select(message => (MessageRecord?)MessageRecordFactory.FromQQNtPrivate(message))
-            .FirstOrDefault();
     }
 }

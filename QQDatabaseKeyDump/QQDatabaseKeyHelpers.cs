@@ -4,7 +4,7 @@ public static class QQDatabaseKeyHelpers
 {
     public static int FindLinuxFunctionOffset()
     {
-        // lea rsi, aNtSqlite3KeyV2 ; "nt_sqlite3_key_v2: db=%p zDb=%s"
+        // 预留：按密钥格式字符串定位相关代码路径。
         return 0;
     }
 

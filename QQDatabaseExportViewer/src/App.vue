@@ -4,6 +4,7 @@ import { layout, measureNaturalWidth, prepareWithSegments } from '@chenglou/pret
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import MessageItem from '@/components/MessageItem.vue'
 import { loadChatExport, loadChatExportFromFile, loadMessageChunk } from '@/services/chatExportLoader'
+import { localAssetUrl } from '@/services/safeUrl'
 import type {
   ChatExportChat,
   ChatExportConversation,
@@ -1070,14 +1071,6 @@ function mediaDisplaySize(media: ChatExportMedia | null | undefined, kind: 'Imag
   }
 }
 
-function assetUrl(path?: string | null) {
-  return path ? `./${path}` : ''
-}
-
-function avatarUrl(path?: string | null, remote?: string | null) {
-  return assetUrl(path) || remote || ''
-}
-
 function conversationTypeLabel(type: string) {
   return type.includes('Group') || type === 'Group'
     ? '群聊'
@@ -1108,8 +1101,10 @@ function shouldShowSourceLabel() {
   return !!conversation && conversation.sources.length > 1
 }
 
-function messageSourceLabel(_message: ChatExportMessage) {
-  return undefined
+function messageSourceLabel(message: ChatExportMessage) {
+  return activeConversation.value?.sources.find((source) =>
+    source.key === message.raw.conversationKey,
+  )?.title
 }
 
 function chooseChatJson() {
@@ -1569,15 +1564,6 @@ function timelineScrollElement() {
   return timelineScrollRef.value
 }
 
-function stickToTimelineBottom() {
-  const element = timelineScrollElement()
-  if (!element) {
-    return
-  }
-
-  element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-}
-
 function nextFrame() {
   return new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
 }
@@ -1722,8 +1708,8 @@ function setDocumentResizeCursor(enabled: boolean) {
           >
             <span class="conversation-list-avatar">
               <img
-                v-if="avatarUrl(chat.conversation.avatarPath, chat.conversation.avatarUrl)"
-                :src="avatarUrl(chat.conversation.avatarPath, chat.conversation.avatarUrl)"
+                v-if="localAssetUrl(chat.conversation.avatarPath)"
+                :src="localAssetUrl(chat.conversation.avatarPath)"
                 loading="lazy"
                 decoding="async"
                 alt=""
@@ -1761,8 +1747,8 @@ function setDocumentResizeCursor(enabled: boolean) {
     <header v-if="activeConversation" class="conversation-header">
       <div class="conversation-avatar">
         <img
-          v-if="avatarUrl(activeConversation.avatarPath, activeConversation.avatarUrl)"
-          :src="avatarUrl(activeConversation.avatarPath, activeConversation.avatarUrl)"
+          v-if="localAssetUrl(activeConversation.avatarPath)"
+          :src="localAssetUrl(activeConversation.avatarPath)"
           loading="lazy"
           decoding="async"
           alt=""

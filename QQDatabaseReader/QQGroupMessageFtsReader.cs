@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using QQDatabaseReader.Database;
 using QQDatabaseReader.Sqlite;
@@ -43,19 +44,36 @@ public class QQGroupMessageFtsReader : IQQDatabase
 
     public void Initialize()
     {
-        RawDatabase.Initialize();
-        QQPinyinLetterTokenizer.Register(RawDatabase.Database.DangerousGetHandle(), "e_sqlcipher");
+        try
+        {
+            RawDatabase.Initialize();
+            QQPinyinLetterTokenizer.Register(RawDatabase.Database.DangerousGetHandle(), "e_sqlcipher");
 
-        var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
-        var optionsBuilder = new DbContextOptionsBuilder<QQGroupMessageFtsDbContext>();
-        optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
-        DbContext = new QQGroupMessageFtsDbContext(optionsBuilder.Options);
-        SearchService = new GroupMessageFtsSearchService(DbContext, _contentTableName);
+            var connection = new QQNTDbConnection(RawDatabase.Database, RawDatabase.DatabaseFilePath);
+            var optionsBuilder = new DbContextOptionsBuilder<QQGroupMessageFtsDbContext>();
+            optionsBuilder.UseSqlite(connection).UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+            DbContext = new QQGroupMessageFtsDbContext(optionsBuilder.Options);
+            SearchService = new GroupMessageFtsSearchService(DbContext, _contentTableName);
+        }
+        catch
+        {
+            DbContext?.Dispose();
+            RawDatabase.Dispose();
+            throw;
+        }
     }
 
     public IReadOnlyList<GroupMessageFtsSearchResult> Search(GroupMessageFtsSearchRequest request)
     {
         return SearchService.Search(request);
+    }
+
+    public GroupMessageFtsSearchPage SearchPage(
+        GroupMessageFtsSearchRequest request,
+        int maxScanRows,
+        CancellationToken cancellationToken = default)
+    {
+        return SearchService.SearchPage(request, maxScanRows, cancellationToken);
     }
 
     public long Count(GroupMessageFtsCountRequest request)
@@ -75,7 +93,7 @@ public class QQGroupMessageFtsReader : IQQDatabase
 
     public void Dispose()
     {
-        DbContext.Dispose();
+        DbContext?.Dispose();
         RawDatabase.Dispose();
     }
 }

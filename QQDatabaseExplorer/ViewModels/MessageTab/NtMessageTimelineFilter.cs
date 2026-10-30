@@ -19,10 +19,20 @@ internal static class NtMessageTimelineFilter
         if (filter.SelectedDayStartTimes.Count > 0)
             query = query.Where(message => filter.SelectedDayStartTimes.Contains(message.DayTimestamp));
 
-        if (conversation.ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup &&
+        if ((conversation.ConversationType is AvaConversationType.Group or AvaConversationType.PCQQGroup) &&
             filter.SenderIds.Count > 0)
         {
-            query = query.Where(message => filter.SenderIds.Contains(message.SenderId));
+            // SQLite stores QQ numbers as signed INTEGER values.  EF Core's
+            // uint parameter conversion narrows values above Int32.MaxValue to
+            // a negative literal (for example 2306819382 becomes -1988147914),
+            // so a normal uint Contains() silently returns no rows.  Cast the
+            // column to Int64 and compare against Int64 values to preserve the
+            // full UInt32 range while keeping the conversation predicate
+            // indexable.
+            var senderIds = filter.SenderIds
+                .Select(static senderId => (long)senderId)
+                .ToArray();
+            query = query.Where(message => senderIds.Contains((long)message.SenderId));
         }
 
         return query;

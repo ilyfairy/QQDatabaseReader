@@ -23,7 +23,14 @@ public static class AvatarCacheResolver
             return null;
         }
 
-        var avatarRoot = Path.Combine(ntDataFullPath, "avatar");
+        if (!TrustedMediaPath.TryResolveSubdirectoryWithinAnchor(
+                ntDataFullPath,
+                Path.Combine(ntDataFullPath, "avatar"),
+                out var avatarRoot))
+        {
+            return null;
+        }
+
         if (TryUseExistingAvatarPath(storedPath, avatarRoot, out var existingPath))
             return existingPath;
 
@@ -31,9 +38,12 @@ public static class AvatarCacheResolver
         if (avatarRelativePath is null)
             return null;
 
-        var repairedPath = Path.GetFullPath(Path.Combine(ntDataFullPath, avatarRelativePath));
-        return IsUnderDirectory(repairedPath, avatarRoot) && File.Exists(repairedPath)
-            ? repairedPath
+        var repairedPath = Path.Combine(ntDataFullPath, avatarRelativePath);
+        return TrustedMediaPath.TryResolveExistingFileWithinRoot(
+            avatarRoot,
+            repairedPath,
+            out var resolvedPath)
+            ? resolvedPath
             : null;
     }
 
@@ -46,8 +56,10 @@ public static class AvatarCacheResolver
 
         try
         {
-            var fullPath = Path.GetFullPath(storedPath);
-            if (IsUnderDirectory(fullPath, avatarRoot) && File.Exists(fullPath))
+            if (TrustedMediaPath.TryResolveExistingFileWithinRoot(
+                    avatarRoot,
+                    Path.GetFullPath(storedPath),
+                    out var fullPath))
             {
                 existingPath = fullPath;
                 return true;
@@ -73,15 +85,5 @@ public static class AvatarCacheResolver
         return segmentIndex < 0
             ? null
             : normalizedPath[(segmentIndex + 1)..];
-    }
-
-    private static bool IsUnderDirectory(string path, string directory)
-    {
-        var fullPath = Path.GetFullPath(path);
-        var fullDirectory = Path.GetFullPath(directory);
-        if (!fullDirectory.EndsWith(Path.DirectorySeparatorChar))
-            fullDirectory += Path.DirectorySeparatorChar;
-
-        return fullPath.StartsWith(fullDirectory, StringComparison.OrdinalIgnoreCase);
     }
 }

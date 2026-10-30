@@ -167,6 +167,9 @@ internal sealed record QQNtDatabaseRuntimeGroup(
             BuddyMessageFtsDbPassword = BuddyMessageFtsDatabase?.RawDatabase.CipherPassword,
             ProfileInfoDbPath = ProfileInfoDatabase?.RawDatabase.DatabaseFilePath,
             ProfileInfoDbPassword = ProfileInfoDatabase?.RawDatabase.CipherPassword,
+            CipherHmacAlgorithm = (MessageDatabase?.RawDatabase ?? AndroidMessageDatabase?.RawDatabase ?? GroupInfoDatabase?.RawDatabase
+                    ?? ProfileInfoDatabase?.RawDatabase ?? GroupMessageFtsDatabase?.RawDatabase ?? BuddyMessageFtsDatabase?.RawDatabase)
+                ?.CipherHmacAlgorithm.ToQQNtHmacAlgorithm(),
         };
 
         if (platformType is DatabasePlatformType.AndroidQQNT)
@@ -190,6 +193,7 @@ internal sealed record QQNtDatabaseRuntimeGroup(
                     BuddyMessageFtsDbPassword = qqnt.BuddyMessageFtsDbPassword,
                     ProfileInfoDbPath = qqnt.ProfileInfoDbPath,
                     ProfileInfoDbPassword = qqnt.ProfileInfoDbPassword,
+                    CipherHmacAlgorithm = qqnt.CipherHmacAlgorithm,
                 },
             };
         }

@@ -67,11 +67,11 @@ public partial class PCQQKeyDumpWindowViewModel : ViewModelBase, IDisposable
         _dumpCancellation = dumpCancellation;
         oldCancellation?.Dispose();
         IsRunning = true;
-        StatusText = "正在调试 PCQQ";
+        StatusText = "正在获取 PCQQ 密钥";
 
         try
         {
-            AppendLog("启动 PCQQ Key 获取器.");
+            AppendLog("启动 PCQQ 密钥获取工具.");
             AppendLog("登录 PCQQ 后, 窗口里会显示 Msg3.0.db, Info.db 等数据库对应的密钥, 请手动复制需要的密钥.");
             AppendLog("");
 

@@ -13,6 +13,7 @@ using Avalonia.Platform.Storage;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Utilities;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Services;
 
@@ -104,7 +105,7 @@ public class ClipboardService : IClipboardService
 
     public async Task SetImageAsync(Control owner, string? imagePath)
     {
-        if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
+        if (string.IsNullOrWhiteSpace(imagePath) || !ArchiveFile.Exists(imagePath))
             return;
 
         if (TopLevel.GetTopLevel(owner) is not { } topLevel ||
@@ -125,9 +126,11 @@ public class ClipboardService : IClipboardService
 
     public async Task SetFileAsync(Control owner, string? filePath)
     {
-        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        if (string.IsNullOrWhiteSpace(filePath) || !ArchiveFile.Exists(filePath))
             return;
 
+        // 剪贴板里只能放真实文件, 归档里的文件先解到临时目录
+        filePath = ArchiveFile.GetLocalPath(filePath);
         if (ClipboardFileWriter.TrySetFile(filePath))
             return;
 

@@ -4,7 +4,7 @@ using System.Text;
 
 namespace QQDatabaseKeyDump;
 
-public class NativeDebugger
+public sealed class NativeDebugger : IDisposable
 {
     private const uint TH32CS_SNAPMODULE = 0x00000008;
     private const uint TH32CS_SNAPMODULE32 = 0x00000010;
@@ -14,8 +14,6 @@ public class NativeDebugger
     private const uint PROCESS_VM_WRITE = 0x0020;
     private const uint PROCESS_VM_OPERATION = 0x0008;
     private const uint PROCESS_QUERY_INFORMATION = 0x0400;
-    private const uint PROCESS_TERMINATE = 0x0001;
-
     private const uint THREAD_GET_CONTEXT = 0x0008;
     private const uint THREAD_SET_CONTEXT = 0x0010;
     private const uint THREAD_QUERY_INFORMATION = 0x0040;
@@ -27,7 +25,9 @@ public class NativeDebugger
 
     private const uint EXCEPTION_SINGLE_STEP = 0x80000004;
     private const uint EXCEPTION_BREAKPOINT = 0x80000003;
+    private const uint DBG_CONTINUE = 0x00010002;
     private const uint DBG_EXCEPTION_NOT_HANDLED = 0x80010001;
+    private const int BreakpointRestoreAttempts = 3;
 
     private const uint EXCEPTION_DEBUG_EVENT = 1;
     private const uint CREATE_PROCESS_DEBUG_EVENT = 3;
@@ -38,6 +38,8 @@ public class NativeDebugger
     private IntPtr _hProcess = IntPtr.Zero;
     private bool _attached = false;
     private bool _shouldExit = false;
+    private bool _disposed;
+    private Exception? _breakpointCallbackException;
     private Dictionary<ulong, BreakpointCallback> _softwareBreakpoints = new();
     private Dictionary<uint, ulong> _singleStepThreads = new();
 
@@ -48,41 +50,84 @@ public class NativeDebugger
 
     public void Attach()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_attached)
             return;
-        if (!DebugActiveProcess(_processId))
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
-        DebugSetProcessKillOnExit(true);
+        _shouldExit = false;
+        _breakpointCallbackException = null;
 
-        _hProcess = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, false, _processId);
+        _hProcess = OpenProcess(
+            PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION,
+            false,
+            _processId);
         if (_hProcess == IntPtr.Zero)
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
+        if (!DebugActiveProcess(_processId))
+        {
+            var error = Marshal.GetLastWin32Error();
+            CloseProcessHandle();
+            throw new System.ComponentModel.Win32Exception(error);
+        }
+
         _attached = true;
+        if (!DebugSetProcessKillOnExit(false))
+        {
+            var failure = new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            try
+            {
+                Detach();
+            }
+            catch (Exception detachException)
+            {
+                throw new AggregateException(failure, detachException);
+            }
+
+            throw failure;
+        }
     }
 
     public void Detach()
     {
         _shouldExit = true;
 
-        foreach (var (address, _) in _softwareBreakpoints.ToList())
-            RestoreSoftwareBreakpoint(address);
-        
-        _softwareBreakpoints.Clear();
+        if (!_attached)
+        {
+            _softwareBreakpoints.Clear();
+            _singleStepThreads.Clear();
+            CloseProcessHandle();
+            return;
+        }
 
-        if (_attached)
+        // Never release the debuggee while an INT3 byte may still be installed. A failed
+        // restoration deliberately leaves the debugger attached and the process handle open
+        // so the caller can report the failure and retry without letting the target run free.
+        RestoreAllSoftwareBreakpoints();
+
+        if (!DebugActiveProcessStop(_processId))
         {
-            // 在脱离调试前先终止进程
-            TerminateProcess(_hProcess, 0);
-            DebugActiveProcessStop(_processId);
-            _attached = false;
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Failed to detach the debugger after restoring all software breakpoints.");
         }
-        if (_hProcess != IntPtr.Zero)
-        {
-            CloseHandle(_hProcess);
-            _hProcess = IntPtr.Zero;
-        }
+
+        CompleteDetach();
+    }
+
+    public void RequestStop()
+    {
+        _shouldExit = true;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        Detach();
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
 
     private void RestoreSoftwareBreakpoint(ulong address)
@@ -90,13 +135,57 @@ public class NativeDebugger
         if (!_softwareBreakpoints.TryGetValue(address, out var callback))
             return;
 
-        const uint PAGE_EXECUTE_READWRITE = 0x40;
-        if (!VirtualProtectEx(_hProcess, new IntPtr((long)address), new IntPtr(1), PAGE_EXECUTE_READWRITE, out uint oldProtect))
-            return;
+        WriteProtectedByte(address, callback.OriginalByte);
+    }
 
-        WriteByte(address, callback.OriginalByte);
-        VirtualProtectEx(_hProcess, new IntPtr((long)address), new IntPtr(1), oldProtect, out _);
-        FlushInstructionCacheRemote(address, 1);
+    private void RestoreAllSoftwareBreakpoints()
+    {
+        if (_softwareBreakpoints.Count == 0)
+        {
+            _singleStepThreads.Clear();
+            return;
+        }
+
+        if (_hProcess == IntPtr.Zero)
+            throw new InvalidOperationException("Cannot restore breakpoints after the process handle has been closed.");
+
+        Dictionary<ulong, Exception>? failures = null;
+        for (var attempt = 0;
+             attempt < BreakpointRestoreAttempts && _softwareBreakpoints.Count > 0;
+             attempt++)
+        {
+            failures = null;
+            foreach (var (address, _) in _softwareBreakpoints.ToList())
+            {
+                try
+                {
+                    RestoreSoftwareBreakpoint(address);
+                    _softwareBreakpoints.Remove(address);
+                }
+                catch (Exception ex)
+                {
+                    (failures ??= [])[address] = new InvalidOperationException(
+                        $"Failed to restore breakpoint at 0x{address:X}.",
+                        ex);
+                }
+            }
+
+            if (_softwareBreakpoints.Count > 0 && attempt + 1 < BreakpointRestoreAttempts)
+                Thread.Sleep(10 << attempt);
+        }
+
+        if (_softwareBreakpoints.Count > 0)
+        {
+            var remainingFailures = _softwareBreakpoints.Keys
+                .Select(address => failures?.GetValueOrDefault(address) ??
+                    new InvalidOperationException($"Failed to restore breakpoint at 0x{address:X}."))
+                .ToArray();
+            throw new AggregateException(
+                "One or more software breakpoints could not be restored after retrying.",
+                remainingFailures);
+        }
+
+        _singleStepThreads.Clear();
     }
 
     public MODULEENTRY32? FindModule(string moduleName)
@@ -117,60 +206,78 @@ public class NativeDebugger
 
     public void SetSoftwareBreakpoint(ulong address, Action<CONTEXT> callback)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_attached || _hProcess == IntPtr.Zero)
+            throw new InvalidOperationException("The debugger must be attached before setting a breakpoint.");
         if (_softwareBreakpoints.ContainsKey(address))
             return;
 
         byte[] original = new byte[1];
-        if (!ReadProcessMemory(_hProcess, new IntPtr((long)address), original, 1, out _))
-            return;
+        if (!ReadProcessMemory(_hProcess, new IntPtr((long)address), original, 1, out var bytesRead) ||
+            bytesRead.ToInt64() != 1)
+        {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
 
         _softwareBreakpoints[address] = new BreakpointCallback()
         {
             OriginalByte = original[0],
             Callback = callback,
         };
-        
-        SetSoftwareBreakpointInternal(address);
+
+        try
+        {
+            SetSoftwareBreakpointInternal(address);
+        }
+        catch (Exception setException)
+        {
+            try
+            {
+                RestoreSoftwareBreakpoint(address);
+                _softwareBreakpoints.Remove(address);
+            }
+            catch (Exception restoreException)
+            {
+                throw new AggregateException(
+                    $"Failed to set and roll back breakpoint at 0x{address:X}.",
+                    setException,
+                    restoreException);
+            }
+
+            throw;
+        }
     }
 
-    private bool SetSoftwareBreakpointInternal(ulong address)
+    private void SetSoftwareBreakpointInternal(ulong address)
     {
-        const uint PAGE_EXECUTE_READWRITE = 0x40;
-        if (!VirtualProtectEx(_hProcess, new IntPtr((long)address), new IntPtr(1), PAGE_EXECUTE_READWRITE, out uint oldProtect))
-            return false;
-
-        byte[] int3 = new byte[] { 0xCC };
-        bool writeSuccess = WriteBytes(_hProcess, address, int3);
-
-        VirtualProtectEx(_hProcess, new IntPtr((long)address), new IntPtr(1), oldProtect, out _);
-
-        if (!writeSuccess)
-            return false;
-
-        return FlushInstructionCacheRemote(address, 1);
+        WriteProtectedByte(address, 0xCC);
     }
 
     public void Run()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_attached || _hProcess == IntPtr.Zero)
+            throw new InvalidOperationException("The debugger must be attached before entering the debug loop.");
+
         DEBUG_EVENT debugEvent = new DEBUG_EVENT();
 
         while (!_shouldExit)
         {
             if (!WaitForDebugEvent(ref debugEvent, -1))
-                break;
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
 
-            uint continueStatus = 0x00010002; // DBG_CONTINUE
+            uint continueStatus = DBG_CONTINUE;
 
             switch (debugEvent.dwDebugEventCode)
             {
                 case CREATE_PROCESS_DEBUG_EVENT:
-                    if (debugEvent.u.CreateProcessInfo.hFile != IntPtr.Zero)
-                        CloseHandle(debugEvent.u.CreateProcessInfo.hFile);
+                    CloseDebugEventHandle(debugEvent.u.CreateProcessInfo.hFile, "process image file");
+                    CloseDebugEventHandle(debugEvent.u.CreateProcessInfo.hProcess, "created process");
+                    CloseDebugEventHandle(debugEvent.u.CreateProcessInfo.hThread, "created thread");
                     break;
 
                 case LOAD_DLL_DEBUG_EVENT:
-                    if (debugEvent.u.LoadDll.hFile != IntPtr.Zero)
-                        CloseHandle(debugEvent.u.LoadDll.hFile);
+                    CloseDebugEventHandle(debugEvent.u.LoadDll.hFile, "loaded module file");
                     break;
 
                 case EXCEPTION_DEBUG_EVENT:
@@ -178,15 +285,19 @@ public class NativeDebugger
                     break;
 
                 case EXIT_PROCESS_DEBUG_EVENT:
-                    ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, continueStatus);
+                    ContinueDebugEventOrThrow(debugEvent, continueStatus);
+                    CompleteProcessExit();
                     return;
             }
 
-            ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, continueStatus);
+            ContinueDebugEventOrThrow(debugEvent, continueStatus);
 
             if (_shouldExit)
                 break;
         }
+
+        if (_breakpointCallbackException is { } callbackException)
+            throw new InvalidOperationException("Breakpoint callback failed.", callbackException);
     }
 
     private uint HandleException(ref DEBUG_EVENT debugEvent)
@@ -201,11 +312,21 @@ public class NativeDebugger
                     _singleStepThreads.Remove(debugEvent.dwThreadId);
 
                     if (!_shouldExit)
-                        SetSoftwareBreakpointInternal(bpAddr);
+                    {
+                        try
+                        {
+                            SetSoftwareBreakpointInternal(bpAddr);
+                        }
+                        catch (Exception ex)
+                        {
+                            _breakpointCallbackException ??= ex;
+                            _shouldExit = true;
+                        }
+                    }
 
-                    return 0x00010002;
+                    return DBG_CONTINUE;
                 }
-                return 0x00010002;
+                return DBG_CONTINUE;
 
             case EXCEPTION_BREAKPOINT:
                 {
@@ -213,41 +334,129 @@ public class NativeDebugger
 
                     if (_softwareBreakpoints.TryGetValue(ip, out var bpContext))
                     {
-                        const uint PAGE_EXECUTE_READWRITE = 0x40;
-                        VirtualProtectEx(_hProcess, new IntPtr((long)ip), new IntPtr(1), PAGE_EXECUTE_READWRITE, out uint oldProtect);
-
-                        WriteByte(ip, bpContext.OriginalByte);
-
-                        VirtualProtectEx(_hProcess, new IntPtr((long)ip), new IntPtr(1), oldProtect, out _);
-                        FlushInstructionCacheRemote(ip, 1);
+                        try
+                        {
+                            RestoreSoftwareBreakpoint(ip);
+                        }
+                        catch (Exception ex)
+                        {
+                            RecordDebugLoopFailure(ex, restoreBreakpoints: false);
+                            return DBG_CONTINUE;
+                        }
 
                         IntPtr hThread = OpenThread(THREAD_ALL_ACCESS, false, debugEvent.dwThreadId);
-                        if (hThread != IntPtr.Zero)
+                        if (hThread == IntPtr.Zero)
                         {
+                            RecordDebugLoopFailure(
+                                new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()),
+                                restoreBreakpoints: true);
+                            return DBG_CONTINUE;
+                        }
+
+                        try
+                        {
+                            CONTEXT ctx = new CONTEXT
+                            {
+                                ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER,
+                            };
+                            if (!GetThreadContext(hThread, ref ctx))
+                            {
+                                RecordDebugLoopFailure(
+                                    new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()),
+                                    restoreBreakpoints: true);
+                                return DBG_CONTINUE;
+                            }
+
+                            ctx.Rip = ip;
                             try
                             {
-                                CONTEXT ctx = new CONTEXT();
-                                ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-                                if (GetThreadContext(hThread, ref ctx))
+                                bpContext.Callback?.Invoke(ctx);
+                            }
+                            catch (Exception ex)
+                            {
+                                _breakpointCallbackException = ex;
+                                _shouldExit = true;
+                            }
+
+                            if (_shouldExit)
+                            {
+                                ctx.EFlags &= ~0x100u;
+                                try
                                 {
-                                    ctx.Rip = ip;
-                                    ctx.EFlags |= 0x100;
-                                    SetThreadContext(hThread, ref ctx);
-
-                                    _singleStepThreads[debugEvent.dwThreadId] = ip;
-
-                                    // 执行回调
-                                    bpContext.Callback?.Invoke(ctx);
+                                    RestoreAllSoftwareBreakpoints();
+                                }
+                                catch (Exception ex)
+                                {
+                                    _breakpointCallbackException ??= ex;
                                 }
                             }
-                            finally { CloseHandle(hThread); }
+                            else
+                            {
+                                ctx.EFlags |= 0x100;
+                            }
+
+                            if (!SetThreadContext(hThread, ref ctx))
+                            {
+                                RecordDebugLoopFailure(
+                                    new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()),
+                                    restoreBreakpoints: true);
+                                return DBG_CONTINUE;
+                            }
+
+                            if (!_shouldExit)
+                                _singleStepThreads[debugEvent.dwThreadId] = ip;
+                        }
+                        finally
+                        {
+                            if (!CloseHandle(hThread))
+                            {
+                                RecordDebugLoopFailure(
+                                    new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()),
+                                    restoreBreakpoints: true);
+                            }
                         }
                     }
-                    return 0x00010002;
+                    return DBG_CONTINUE;
                 }
 
             default:
                 return DBG_EXCEPTION_NOT_HANDLED;
+        }
+    }
+
+    private void RecordDebugLoopFailure(Exception failure, bool restoreBreakpoints)
+    {
+        _breakpointCallbackException ??= failure;
+        _shouldExit = true;
+        if (!restoreBreakpoints)
+            return;
+
+        try
+        {
+            RestoreAllSoftwareBreakpoints();
+        }
+        catch (Exception restoreException)
+        {
+            _breakpointCallbackException = new AggregateException(
+                "The debug loop failed and one or more breakpoints could not be restored.",
+                _breakpointCallbackException,
+                restoreException);
+        }
+    }
+
+    private static void ContinueDebugEventOrThrow(DEBUG_EVENT debugEvent, uint continueStatus)
+    {
+        if (!ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, continueStatus))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    private static void CloseDebugEventHandle(IntPtr handle, string description)
+    {
+        if (handle != IntPtr.Zero && !CloseHandle(handle))
+        {
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                $"Failed to close the {description} debug-event handle.");
         }
     }
 
@@ -324,9 +533,27 @@ public class NativeDebugger
         return buffer;
     }
 
-    ~NativeDebugger()
+    private void CloseProcessHandle()
     {
-        Detach();
+        if (_hProcess == IntPtr.Zero)
+            return;
+
+        CloseHandle(_hProcess);
+        _hProcess = IntPtr.Zero;
+    }
+
+    private void CompleteDetach()
+    {
+        _attached = false;
+        _softwareBreakpoints.Clear();
+        _singleStepThreads.Clear();
+        CloseProcessHandle();
+    }
+
+    private void CompleteProcessExit()
+    {
+        _shouldExit = true;
+        CompleteDetach();
     }
 
     private struct BreakpointCallback
@@ -362,7 +589,54 @@ public class NativeDebugger
 
     private unsafe bool WriteByte(ulong address, byte data)
     {
-        return WriteProcessMemory(_hProcess, new IntPtr((long)address), new IntPtr(&data), 1, out _);
+        return WriteProcessMemory(
+                   _hProcess,
+                   new IntPtr((long)address),
+                   new IntPtr(&data),
+                   1,
+                   out var bytesWritten) &&
+               bytesWritten.ToInt64() == 1;
+    }
+
+    private void WriteProtectedByte(ulong address, byte value)
+    {
+        const uint PAGE_EXECUTE_READWRITE = 0x40;
+        if (!VirtualProtectEx(
+                _hProcess,
+                new IntPtr((long)address),
+                new IntPtr(1),
+                PAGE_EXECUTE_READWRITE,
+                out var oldProtect))
+        {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        List<Exception>? failures = null;
+        if (!WriteByte(address, value))
+        {
+            (failures ??= []).Add(
+                new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+        }
+
+        if (!VirtualProtectEx(
+                _hProcess,
+                new IntPtr((long)address),
+                new IntPtr(1),
+                oldProtect,
+                out _))
+        {
+            (failures ??= []).Add(
+                new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+        }
+
+        if (!FlushInstructionCacheRemote(address, 1))
+        {
+            (failures ??= []).Add(
+                new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+        }
+
+        if (failures is { Count: > 0 })
+            throw new AggregateException($"Failed to write protected byte at 0x{address:X}.", failures);
     }
 
     private static bool WriteBytes(IntPtr hProcess, ulong address, ReadOnlySpan<byte> data)
@@ -626,6 +900,4 @@ public class NativeDebugger
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress, IntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
 }

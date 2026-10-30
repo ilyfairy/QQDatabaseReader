@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ObservableCollections;
 using QQDatabaseExplorer.Models;
@@ -93,7 +94,8 @@ internal sealed class ConversationMessageSearchProviderFactory
                 new QqNtFtsMessageSearchProvider(
                     _databaseService.GroupMessageFtsDatabase,
                     _databaseService.BuddyMessageFtsDatabase,
-                    _qqNtSearchMetadataLoader),
+                    _qqNtSearchMetadataLoader,
+                    _databaseService.QQNtDatabaseQueryGate),
             SearchDatabaseKind.Icalingua when _databaseService.IcalinguaMessageDatabases is { } icalinguaDatabase =>
                 new IcalinguaMessageSearchProvider(icalinguaDatabase),
             SearchDatabaseKind.PCQQ when _databaseService.PCQQMessageDatabase is { } pcqqDatabase =>
@@ -111,9 +113,10 @@ internal static class ConversationMessageSearchCompositionFactory
         QQDatabaseService databaseService,
         ObservableList<AvaGroupMessageSearchGroup> groups,
         ConversationMessageSearchResultStore resultStore,
-        ConversationMessageSearchSession searchSession)
+        ConversationMessageSearchSession searchSession,
+        Func<uint, string?, string, string> resolveProfileDisplayName)
     {
-        var metadataLoader = new QqNtSearchMetadataLoader(databaseService);
+        var metadataLoader = new QqNtSearchMetadataLoader(databaseService, resolveProfileDisplayName);
         var filterParser = new ConversationSearchFilterParser(metadataLoader);
         var providerFactory = new ConversationMessageSearchProviderFactory(
             databaseService,
@@ -157,50 +160,70 @@ internal sealed class ConversationMessageSearchWorkflow
     public bool IsLoadMoreAvailable => _providerFactory.IsAvailable(_searchSession.DatabaseKind);
 
     // 搜索页的流程协调放在这里，具体数据库差异仍然留给 IConversationMessageSearchProvider。
-    public async Task<ConversationInitialSearchResult> SearchAsync(
+    public async Task<ConversationInitialSearchResult?> SearchAsync(
         string query,
         ConversationSearchFilter filter,
-        AvaGroupMessageSearchGroup? selectedGroup)
+        AvaGroupMessageSearchGroup? selectedGroup,
+        Func<bool> isCurrent,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!isCurrent())
+            return null;
+
         var databaseKind = _providerFactory.GetPreferredKind();
         _searchSession.Start(query, filter, databaseKind);
 
         var searchProvider = _providerFactory.Create(databaseKind);
-        var firstPage = await LoadDiscoveryPageAsync(searchProvider, query, filter, cursor: null);
+        var firstPage = await LoadDiscoveryPageAsync(
+            searchProvider,
+            query,
+            filter,
+            cursor: null,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!isCurrent())
+            return null;
 
         var refreshedSelection = ApplyDiscoveryPage(firstPage, selectedGroup, sortGroups: false);
+        if (!_resultStore.HasMoreDiscoveryResults)
+            refreshedSelection = CompleteDiscovery(refreshedSelection);
 
         return new ConversationInitialSearchResult(searchProvider, filter, refreshedSelection);
     }
 
-    public async Task<AvaGroupMessageSearchGroup?> LoadMoreDiscoveryAsync(AvaGroupMessageSearchGroup? selectedGroup)
+    private AvaGroupMessageSearchGroup? CompleteDiscovery(AvaGroupMessageSearchGroup? selectedGroup)
     {
-        var searchProvider = _providerFactory.Create(_searchSession.DatabaseKind);
-        var page = await LoadDiscoveryPageAsync(
-            searchProvider,
-            _searchSession.Query,
-            _searchSession.Filter,
-            _resultStore.NextDiscoveryCursor);
-
-        return ApplyDiscoveryPage(page, selectedGroup, sortGroups: false);
-    }
-
-    public AvaGroupMessageSearchGroup? CompleteDiscovery(AvaGroupMessageSearchGroup? selectedGroup)
-    {
-        _searchSession.TotalMatchCount = _resultStore.DiscoveryResultCount;
+        _searchSession.TotalMatchCount = _resultStore.IsDiscoveryResultLimitReached
+            ? null
+            : _resultStore.DiscoveryResultCount;
         _searchSession.IsDiscoveringResults = false;
         _searchSession.HasCompletedDiscovery = true;
         return _resultStore.MarkDiscoveryComplete(selectedGroup);
     }
 
-    public async Task<AvaGroupMessageSearchGroup?> LoadMoreAsync(AvaGroupMessageSearchGroup? selectedGroup)
+    public async Task<AvaGroupMessageSearchGroup?> LoadMoreAsync(
+        AvaGroupMessageSearchGroup? selectedGroup,
+        Func<bool> isCurrent,
+        CancellationToken cancellationToken)
     {
-        var searchProvider = _providerFactory.Create(_searchSession.DatabaseKind);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!isCurrent())
+            return selectedGroup;
+
+        var databaseKind = _searchSession.DatabaseKind;
+        var query = _searchSession.Query;
+        var filter = _searchSession.Filter;
+        var searchProvider = _providerFactory.Create(databaseKind);
         var loadMoreResult = await LoadMorePageAsync(
             searchProvider,
-            _searchSession.Query,
-            _searchSession.Filter,
-            selectedGroup);
+            query,
+            filter,
+            selectedGroup,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!isCurrent())
+            return selectedGroup;
 
         if (loadMoreResult.SelectedGroupKey is not null &&
             selectedGroup is not null &&
@@ -210,9 +233,13 @@ internal sealed class ConversationMessageSearchWorkflow
             return selectedGroup;
         }
 
-        return loadMoreResult.Page.Results.Count == 0
-            ? selectedGroup
-            : ApplyDiscoveryPage(loadMoreResult.Page, selectedGroup, sortGroups: true);
+        var refreshedSelection = ApplyDiscoveryPage(
+            loadMoreResult.Page,
+            selectedGroup,
+            sortGroups: true);
+        return _resultStore.HasMoreDiscoveryResults
+            ? refreshedSelection
+            : CompleteDiscovery(refreshedSelection);
     }
 
     public bool ShouldLoadConversationPage(AvaGroupMessageSearchGroup conversation, SearchDatabaseKind databaseKind)
@@ -228,22 +255,30 @@ internal sealed class ConversationMessageSearchWorkflow
     public async Task<ConversationSearchPageLoadResult> LoadConversationPageAsync(
         AvaGroupMessageSearchGroup conversation,
         string query,
-        SearchDatabaseKind databaseKind)
+        SearchDatabaseKind databaseKind,
+        CancellationToken cancellationToken)
     {
         var groupKey = ConversationMessageSearchResultStore.GetGroupKey(conversation);
         var provider = _providerFactory.Create(databaseKind);
-        var page = await Task.Run(() => provider.SearchConversation(query, conversation, cursor: null));
+        var page = await Task.Run(
+            () => provider.SearchConversation(query, conversation, cursor: null, cancellationToken),
+            cancellationToken);
         return new ConversationSearchPageLoadResult(groupKey, page);
     }
 
     public async Task<IReadOnlyList<AvaGroupMessageSearchResult>> GetEnrichedVisibleResultsAsync(
-        AvaGroupMessageSearchGroup conversation)
+        AvaGroupMessageSearchGroup conversation,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var visibleResults = _resultStore.GetVisibleResults(conversation);
         if (visibleResults.Count == 0)
             return visibleResults;
 
-        var senderInfos = await Task.Run(() => _metadataLoader.LoadSenderInfos(visibleResults));
+        var senderInfos = await Task.Run(
+            () => _metadataLoader.LoadSenderInfos(visibleResults),
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return visibleResults
             .Select(result =>
             {
@@ -273,16 +308,20 @@ internal sealed class ConversationMessageSearchWorkflow
         IConversationMessageSearchProvider provider,
         string query,
         ConversationSearchFilter filter,
-        SearchCursor? cursor)
+        SearchCursor? cursor,
+        CancellationToken cancellationToken)
     {
-        return Task.Run(() => provider.SearchDiscovery(query, filter, cursor));
+        return Task.Run(
+            () => provider.SearchDiscovery(query, filter, cursor, cancellationToken),
+            cancellationToken);
     }
 
     private Task<ConversationSearchLoadMoreResult> LoadMorePageAsync(
         IConversationMessageSearchProvider provider,
         string query,
         ConversationSearchFilter filter,
-        AvaGroupMessageSearchGroup? selectedGroup)
+        AvaGroupMessageSearchGroup? selectedGroup,
+        CancellationToken cancellationToken)
     {
         var selectedGroupKey = selectedGroup is null
             ? null
@@ -300,11 +339,12 @@ internal sealed class ConversationMessageSearchWorkflow
 
         return Task.Run(() =>
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var page = isConversationPage
-                ? provider.SearchConversation(query, selectedGroup!, groupCursor)
-                : provider.SearchDiscovery(query, filter, discoveryCursor);
+                ? provider.SearchConversation(query, selectedGroup!, groupCursor, cancellationToken)
+                : provider.SearchDiscovery(query, filter, discoveryCursor, cancellationToken);
             return new ConversationSearchLoadMoreResult(page, selectedGroupKey, isConversationPage);
-        });
+        }, cancellationToken);
     }
 
     private static bool HasConversationIdentity(AvaGroupMessageSearchGroup conversation)

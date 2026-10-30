@@ -297,4 +297,5 @@ public sealed record ChatExportRawMessage(
 [JsonSerializable(typeof(ChatExportDocument))]
 [JsonSerializable(typeof(IReadOnlyList<ChatExportChat>))]
 [JsonSerializable(typeof(IReadOnlyList<ChatExportMessage>))]
+[JsonSerializable(typeof(ChatExportMessage))]
 public sealed partial class ChatExportJsonContext : JsonSerializerContext;

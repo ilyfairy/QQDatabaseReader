@@ -41,21 +41,32 @@ public partial class ExportDatabaseDialogViewModel : ViewModelBase
             return;
         }
 
-        long totalSize = 0;
-        await Task.Run(() =>
+        try
         {
-            Database.RawDatabase.ExportToNewDatabase(ExportFilePath, reportTotalRows: v => totalSize = v, progress: new Progress<long>(v =>
+            long totalSize = 0;
+            var exportProgress = new Progress<long>(value =>
             {
-                var progress = (double)v / totalSize * 100;
-                if(progress >= 100)
-                {
-                    progress = 99;
-                }
-                Progress = progress;
-            }));
-        });
-        Progress = 100;
-        await _dialogService.ShowMessageBox("导出成功", ownerToken: ViewModelToken);
-        _dialogService.Close(ViewModelToken);
+                var progress = totalSize <= 0 ? 0 : (double)value / totalSize * 100;
+                Progress = Math.Min(progress, 99);
+            });
+            await Task.Run(() =>
+            {
+                Database.RawDatabase.ExportToNewDatabase(
+                    ExportFilePath,
+                    reportTotalRows: value => totalSize = value,
+                    progress: exportProgress);
+            });
+            Progress = 100;
+            await _dialogService.ShowMessageBox("导出成功", ownerToken: ViewModelToken);
+            _dialogService.Close(ViewModelToken);
+        }
+        catch (Exception ex)
+        {
+            Progress = 0;
+            await _dialogService.ShowMessageBox(
+                $"导出失败:\n{ex.Message}",
+                "错误",
+                ViewModelToken);
+        }
     }
 }

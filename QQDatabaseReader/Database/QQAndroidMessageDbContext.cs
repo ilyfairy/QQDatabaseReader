@@ -4,11 +4,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace QQDatabaseReader.Database;
 
-public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContext> options) : DbContext(options)
+public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContext> options, DatabaseSchema? schema = null)
+    : DbContext(options), ISchemaMappedDbContext
 {
     public DbSet<GroupMessage> GroupMessages { get; set; }
     public DbSet<PrivateMessage> PrivateMessages { get; set; }
     public DbSet<AndroidRecentContact> RecentContacts { get; set; }
+
+    public DatabaseSchema? Schema => schema;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +60,8 @@ public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContex
         modelBuilder.Entity<AndroidRecentContact>()
             .Property(v => v.Uin2)
             .HasConversion(UInt32BitPatternConverter.Instance);
+
+        schema?.Apply(modelBuilder);
     }
 }
 

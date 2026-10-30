@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using Google.Protobuf;
+using QQDatabaseReader.Archives;
 
 namespace QQDatabaseExplorer.Models;
 
@@ -150,7 +151,7 @@ public sealed class MessageBatchCopyPayload
         return segment.Type == AvaQQMessageSegmentType.Image &&
                segment.IsImageAvailable &&
                !string.IsNullOrWhiteSpace(segment.ImageLocalPath) &&
-               File.Exists(segment.ImageLocalPath);
+               ArchiveFile.Exists(segment.ImageLocalPath);
     }
 
     private static string? TryCreateImageTag(AvaQQMessageSegment segment, bool htmlEncode)

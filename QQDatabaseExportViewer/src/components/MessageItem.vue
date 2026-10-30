@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatExportMedia, ChatExportMessage, ChatExportSegment } from '@/types/chat-export'
+import { localAssetUrl, safeExternalUrl } from '@/services/safeUrl'
 
 const props = defineProps<{
   message: ChatExportMessage
@@ -12,14 +13,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   replyClick: [reply: NonNullable<ChatExportMessage['reply']>, sourceMessage?: ChatExportMessage]
 }>()
-
-function assetUrl(path?: string | null) {
-  return path ? `./${path}` : ''
-}
-
-function avatarUrl(path?: string | null, remote?: string | null) {
-  return assetUrl(path) || remote || ''
-}
 
 function formatDuration(milliseconds?: number | null) {
   if (!milliseconds || milliseconds <= 0) {
@@ -83,7 +76,7 @@ function isBlockFlowMessage(message: ChatExportMessage) {
   return !isTextFlowMessage(message) && message.segments.some(isBlockFlowSegment)
 }
 
-function sourceLabel(message: ChatExportMessage) {
+function resolveSourceLabel(message: ChatExportMessage) {
   if (props.sourceLabel) {
     return props.sourceLabel
   }
@@ -160,12 +153,6 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
         <span v-if="message.systemHint?.sourceName" class="system-user">
           {{ message.systemHint.sourceName }}
         </span>
-        <img
-          v-if="message.systemHint?.actionImageUrl"
-          class="system-action-image"
-          :src="message.systemHint.actionImageUrl"
-          alt=""
-        />
         <span>{{ systemHintText(message) }}</span>
         <span v-if="message.systemHint?.targetName" class="system-user">
           {{ message.systemHint.targetName }}
@@ -173,7 +160,7 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
         <img
           v-if="message.systemHint?.faceAssetPath"
           class="system-action-image"
-          :src="assetUrl(message.systemHint.faceAssetPath)"
+          :src="localAssetUrl(message.systemHint.faceAssetPath)"
           alt=""
         />
         <span v-if="message.systemHint?.suffix">{{ message.systemHint.suffix }}</span>
@@ -183,8 +170,8 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
     <template v-else>
       <div class="message-avatar">
           <img
-            v-if="avatarUrl(message.sender.avatarPath, message.sender.avatarUrl)"
-            :src="avatarUrl(message.sender.avatarPath, message.sender.avatarUrl)"
+            v-if="localAssetUrl(message.sender.avatarPath)"
+            :src="localAssetUrl(message.sender.avatarPath)"
             loading="lazy"
             alt=""
           />
@@ -195,7 +182,7 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
         <div class="message-head">
           <span class="sender-name">{{ message.sender.displayName }}</span>
           <span v-if="message.isRecalled" class="recalled-label">已撤回</span>
-          <span v-if="showSource" class="source-label">{{ sourceLabel(message) }}</span>
+          <span v-if="showSource" class="source-label">{{ resolveSourceLabel(message) }}</span>
           <time>{{ message.localTime.slice(11) }}</time>
         </div>
 
@@ -214,10 +201,10 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
           <div class="segments" :class="{ 'text-flow': isTextFlowMessage(message), 'block-flow': isBlockFlowMessage(message) }">
             <template v-for="(segment, index) in message.segments" :key="segmentKey(segment, index)">
               <a
-                v-if="segment.linkUrl"
+                v-if="safeExternalUrl(segment.linkUrl)"
                 class="text-segment link"
                 :class="segment.tone.toLowerCase()"
-                :href="segment.linkUrl"
+                :href="safeExternalUrl(segment.linkUrl)"
                 target="_blank"
                 rel="noreferrer"
                 tabindex="-1"
@@ -232,20 +219,21 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
                 {{ segment.displayText }}
               </span>
               <span v-else-if="segment.type === 'QQFace'" class="face-segment">
-                <img v-if="segment.faceAssetPath" :src="assetUrl(segment.faceAssetPath)" alt="" />
+                <img v-if="localAssetUrl(segment.faceAssetPath)" :src="localAssetUrl(segment.faceAssetPath)" alt="" />
                 <span v-else>{{ segment.displayText }}</span>
               </span>
               <a
-                v-else-if="segment.media?.kind === 'Image' && segment.media.relativePath"
+                v-else-if="segment.media?.kind === 'Image' && localAssetUrl(segment.media.relativePath)"
                 class="image-link"
                 :style="mediaFrameStyle(segment.media, 'Image')"
-                :href="assetUrl(segment.media.relativePath)"
+                :href="localAssetUrl(segment.media.relativePath)"
                 target="_blank"
+                rel="noopener noreferrer"
                 tabindex="-1"
               >
                 <img
                   class="media-image"
-                  :src="assetUrl(segment.media.relativePath)"
+                  :src="localAssetUrl(segment.media.relativePath)"
                   loading="lazy"
                   decoding="async"
                   :alt="segment.media.displayText"
@@ -257,27 +245,28 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
                 {{ segment.media.displayText }}
               </span>
               <div v-else-if="segment.media?.kind === 'Voice'" class="voice-card">
-                <audio v-if="segment.media.relativePath" controls :src="assetUrl(segment.media.relativePath)" tabindex="-1" />
+                <audio v-if="localAssetUrl(segment.media.relativePath)" controls :src="localAssetUrl(segment.media.relativePath)" tabindex="-1" />
                 <span>{{ segment.media.displayText }}</span>
                 <span>{{ formatDuration(segment.media.durationMilliseconds) }}</span>
               </div>
               <div v-else-if="segment.media?.kind === 'Video'" class="video-card">
                 <video
-                  v-if="segment.media.relativePath"
+                  v-if="localAssetUrl(segment.media.relativePath)"
                   controls
                   preload="metadata"
                   :style="mediaFrameStyle(segment.media, 'Video')"
-                  :poster="assetUrl(segment.media.coverRelativePath)"
-                  :src="assetUrl(segment.media.relativePath)"
+                  :poster="localAssetUrl(segment.media.coverRelativePath)"
+                  :src="localAssetUrl(segment.media.relativePath)"
                   tabindex="-1"
                 />
                 <span v-else class="text-segment warning">{{ segment.media.displayText }}</span>
               </div>
               <a
-                v-else-if="segment.media?.kind === 'File' && segment.media.relativePath"
+                v-else-if="segment.media?.kind === 'File' && localAssetUrl(segment.media.relativePath)"
                 class="file-card"
-                :href="assetUrl(segment.media.relativePath)"
+                :href="localAssetUrl(segment.media.relativePath)"
                 target="_blank"
+                rel="noopener noreferrer"
                 tabindex="-1"
               >
                 <span>{{ segment.media.fileName || segment.media.displayText }}</span>
@@ -296,8 +285,9 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
               <a
                 v-else-if="segment.sharedContact"
                 class="rich-card"
-                :href="segment.sharedContact.jumpUrl || undefined"
+                :href="safeExternalUrl(segment.sharedContact.jumpUrl) || undefined"
                 target="_blank"
+                rel="noopener noreferrer"
                 tabindex="-1"
               >
                 <strong>{{ segment.sharedContact.title }}</strong>
@@ -307,17 +297,11 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
               <a
                 v-else-if="segment.miniApp"
                 class="mini-card"
-                :href="segment.miniApp.jumpUrl || undefined"
+                :href="safeExternalUrl(segment.miniApp.jumpUrl) || undefined"
                 target="_blank"
+                rel="noopener noreferrer"
                 tabindex="-1"
               >
-                <img
-                  v-if="segment.miniApp.previewUrl"
-                  :src="segment.miniApp.previewUrl"
-                  loading="lazy"
-                  decoding="async"
-                  alt=""
-                />
                 <div>
                   <small>{{ segment.miniApp.appName }}</small>
                   <strong>{{ segment.miniApp.title }}</strong>
@@ -342,7 +326,7 @@ function mediaDisplaySize(media: ChatExportMedia, kind: 'Image' | 'Video') {
 
         <div v-if="message.reactions.length > 0" class="reactions">
           <span v-for="reaction in message.reactions" :key="reaction.faceId" class="reaction">
-            <img v-if="reaction.faceAssetPath" :src="assetUrl(reaction.faceAssetPath)" alt="" />
+            <img v-if="localAssetUrl(reaction.faceAssetPath)" :src="localAssetUrl(reaction.faceAssetPath)" alt="" />
             <span v-else>{{ reaction.displayText }}</span>
             <small>{{ reaction.count }}</small>
           </span>

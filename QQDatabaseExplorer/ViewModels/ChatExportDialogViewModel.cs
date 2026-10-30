@@ -13,11 +13,15 @@ namespace QQDatabaseExplorer.ViewModels;
 public partial class ChatExportDialogViewModel : ViewModelBase
 {
     private readonly MessageTabViewModel _messageTabViewModel;
+    private readonly IDialogService _dialogService;
     private CancellationTokenSource? _exportCancellationTokenSource;
 
-    public ChatExportDialogViewModel(MessageTabViewModel messageTabViewModel)
+    public ChatExportDialogViewModel(
+        MessageTabViewModel messageTabViewModel,
+        IDialogService dialogService)
     {
         _messageTabViewModel = messageTabViewModel;
+        _dialogService = dialogService;
     }
 
     public ViewModelToken ViewModelToken { get; } = new();
@@ -254,6 +258,21 @@ public partial class ChatExportDialogViewModel : ViewModelBase
             IsProgressIndeterminate = false;
             ProgressValue = 0;
             CompletedText = "导出已取消";
+        }
+        catch (Exception ex)
+        {
+            Result = null;
+            ResultDirectory = null;
+            OnPropertyChanged(nameof(HasResult));
+            ProgressText = "导出失败";
+            ProgressCountText = string.Empty;
+            IsProgressIndeterminate = false;
+            ProgressValue = 0;
+            CompletedText = "导出失败";
+            await _dialogService.ShowMessageBox(
+                $"导出聊天记录失败:\n{ex.Message}",
+                "错误",
+                ViewModelToken);
         }
         finally
         {

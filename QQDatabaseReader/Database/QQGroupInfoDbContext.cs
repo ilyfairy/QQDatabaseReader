@@ -8,10 +8,13 @@ namespace QQDatabaseReader.Database;
 /// group_info.db
 /// </summary>
 /// <param name="options"></param>
-public class QQGroupInfoDbContext(DbContextOptions<QQGroupInfoDbContext> options) : DbContext(options)
+public class QQGroupInfoDbContext(DbContextOptions<QQGroupInfoDbContext> options, DatabaseSchema? schema = null)
+    : DbContext(options), ISchemaMappedDbContext
 {
     public DbSet<QQGroup> GroupList { get; set; }
     public DbSet<QQGroupMember> GroupMembers { get; set; }
+
+    public DatabaseSchema? Schema => schema;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +32,8 @@ public class QQGroupInfoDbContext(DbContextOptions<QQGroupInfoDbContext> options
         modelBuilder.Entity<QQGroupMember>()
             .Property(v => v.Uin)
             .HasConversion(UInt32BitPatternConverter.Instance);
+
+        schema?.Apply(modelBuilder);
     }
 }
 
