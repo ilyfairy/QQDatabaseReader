@@ -1,14 +1,9 @@
-using System;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
-using QQDatabaseExplorer.Controls;
-using QQDatabaseExplorer.Services;
-using QQDatabaseReader;
 
-namespace QQDatabaseExplorer.ViewModels.MessageTab;
+namespace QQDatabaseReader.Media;
 
-internal static class QqNtMarketFacePathResolver
+/// <summary>PC QQNT 商城表情的本地文件: nt_data/Emoji/marketface/&lt;表情包 ID&gt;/&lt;图片 ID&gt; (内容是混淆过的, 见 <see cref="MediaImageFile"/>)</summary>
+public static class QQNtMarketFacePathResolver
 {
     public static string? ResolvePath(string? ntDataPath, QQMessageSegment segment)
     {
@@ -50,7 +45,7 @@ internal static class QqNtMarketFacePathResolver
             return null;
 
         var originalPath = ResolveExistingFile(trustedRoot, packageDirectory, normalizedImageId);
-        if (LocalImageFile.IsDisplayableImageFile(originalPath))
+        if (MediaImageFile.IsImageFile(originalPath))
             return originalPath;
 
         // 商城表情只认 nt_data/Emoji/marketface/<表情包 ID>/<图片 ID> 这个本体文件；

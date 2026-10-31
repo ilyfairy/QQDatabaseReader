@@ -4,6 +4,7 @@ using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
 using QQDatabaseReader.Archives;
+using QQDatabaseReader.Media;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -119,7 +120,7 @@ internal sealed class QqNtMessageMediaResolver
     {
         if (segment.IsMarketFace)
         {
-            var localPath = QqNtMarketFacePathResolver.ResolvePath(mediaContext.NtDataPath, segment);
+            var localPath = QQNtMarketFacePathResolver.ResolvePath(mediaContext.NtDataPath, segment);
             return ResolvedSegmentMediaPath.FromLocalPath(localPath);
         }
 

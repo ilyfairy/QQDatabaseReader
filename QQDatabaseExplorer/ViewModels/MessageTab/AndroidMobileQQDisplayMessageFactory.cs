@@ -4,6 +4,7 @@ using System.Linq;
 using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
+using QQDatabaseReader.Media;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -102,7 +103,7 @@ internal sealed class AndroidMobileQQDisplayMessageFactory
         string? mobileQQPath,
         string? chatPicPath)
     {
-        var localPath = AndroidMobileQQMediaPathResolver.ResolveImagePath(mobileQQPath, chatPicPath, part.ImageMd5);
+        var localPath = AndroidQQMediaPathResolver.ResolveImagePath(mobileQQPath, chatPicPath, part.ImageMd5);
         var imageSize = LocalImageFile.TryGetImageSize(localPath);
         return string.IsNullOrWhiteSpace(localPath)
             ? AvaQQMessageSegment.CreateBrokenImage(null, null, "[图片文件未找到]")

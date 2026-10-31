@@ -1,10 +1,12 @@
-using System;
-using System.IO;
 using QQDatabaseReader.Archives;
 
-namespace QQDatabaseExplorer.Services;
+namespace QQDatabaseReader.Media;
 
-internal static class TrustedMediaPath
+/// <summary>
+/// 把数据库里记录的媒体路径限制在可信的根目录内: 拒绝越出根目录和途经链接 (重解析点) 的路径.
+/// 支持 tar / zip 归档内的路径
+/// </summary>
+public static class TrustedMediaPath
 {
     public static bool TryResolveWithinRoot(string root, string candidate, out string fullPath)
     {

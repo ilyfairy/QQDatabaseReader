@@ -6,6 +6,7 @@ using QQDatabaseExplorer.Controls;
 using QQDatabaseExplorer.Models;
 using QQDatabaseExplorer.Services;
 using QQDatabaseReader;
+using QQDatabaseReader.Media;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 

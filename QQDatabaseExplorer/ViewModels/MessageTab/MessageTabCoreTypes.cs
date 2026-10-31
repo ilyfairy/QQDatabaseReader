@@ -9,6 +9,7 @@ using QQDatabaseExplorer.Services;
 using QQDatabaseExplorer.Models;
 using QQDatabaseReader;
 using QQDatabaseReader.Database;
+using QQDatabaseReader.Media;
 
 namespace QQDatabaseExplorer.ViewModels.MessageTab;
 
@@ -225,20 +226,6 @@ internal readonly record struct SystemHintDisplay(
 internal readonly record struct RecalledOriginalMessage(
     QQForwardedMessage ForwardedMessage,
     List<AvaQQMessageSegment> Segments);
-
-internal readonly record struct ThumbnailCandidate(
-    string Path,
-    int Spec,
-    bool MatchesPreferredExtension);
-
-internal readonly record struct ResolvedVideoMediaPath(
-    string? VideoPath,
-    string? CoverPath,
-    bool IsVideoAvailable,
-    bool IsCoverAvailable)
-{
-    public static ResolvedVideoMediaPath Missing { get; } = new(null, null, false, false);
-}
 
 internal sealed record LocalMediaContext(
     DatabasePlatformType PlatformType,
@@ -1075,14 +1062,14 @@ internal static class MessageMediaPathResolver
     {
         if (mediaContext.PlatformType is DatabasePlatformType.AndroidQQNT)
         {
-            var androidPath = AndroidMobileQQMediaPathResolver.ResolveImagePath(
+            var androidPath = AndroidQQMediaPathResolver.ResolveImagePath(
                 mediaContext.MobileQQPath,
                 mediaContext.ChatPicPath,
                 segment);
             if (!string.IsNullOrWhiteSpace(androidPath))
                 return androidPath;
 
-            return QqNtLocalMediaPathResolver.ResolveExplicitLocalImagePath(
+            return QQNtMediaPathResolver.ResolveExplicitLocalImagePath(
                 segment.ImageLocalPath,
                 mediaContext.ChatPicPath,
                 string.IsNullOrWhiteSpace(mediaContext.MobileQQPath)
@@ -1090,7 +1077,7 @@ internal static class MessageMediaPathResolver
                     : Path.Combine(mediaContext.MobileQQPath, "chatpic"));
         }
 
-        return QqNtLocalMediaPathResolver.ResolveImagePath(
+        return QQNtMediaPathResolver.ResolveImagePath(
             mediaContext.NtDataPath,
             messageTime,
             segment,
@@ -1103,9 +1090,9 @@ internal static class MessageMediaPathResolver
         QQMessageSegment segment)
     {
         if (mediaContext.PlatformType is DatabasePlatformType.AndroidQQNT)
-            return null;
+            return AndroidQQMediaPathResolver.ResolveVoicePath(mediaContext.MobileQQPath, null, segment);
 
-        return QqNtLocalMediaPathResolver.ResolveVoicePath(mediaContext.NtDataPath, messageTime, segment);
+        return QQNtMediaPathResolver.ResolveVoicePath(mediaContext.NtDataPath, messageTime, segment);
     }
 
     public static ResolvedVideoMediaPath ResolveLocalVideoMediaPath(
@@ -1119,7 +1106,7 @@ internal static class MessageMediaPathResolver
             return ResolvedVideoMediaPath.Missing;
         }
 
-        return QqNtLocalMediaPathResolver.ResolveVideoPath(mediaContext.NtDataPath, messageTime, segment);
+        return QQNtMediaPathResolver.ResolveVideoPath(mediaContext.NtDataPath, messageTime, segment);
     }
 }
 
@@ -1173,150 +1160,6 @@ internal static class MessageMediaSegmentClassifier
         return IsStickerMessage(subMessageType) &&
                (!string.IsNullOrWhiteSpace(segment.ImageFileName) ||
                 !string.IsNullOrWhiteSpace(segment.ImageLocalPath));
-    }
-}
-
-internal static class MessageMediaFileNameCandidateFactory
-{
-    public static IEnumerable<string> CreateImageCandidates(QQMessageSegment segment)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var fileName in CreateFileNameCandidates(segment.ImageFileName))
-        {
-            if (seen.Add(fileName))
-                yield return fileName;
-        }
-
-        if (segment.ImageMd5 is { Length: > 0 } md5)
-        {
-            var extension = GetFileExtension(segment.ImageFileName);
-            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
-            var md5FileName = string.IsNullOrEmpty(extension) ? md5Name : md5Name + extension;
-            if (seen.Add(md5FileName))
-                yield return md5FileName;
-        }
-    }
-
-    public static IEnumerable<string> CreateVoiceCandidates(QQMessageSegment segment)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var fileName in CreateFileNameCandidates(segment.VoiceFileName))
-        {
-            if (seen.Add(fileName))
-                yield return fileName;
-        }
-
-        if (segment.VoiceMd5 is { Length: > 0 } md5)
-        {
-            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
-            var extension = GetFileExtension(segment.VoiceFileName);
-            if (string.IsNullOrWhiteSpace(extension))
-                extension = ".amr";
-
-            var md5FileName = md5Name + extension;
-            if (seen.Add(md5FileName))
-                yield return md5FileName;
-
-            var amrFileName = md5Name + ".amr";
-            if (seen.Add(amrFileName))
-                yield return amrFileName;
-        }
-    }
-
-    public static IEnumerable<string> CreateVideoCandidates(QQMessageSegment segment)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var fileName in CreateFileNameCandidates(segment.VideoFileName))
-        {
-            if (seen.Add(fileName))
-                yield return fileName;
-        }
-
-        if (segment.VideoMd5 is { Length: > 0 } md5)
-        {
-            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
-            var extension = GetFileExtension(segment.VideoFileName);
-            if (string.IsNullOrWhiteSpace(extension))
-                extension = ".mp4";
-
-            var md5FileName = md5Name + extension;
-            if (seen.Add(md5FileName))
-                yield return md5FileName;
-
-            var mp4FileName = md5Name + ".mp4";
-            if (seen.Add(mp4FileName))
-                yield return mp4FileName;
-        }
-    }
-
-    public static IEnumerable<string> CreateVideoCoverCandidates(QQMessageSegment segment)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var fileName in CreateFileNameCandidates(segment.VideoCoverFileName))
-        {
-            if (seen.Add(fileName))
-                yield return fileName;
-        }
-
-        if (segment.VideoMd5 is { Length: > 0 } md5)
-        {
-            var md5Name = Convert.ToHexString(md5).ToLowerInvariant();
-            foreach (var fileName in new[] { $"{md5Name}_0.png", $"{md5Name}_0.jpg", $"{md5Name}.png", $"{md5Name}.jpg" })
-            {
-                if (seen.Add(fileName))
-                    yield return fileName;
-            }
-        }
-    }
-
-    private static IEnumerable<string> CreateFileNameCandidates(string? rawFileName)
-    {
-        if (string.IsNullOrWhiteSpace(rawFileName))
-            yield break;
-
-        var fileName = Path.GetFileName(rawFileName);
-        if (string.IsNullOrWhiteSpace(fileName))
-            yield break;
-
-        yield return fileName;
-
-        var lowerFileName = fileName.ToLowerInvariant();
-        if (!string.Equals(lowerFileName, fileName, StringComparison.Ordinal))
-            yield return lowerFileName;
-
-        var extension = Path.GetExtension(fileName);
-        var normalizedName = NormalizeHashName(Path.GetFileNameWithoutExtension(fileName));
-        if (!string.IsNullOrWhiteSpace(normalizedName))
-        {
-            yield return normalizedName + extension;
-
-            var lowerNormalizedFileName = (normalizedName + extension).ToLowerInvariant();
-            if (!string.Equals(lowerNormalizedFileName, normalizedName + extension, StringComparison.Ordinal))
-                yield return lowerNormalizedFileName;
-        }
-    }
-
-    private static string NormalizeHashName(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            return string.Empty;
-
-        var normalized = name.Trim();
-        if (normalized.Length >= 2 && normalized[0] == '{' && normalized[^1] == '}')
-            normalized = normalized[1..^1];
-
-        normalized = normalized.Replace("-", string.Empty, StringComparison.Ordinal);
-        return normalized.Length > 0 && normalized.All(char.IsAsciiHexDigit)
-            ? normalized.ToLowerInvariant()
-            : string.Empty;
-    }
-
-    private static string GetFileExtension(string? fileName)
-    {
-        return string.IsNullOrWhiteSpace(fileName)
-            ? string.Empty
-            : Path.GetExtension(Path.GetFileName(fileName)).ToLowerInvariant();
     }
 }
 

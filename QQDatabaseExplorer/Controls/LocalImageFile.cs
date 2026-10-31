@@ -2,25 +2,17 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using QQDatabaseReader.Archives;
+using QQDatabaseReader.Media;
 
 namespace QQDatabaseExplorer.Controls;
 
 public static class LocalImageFile
 {
-    private const int MarketFaceXorChunkSize = 20;
-    private const int MarketFaceKeepChunkSize = 30;
     private static readonly byte[] Gif87aHeader = "GIF87a"u8.ToArray();
     private static readonly byte[] Gif89aHeader = "GIF89a"u8.ToArray();
     private static readonly byte[] PngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
-    public static byte[] ReadDisplayBytes(string sourcePath)
-    {
-        var bytes = ArchiveFile.ReadAllBytes(sourcePath);
-        if (IsMarketFaceEncodedGifBytes(bytes))
-            DecodeMarketFaceBytes(bytes);
-
-        return bytes;
-    }
+    public static byte[] ReadDisplayBytes(string sourcePath) => MediaImageFile.ReadImageBytes(sourcePath);
 
     public static Stream OpenDisplayStream(string sourcePath)
     {
@@ -40,29 +32,7 @@ public static class LocalImageFile
         return TryReadHeader(sourcePath, out var header) && IsMarketFaceEncodedGifBytes(header);
     }
 
-    public static bool IsDisplayableImageFile(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !ArchiveFile.Exists(path))
-            return false;
-
-        Span<byte> header = stackalloc byte[12];
-        try
-        {
-            using var stream = ArchiveFile.OpenRead(path);
-            var read = stream.Read(header);
-            var value = header[..read];
-            return value.StartsWith(Gif87aHeader) ||
-                   value.StartsWith(Gif89aHeader) ||
-                   value.StartsWith(PngHeader.AsSpan(0, 4)) ||
-                   value.Length >= 3 && value[0] == 0xFF && value[1] == 0xD8 && value[2] == 0xFF ||
-                   value.StartsWith("RIFF"u8) && value.Length >= 12 && value[8..12].SequenceEqual("WEBP"u8) ||
-                   IsMarketFaceEncodedGifBytes(value);
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static bool IsDisplayableImageFile(string? path) => MediaImageFile.IsImageFile(path);
 
     public static (int Width, int Height)? TryGetImageSize(string? path)
     {
@@ -80,22 +50,7 @@ public static class LocalImageFile
         }
     }
 
-    public static bool IsMarketFaceEncodedGifBytes(ReadOnlySpan<byte> bytes)
-    {
-        if (bytes.Length < Gif89aHeader.Length)
-            return false;
-
-        // QQNT 市场表情本体文件按“20 字节 XOR 0xFF，30 字节原样保留”循环混淆。
-        // GIF 头落在第一段 XOR 区，所以判断时只需要把前 6 字节临时取反。
-        for (var i = 0; i < Gif89aHeader.Length; i++)
-        {
-            var value = (byte)(bytes[i] ^ 0xFF);
-            if (value != Gif87aHeader[i] && value != Gif89aHeader[i])
-                return false;
-        }
-
-        return true;
-    }
+    public static bool IsMarketFaceEncodedGifBytes(ReadOnlySpan<byte> bytes) => MediaImageFile.IsMarketFaceEncodedGifBytes(bytes);
 
     private static bool TryReadHeader(string sourcePath, out byte[] header)
     {
@@ -246,20 +201,5 @@ public static class LocalImageFile
     private static (int Width, int Height)? CreateImageSize(int width, int height)
     {
         return width > 0 && height > 0 ? (width, height) : null;
-    }
-
-    private static void DecodeMarketFaceBytes(byte[] bytes)
-    {
-        var index = 0;
-        while (index < bytes.Length)
-        {
-            var xorEnd = Math.Min(index + MarketFaceXorChunkSize, bytes.Length);
-            for (; index < xorEnd; index++)
-            {
-                bytes[index] ^= 0xFF;
-            }
-
-            index = Math.Min(index + MarketFaceKeepChunkSize, bytes.Length);
-        }
     }
 }

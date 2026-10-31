@@ -1,17 +1,23 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using QQDatabaseExplorer.Controls;
-using QQDatabaseExplorer.Models;
-using QQDatabaseExplorer.Services;
-using QQDatabaseReader;
-using QQDatabaseReader.Database;
 using QQDatabaseReader.Archives;
+using QQDatabaseReader.Database;
 
-namespace QQDatabaseExplorer.ViewModels.MessageTab;
+namespace QQDatabaseReader.Media;
 
-internal static class QqNtLocalMediaPathResolver
+/// <summary>PC QQNT 的视频和封面路径. 文件不存在时路径为 null</summary>
+public readonly record struct ResolvedVideoMediaPath(
+    string? VideoPath,
+    string? CoverPath,
+    bool IsVideoAvailable,
+    bool IsCoverAvailable)
+{
+    public static ResolvedVideoMediaPath Missing { get; } = new(null, null, false, false);
+}
+
+/// <summary>
+/// PC QQNT 消息里的图片, 动画表情, 语音, 视频在 nt_data 下的本地文件.
+/// 月份目录按消息时间的 UTC 年月; 先找 Ori 原图, 再找 Thumb 缩略图
+/// </summary>
+public static class QQNtMediaPathResolver
 {
     public static string? ResolveImagePath(
         string? ntDataPath,
@@ -22,7 +28,7 @@ internal static class QqNtLocalMediaPathResolver
         if (!TryResolveNtDataRoot(ntDataPath, out var ntDataRoot))
             return null;
 
-        var candidateFileNames = MessageMediaFileNameCandidateFactory.CreateImageCandidates(segment).ToArray();
+        var candidateFileNames = QQNtMediaFileNames.CreateImageCandidates(segment).ToArray();
         if (candidateFileNames.Length == 0)
             return ResolveExplicitMessageImagePath(ntDataRoot, segment.ImageLocalPath);
 
@@ -35,7 +41,7 @@ internal static class QqNtLocalMediaPathResolver
             return result;
 
         // QQNT 有时会把 sticker 的图片放在 Pic，反之亦然。
-        var fallbackDir = MessageMediaSegmentClassifier.IsStickerMessage(subMessageType)
+        var fallbackDir = subMessageType is SubMessageType.Sticker
             ? Path.Combine(ntDataRoot, "Pic", month)
             : Path.Combine(ntDataRoot, "Emoji", "emoji-recv", month);
 
@@ -58,7 +64,7 @@ internal static class QqNtLocalMediaPathResolver
         return ResolveVoicePath(
             ntDataRoot,
             voiceDirectory,
-            MessageMediaFileNameCandidateFactory.CreateVoiceCandidates(segment));
+            QQNtMediaFileNames.CreateVoiceCandidates(segment));
     }
 
     public static ResolvedVideoMediaPath ResolveVideoPath(
@@ -76,11 +82,11 @@ internal static class QqNtLocalMediaPathResolver
         var videoPath = ResolveMediaOriginalPath(
             ntDataRoot,
             videoMonthDirectory,
-            MessageMediaFileNameCandidateFactory.CreateVideoCandidates(segment).ToArray());
+            QQNtMediaFileNames.CreateVideoCandidates(segment).ToArray());
         var coverPath = ResolveMediaThumbnailPath(
             ntDataRoot,
             videoMonthDirectory,
-            MessageMediaFileNameCandidateFactory.CreateVideoCoverCandidates(segment).ToArray())
+            QQNtMediaFileNames.CreateVideoCoverCandidates(segment).ToArray())
             ?? ResolveExplicitLocalImagePathWithinSubdirectories(
                 ntDataRoot,
                 segment.ImageLocalPath,
@@ -92,7 +98,7 @@ internal static class QqNtLocalMediaPathResolver
             videoPath,
             coverPath,
             !string.IsNullOrWhiteSpace(videoPath) && ArchiveFile.Exists(videoPath),
-            LocalImageFile.IsDisplayableImageFile(coverPath));
+            MediaImageFile.IsImageFile(coverPath));
     }
 
     public static string? ResolveExplicitLocalImagePath(
@@ -148,7 +154,7 @@ internal static class QqNtLocalMediaPathResolver
 
     private static string GetMediaMonthDirectory(string ntDataPath, SubMessageType subMessageType, string month)
     {
-        return MessageMediaSegmentClassifier.IsStickerMessage(subMessageType)
+        return subMessageType is SubMessageType.Sticker
             ? Path.Combine(ntDataPath, "Emoji", "emoji-recv", month)
             : Path.Combine(ntDataPath, "Pic", month);
     }
@@ -344,3 +350,8 @@ internal static class QqNtLocalMediaPathResolver
         }
     }
 }
+
+internal readonly record struct ThumbnailCandidate(
+    string Path,
+    int Spec,
+    bool MatchesPreferredExtension);

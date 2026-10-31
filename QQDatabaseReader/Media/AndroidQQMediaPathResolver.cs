@@ -1,12 +1,10 @@
-using System;
-using System.IO;
-using QQDatabaseExplorer.Controls;
-using QQDatabaseExplorer.Services;
-using QQDatabaseReader;
+namespace QQDatabaseReader.Media;
 
-namespace QQDatabaseExplorer.ViewModels.MessageTab;
-
-internal static class AndroidMobileQQMediaPathResolver
+/// <summary>
+/// 安卓 QQ (旧版 MobileQQ 和 QQNT) 在 sdcard 的 Tencent/MobileQQ 下的媒体文件.
+/// 图片缓存在 chatpic/{chatraw,chatimg,chatthumb}/&lt;名字末 3 位&gt;/Cache_&lt;crc64&gt;, 名字由图片 md5 算出
+/// </summary>
+public static class AndroidQQMediaPathResolver
 {
     private const long ImageCacheCrc64Polynomial = -7661587058870466123L;
     private static readonly Lazy<long[]> ImageCacheCrc64Table = new(CreateImageCacheCrc64Table);
@@ -39,7 +37,7 @@ internal static class AndroidMobileQQMediaPathResolver
                     resolvedChatPicPath,
                     candidatePath,
                     out var resolvedCandidatePath) &&
-                LocalImageFile.IsDisplayableImageFile(resolvedCandidatePath))
+                MediaImageFile.IsImageFile(resolvedCandidatePath))
             {
                 return resolvedCandidatePath;
             }
@@ -51,9 +49,55 @@ internal static class AndroidMobileQQMediaPathResolver
                 resolvedChatPicPath,
                 legacyCandidatePath,
                 out var resolvedLegacyCandidatePath) &&
-            LocalImageFile.IsDisplayableImageFile(resolvedLegacyCandidatePath))
+            MediaImageFile.IsImageFile(resolvedLegacyCandidatePath))
         {
             return resolvedLegacyCandidatePath;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 语音: &lt;MobileQQ&gt;/&lt;QQ 号&gt;/ptt/&lt;文件名 或 md5.amr&gt;. 不知道 QQ 号 (<paramref name="accountUin"/> 为空) 时
+    /// 依次找 MobileQQ 下每个 QQ 号的目录 (只支持普通目录, 不支持归档)
+    /// </summary>
+    public static string? ResolveVoicePath(string? mobileQQPath, string? accountUin, QQMessageSegment segment)
+    {
+        if (string.IsNullOrWhiteSpace(mobileQQPath))
+            return null;
+
+        var candidates = QQNtMediaFileNames.CreateVoiceCandidates(segment).ToArray();
+        if (candidates.Length == 0)
+            return null;
+
+        IEnumerable<string> accounts;
+        if (!string.IsNullOrWhiteSpace(accountUin))
+        {
+            accounts = [accountUin];
+        }
+        else
+        {
+            try
+            {
+                accounts = Directory.Exists(mobileQQPath)
+                    ? Directory.EnumerateDirectories(mobileQQPath).Select(path => Path.GetFileName(path)).Where(name => name.Length > 0 && name.All(char.IsAsciiDigit))
+                    : [];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        foreach (var account in accounts)
+        {
+            if (!TrustedMediaPath.TryResolveExistingDirectoryWithinRoot(mobileQQPath, Path.Combine(account, "ptt"), out var pttDirectory))
+                continue;
+            foreach (var fileName in candidates)
+            {
+                if (TrustedMediaPath.TryResolveExistingFileWithinRoot(pttDirectory, fileName, out var path))
+                    return path;
+            }
         }
 
         return null;
