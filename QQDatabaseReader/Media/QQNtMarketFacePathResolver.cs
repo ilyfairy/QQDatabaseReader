@@ -158,6 +158,10 @@ public static class QQNtMarketFacePathResolver
 
     private static string? ResolveExistingFile(string trustedRoot, string directory, string fileName)
     {
+        // 先查目录列表, 不在列表里的不用再逐个检查路径
+        if (!MediaDirectoryListing.Contains(directory, fileName))
+            return null;
+
         var path = Path.Combine(directory, fileName);
         return TrustedMediaPath.TryResolveExistingFileWithinRoot(trustedRoot, path, out var resolvedPath)
             ? resolvedPath

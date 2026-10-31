@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using QQDatabaseReader.Archives;
 
 namespace QQDatabaseReader.Media;
@@ -8,6 +9,11 @@ namespace QQDatabaseReader.Media;
 /// </summary>
 public static class TrustedMediaPath
 {
+    // 已经确认过不是链接的目录. 每次定位媒体都要检查从盘符开始的每一级目录, 不缓存时大量的文件状态查询很慢;
+    // 目录很少会变成链接, 进程内缓存
+    private static readonly ConcurrentDictionary<string, bool> DirectoryReparseCache =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     public static bool TryResolveWithinRoot(string root, string candidate, out string fullPath)
     {
         return TryResolveWithinRoot(root, candidate, rejectRootReparsePoint: true, out fullPath);
@@ -119,12 +125,14 @@ public static class TrustedMediaPath
         }
 
         var currentPath = root;
-        foreach (var segment in relativePath.Split(
-                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                     StringSplitOptions.RemoveEmptyEntries))
+        var segments = relativePath.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        for (var index = 0; index < segments.Length; index++)
         {
-            currentPath = Path.Combine(currentPath, segment);
-            if (IsReparsePoint(currentPath))
+            currentPath = Path.Combine(currentPath, segments[index]);
+            // 最后一级是要找的文件本身, 不缓存
+            if (index < segments.Length - 1 ? IsReparsePointDirectory(currentPath) : IsReparsePoint(currentPath))
                 return true;
         }
 
@@ -147,11 +155,28 @@ public static class TrustedMediaPath
                      StringSplitOptions.RemoveEmptyEntries))
         {
             currentPath = Path.Combine(currentPath, segment);
-            if (IsReparsePoint(currentPath))
+            if (IsReparsePointDirectory(currentPath))
                 return true;
         }
 
         return false;
+    }
+
+    /// <summary>目录是不是链接; 存在的目录记住结果, 不存在的 (以后可能被创建) 每次都查</summary>
+    private static bool IsReparsePointDirectory(string path)
+    {
+        if (DirectoryReparseCache.TryGetValue(path, out var cached))
+            return cached;
+
+        var result = IsReparsePoint(path);
+        if (Directory.Exists(path))
+        {
+            if (DirectoryReparseCache.Count >= 100_000)
+                DirectoryReparseCache.Clear();
+            DirectoryReparseCache[path] = result;
+        }
+
+        return result;
     }
 
     private static bool IsReparsePoint(string path)
@@ -160,14 +185,9 @@ public static class TrustedMediaPath
         if (ArchiveFile.IsArchivePath(path))
             return false;
 
-        try
-        {
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return false;
-        }
+        // 不存在时 Attributes 是 -1, 不抛异常 (异常比文件状态查询本身慢得多)
+        var attributes = new FileInfo(path).Attributes;
+        return (int)attributes != -1 && (attributes & FileAttributes.ReparsePoint) != 0;
     }
 
     private static StringComparison PathComparison => OperatingSystem.IsWindows()

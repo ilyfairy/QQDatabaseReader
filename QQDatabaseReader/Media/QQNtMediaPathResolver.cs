@@ -282,7 +282,7 @@ public static class QQNtMediaPathResolver
 
         var preferredExtension = Path.GetExtension(imageFileName);
         var thumbNamePrefix = imageName.ToLowerInvariant();
-        var candidates = ArchiveFile.EnumerateFiles(resolvedThumbDirectory, $"{thumbNamePrefix}_*.*")
+        var candidates = MediaDirectoryListing.FilesWithStem(resolvedThumbDirectory, thumbNamePrefix)
             .Select(path => TrustedMediaPath.TryResolveExistingFileWithinRoot(
                     trustedRoot,
                     path,
@@ -327,6 +327,10 @@ public static class QQNtMediaPathResolver
 
     private static string? ResolveExistingFile(string trustedRoot, string directory, string fileName)
     {
+        // 先查目录列表, 不在列表里的不用再逐个检查路径
+        if (!MediaDirectoryListing.Contains(directory, fileName))
+            return null;
+
         var path = Path.Combine(directory, fileName);
         return TrustedMediaPath.TryResolveExistingFileWithinRoot(trustedRoot, path, out var resolvedPath)
             ? resolvedPath
