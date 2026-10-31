@@ -440,7 +440,7 @@ public sealed class GroupMessageFtsSearchService
             {
                 RowId = ReadInt64(reader, 0),
                 PeerUid = ReadString(reader, 1),
-                GroupId = ReadUInt32BitPattern(reader, 2),
+                GroupId = ReadUInt32(reader, 2),
                 PrivateConversationId = ReadInt64(reader, 2),
                 ChatType = (ChatType)ReadInt32(reader, 3),
             };
@@ -581,7 +581,7 @@ public sealed class GroupMessageFtsSearchService
             MessageTime = ReadInt32(reader, 3),
             ChatType = (ChatType)ReadInt32(reader, 4),
             PeerUid = ReadString(reader, 5),
-            GroupId = ReadUInt32BitPattern(reader, 6),
+            GroupId = ReadUInt32(reader, 6),
             PrivateConversationId = ReadInt64(reader, 6),
             SenderUid = ReadString(reader, 7),
             TextFields = previewTexts.Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value!).ToArray(),
@@ -832,7 +832,7 @@ WHERE {_ftsTableName} MATCH $query
         if (request.GroupId is { } groupId)
         {
             AddParameter(command, "$groupChatType", (int)ChatType.GroupMessage);
-            AddParameter(command, "$groupId", ToSqliteUInt32BitPattern(groupId));
+            AddParameter(command, "$groupId", ToSqliteUInt32(groupId));
             AddParameter(command, "$groupIdText", groupId.ToString());
         }
 
@@ -862,9 +862,10 @@ WHERE {_ftsTableName} MATCH $query
         }
     }
 
-    private static int ToSqliteUInt32BitPattern(uint value)
+    // QQ 群号按正数存, 大于 2^31 的也是; 不能按位转成 int
+    private static long ToSqliteUInt32(uint value)
     {
-        return unchecked((int)value);
+        return value;
     }
 
     private static long ReadInt64(DbDataReader reader, int ordinal)
@@ -877,9 +878,9 @@ WHERE {_ftsTableName} MATCH $query
         return unchecked((int)ReadInt64(reader, ordinal));
     }
 
-    private static uint ReadUInt32BitPattern(DbDataReader reader, int ordinal)
+    private static uint ReadUInt32(DbDataReader reader, int ordinal)
     {
-        return unchecked((uint)ReadInt32(reader, ordinal));
+        return Database.UInt32IntegerConverter.FromStored(ReadInt64(reader, ordinal));
     }
 
     private static double ReadDouble(DbDataReader reader, int ordinal)

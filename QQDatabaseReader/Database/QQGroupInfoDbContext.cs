@@ -20,18 +20,18 @@ public class QQGroupInfoDbContext(DbContextOptions<QQGroupInfoDbContext> options
     {
         modelBuilder.Entity<QQGroup>()
             .Property(v => v.GroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<QQGroupMember>()
             .HasKey(v => new { v.GroupId, v.NtUid });
 
         modelBuilder.Entity<QQGroupMember>()
             .Property(v => v.GroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<QQGroupMember>()
             .Property(v => v.Uin)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         schema?.Apply(modelBuilder);
     }

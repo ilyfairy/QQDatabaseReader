@@ -17,15 +17,15 @@ public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContex
     {
         modelBuilder.Entity<GroupMessage>()
             .Property(v => v.GroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<GroupMessage>()
             .Property(v => v.SavedGroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<GroupMessage>()
             .Property(v => v.SenderId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<GroupMessage>()
             .Ignore(v => v.MessageReactions);
@@ -38,11 +38,11 @@ public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContex
 
         modelBuilder.Entity<PrivateMessage>()
             .Property(v => v.PeerUin)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<PrivateMessage>()
             .Property(v => v.SenderId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<PrivateMessage>()
             .Ignore(v => v.MessageReactions);
@@ -55,11 +55,11 @@ public class QQAndroidMessageDbContext(DbContextOptions<QQAndroidMessageDbContex
 
         modelBuilder.Entity<AndroidRecentContact>()
             .Property(v => v.Uin)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<AndroidRecentContact>()
             .Property(v => v.Uin2)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         schema?.Apply(modelBuilder);
     }

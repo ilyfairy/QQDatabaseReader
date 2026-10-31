@@ -11,7 +11,7 @@ public class QQGroupMessageFtsDbContext(DbContextOptions<QQGroupMessageFtsDbCont
     {
         modelBuilder.Entity<GroupMessageFtsEntry>()
             .Property(v => v.GroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<GroupMessageFtsSearchRow>()
             .HasNoKey()
@@ -19,6 +19,6 @@ public class QQGroupMessageFtsDbContext(DbContextOptions<QQGroupMessageFtsDbCont
 
         modelBuilder.Entity<GroupMessageFtsSearchRow>()
             .Property(v => v.GroupId)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
     }
 }

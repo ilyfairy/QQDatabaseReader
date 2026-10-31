@@ -19,11 +19,11 @@ public class QQProfileInfoDbContext(DbContextOptions<QQProfileInfoDbContext> opt
     {
         modelBuilder.Entity<QQBuddyListEntry>()
             .Property(v => v.Uin)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         modelBuilder.Entity<QQProfileInfoEntry>()
             .Property(v => v.Uin)
-            .HasConversion(UInt32BitPatternConverter.Instance);
+            .HasConversion(UInt32IntegerConverter.Instance);
 
         schema?.Apply(modelBuilder);
     }

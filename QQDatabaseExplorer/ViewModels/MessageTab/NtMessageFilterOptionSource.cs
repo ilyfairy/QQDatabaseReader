@@ -58,7 +58,7 @@ internal sealed class NtMessageFilterOptionSource(QQDatabaseService databaseServ
 
         var (tableName, indexName, conversationColumn, conversationId) = conversation.ConversationType switch
         {
-            AvaConversationType.Group => ("group_msg_table", "group_msg_table_idx40027_40058", "40027", unchecked((int)conversation.GroupId)),
+            AvaConversationType.Group => ("group_msg_table", "group_msg_table_idx40027_40058", "40027", (long)conversation.GroupId),
             AvaConversationType.Private => ("c2c_msg_table", "c2c_msg_table_idx40027_40058", "40027", conversation.PrivateConversationId),
             _ => (null, null, null, 0L),
         };
