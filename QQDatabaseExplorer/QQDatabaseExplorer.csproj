@@ -10,7 +10,8 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" Exclude="Assets\QFace\qq_emoji\**" />
-    <Content Include="Assets\QFace\qq_emoji\**\*.*" CopyToOutputDirectory="PreserveNewest" TargetPath="Assets\QFace\qq_emoji\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- lottie 是超级表情的动画 (约 72 MB), 现在只显示 png / apng, 不复制到输出, 也不打进发布包 -->
+    <Content Include="Assets\QFace\qq_emoji\**\*.*" Exclude="Assets\QFace\qq_emoji\**\lottie\**" CopyToOutputDirectory="PreserveNewest" TargetPath="Assets\QFace\qq_emoji\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
