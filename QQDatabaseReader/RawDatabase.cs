@@ -23,6 +23,12 @@ public class RawDatabase : IDisposable
     /// <summary>数据库在 tar / zip 归档里 (路径形如 data.tar\databases\...\nt_msg.db), 通过 ArchiveFileVfs 只读访问</summary>
     public bool IsInArchive => !UsePCQQVFS && ArchiveFile.IsArchivePath(DatabaseFilePath);
 
+    /// <summary>
+    /// 用独占锁模式打开, 不加文件锁 (要在 <see cref="Initialize"/> 之前设置): WAL 索引放在进程内存里, 不在库旁边创建 -shm,
+    /// 适合只读挂载的备份目录和网络共享. 不加锁, 所以库不能同时被 QQ 写入. 只支持 QQNT 库 (UseVFS); 归档内的库总是这样打开
+    /// </summary>
+    public bool ExclusiveLocking { get; set; }
+
     private sqlite3? _db;
     private string? _pcqqVfsName;
 
@@ -108,7 +114,12 @@ public class RawDatabase : IDisposable
             }
             else if (UseVFS)
             {
-                vfsName = QQNTFileOffsetVfs.VfsName;
+                // 独占模式要拿主库的排他锁, 只读打开的文件拿不到 (SQLITE_IOERR_LOCK), 所以用不加锁的版本
+                vfsName = ExclusiveLocking ? QQNTFileOffsetVfs.NoLockVfsName : QQNTFileOffsetVfs.VfsName;
+            }
+            else if (ExclusiveLocking)
+            {
+                throw new NotSupportedException("ExclusiveLocking 只支持带 QQNT 文件头的库 (UseVFS)");
             }
 
             var openFilePath = UseImmutableReadOnly && !IsInArchive
@@ -125,7 +136,7 @@ public class RawDatabase : IDisposable
 
             _db = openedDatabase;
             // 归档里不能建 -shm; 独占模式下 SQLite 把 WAL 索引放在进程内存里, 要在第一次读库之前设置
-            if (IsInArchive)
+            if (IsInArchive || ExclusiveLocking)
                 ExecuteSqlOrThrow(Database, "PRAGMA locking_mode = EXCLUSIVE;", "设置独占锁模式失败");
 
             // 如果启用了解密，使用 PRAGMA key 方法（SQLCipher）

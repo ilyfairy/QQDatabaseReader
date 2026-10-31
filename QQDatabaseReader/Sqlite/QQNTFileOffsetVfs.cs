@@ -9,6 +9,13 @@ public static class QQNTFileOffsetVfs
     public const string VfsName = "qqnt-vfs";
     public static ReadOnlySpan<byte> VfsNameUtf8 => "qqnt-vfs"u8;
 
+    /// <summary>
+    /// 同样跳过 QQNT 头, 但主库的文件锁什么都不做, 也不提供共享内存. 配合 locking_mode=EXCLUSIVE 只读打开 WAL 库时,
+    /// SQLite 把 WAL 索引放在进程内存里, 不创建 -shm (只读打开的文件拿不到排他锁, 所以不能用真实的锁)
+    /// </summary>
+    public const string NoLockVfsName = "qqnt-vfs-nolock";
+    private static ReadOnlySpan<byte> NoLockVfsNameUtf8 => "qqnt-vfs-nolock"u8;
+
     // 固定的偏移量：1024 字节（QQNT 头部大小）
     private const long FixedOffset = 1024;
 
@@ -38,6 +45,25 @@ public static class QQNTFileOffsetVfs
     };
     private static unsafe sqlite3_io_methods* _streamIoMethodsPtr => (sqlite3_io_methods*)Unsafe.AsPointer(ref Unsafe.AsRef(in _streamIoMethods));
 
+    // iVersion 1: 没有共享内存和 mmap, 独占模式下 SQLite 不会用到它们
+    private static unsafe readonly sqlite3_io_methods _noLockIoMethods = new sqlite3_io_methods()
+    {
+        iVersion = 1,
+        xClose = &xClose,
+        xRead = &xRead,
+        xWrite = &xWrite,
+        xTruncate = &xTruncate,
+        xSync = &xSync,
+        xFileSize = &xFileSize,
+        xLock = &xNoLock,
+        xUnlock = &xNoLock,
+        xCheckReservedLock = &xNoReservedLock,
+        xFileControl = &xFileControl,
+        xSectorSize = &xSectorSize,
+        xDeviceCharacteristics = &xDeviceCharacteristics,
+    };
+    private static unsafe sqlite3_io_methods* _noLockIoMethodsPtr => (sqlite3_io_methods*)Unsafe.AsPointer(ref Unsafe.AsRef(in _noLockIoMethods));
+
     private static unsafe sqlite3_vfs _streamVfs = new()
     {
         iVersion = 1,
@@ -46,6 +72,27 @@ public static class QQNTFileOffsetVfs
         zName = (byte*)Unsafe.AsPointer(in VfsNameUtf8.GetPinnableReference()),
         pAppData = null, // 将在Register()中设置为原始VFS指针
         xOpen = &xOpen,
+        xDelete = &xDelete,
+        xAccess = &xAccess,
+        xFullPathname = &xFullPathname,
+        xDlOpen = &xDlOpen,
+        xDlError = &xDlError,
+        xDlSym = &xDlSym,
+        xDlClose = &xDlClose,
+        xRandomness = &xRandomness,
+        xSleep = &xSleep,
+        xCurrentTime = &xCurrentTime,
+        xGetLastError = &xGetLastError,
+    };
+
+    private static unsafe sqlite3_vfs _noLockVfs = new()
+    {
+        iVersion = 1,
+        szOsFile = sizeof(sqlite3_file) + sizeof(long),
+        mxPathname = 260,
+        zName = (byte*)Unsafe.AsPointer(in NoLockVfsNameUtf8.GetPinnableReference()),
+        pAppData = null,
+        xOpen = &xOpenNoLock,
         xDelete = &xDelete,
         xAccess = &xAccess,
         xFullPathname = &xFullPathname,
@@ -70,9 +117,11 @@ public static class QQNTFileOffsetVfs
         sqlite3_vfs* origVfs = (sqlite3_vfs*)defaultVfsPtr;
         _streamVfs.pAppData = (void*)defaultVfsPtr;
         _streamVfs.szOsFile += origVfs->szOsFile;
+        _noLockVfs.pAppData = (void*)defaultVfsPtr;
+        _noLockVfs.szOsFile += origVfs->szOsFile;
 
-        int result = raw.sqlite3_vfs_register((nint)Unsafe.AsPointer(ref _streamVfs), 0);
-        if (result != raw.SQLITE_OK)
+        if (raw.sqlite3_vfs_register((nint)Unsafe.AsPointer(ref _streamVfs), 0) != raw.SQLITE_OK ||
+            raw.sqlite3_vfs_register((nint)Unsafe.AsPointer(ref _noLockVfs), 0) != raw.SQLITE_OK)
         {
             throw new InvalidOperationException("Failed to register custom VFS.");
         }
@@ -103,7 +152,14 @@ public static class QQNTFileOffsetVfs
 
 
     [UnmanagedCallersOnly]
-    public static unsafe int xOpen(sqlite3_vfs* pVfs, SqliteUtf8String zName, sqlite3_file* pFile, int flags, int* pOutFlags)
+    public static unsafe int xOpen(sqlite3_vfs* pVfs, SqliteUtf8String zName, sqlite3_file* pFile, int flags, int* pOutFlags) =>
+        Open(pVfs, zName, pFile, flags, pOutFlags, _streamIoMethodsPtr);
+
+    [UnmanagedCallersOnly]
+    private static unsafe int xOpenNoLock(sqlite3_vfs* pVfs, SqliteUtf8String zName, sqlite3_file* pFile, int flags, int* pOutFlags) =>
+        Open(pVfs, zName, pFile, flags, pOutFlags, _noLockIoMethodsPtr);
+
+    private static unsafe int Open(sqlite3_vfs* pVfs, SqliteUtf8String zName, sqlite3_file* pFile, int flags, int* pOutFlags, sqlite3_io_methods* ioMethods)
     {
         try
         {
@@ -130,7 +186,7 @@ public static class QQNTFileOffsetVfs
             }
 
             // 设置我们的IO methods和offset
-            pFile->pMethods = _streamIoMethodsPtr;
+            pFile->pMethods = ioMethods;
             SetOffset(pFile, FixedOffset);
 
             return raw.SQLITE_OK;
@@ -212,6 +268,16 @@ public static class QQNTFileOffsetVfs
     {
         sqlite3_file* origFile = GetOrigFile(pFile);
         return origFile->pMethods->xCheckReservedLock(origFile, pResOut);
+    }
+
+    [UnmanagedCallersOnly]
+    private static unsafe int xNoLock(sqlite3_file* pFile, int lockLevel) => raw.SQLITE_OK;
+
+    [UnmanagedCallersOnly]
+    private static unsafe int xNoReservedLock(sqlite3_file* pFile, int* pResOut)
+    {
+        *pResOut = 0;
+        return raw.SQLITE_OK;
     }
 
     [UnmanagedCallersOnly]
