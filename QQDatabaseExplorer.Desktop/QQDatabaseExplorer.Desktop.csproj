@@ -17,4 +17,20 @@
   <ItemGroup>
     <ProjectReference Include="..\QQDatabaseExplorer\QQDatabaseExplorer.csproj" />
   </ItemGroup>
+
+  <!--
+    导出 HTML 用的查看器, 发布时构建并放到 ChatExportViewer 目录. 要写在发布的这个项目里:
+    写在被引用的 QQDatabaseExplorer 项目里时, 它加的发布文件不会带到这里, 发布目录里会没有查看器
+  -->
+  <Target Name="BuildChatExportViewer" BeforeTargets="ComputeFilesToPublish" Condition="'$(SkipChatExportViewerBuild)' != 'true' And Exists('..\QQDatabaseExportViewer\package.json')">
+    <Exec WorkingDirectory="..\QQDatabaseExportViewer" Command="npm ci" Condition="!Exists('..\QQDatabaseExportViewer\node_modules')" />
+    <Exec WorkingDirectory="..\QQDatabaseExportViewer" Command="npm run build" />
+    <ItemGroup>
+      <ChatExportViewerDist Include="..\QQDatabaseExportViewer\dist\**\*.*" />
+      <ResolvedFileToPublish Include="@(ChatExportViewerDist)">
+        <RelativePath>ChatExportViewer\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>
