@@ -12,7 +12,12 @@ public class RawDatabase : IDisposable
     public string DatabaseFilePath { get; }
     public bool UseVFS { get; }
     public bool UsePCQQVFS { get; }
-    public bool UseImmutableReadOnly { get; }
+    /// <summary>
+    /// 以 immutable 方式只读打开 (mode=ro&amp;immutable=1, 要在 <see cref="Initialize"/> 之前设置): 不加锁, 不打开也不创建 -wal / -shm.
+    /// WAL 模式的库在只读目录里打开时要新建 -wal, 没有现成的 -wal 就会报 SQLITE_CANTOPEN; 这种情况用它.
+    /// 库旁边 -wal 里还没写回主库的内容会被忽略, 所以只用于没有 -wal 的静止的库 (例如 QQ 正常退出后复制的备份)
+    /// </summary>
+    public bool UseImmutableReadOnly { get; set; }
     public byte[]? PCQQKey { get; }
     public string? CipherPassword { get; }
     public int? CipherPageSize { get; }
