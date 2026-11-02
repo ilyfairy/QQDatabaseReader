@@ -478,10 +478,19 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
         CancellationToken cancellationToken = default)
     {
         var messages = new List<AndroidMobileQQMessageRecord>();
+        // 每个库只取了 pageSize 行 (SQL 已按 time, _id 排好序). 取满的库后面可能还有没取到的行, 合并后不能越过它取到的最后一行:
+        // 去重少了几行时, 另一个库更靠后的行会补进这一页, 下一页的游标就跳过了这个库还没取到的行
+        (long Time, long RowId)? boundary = null;
         foreach (var connection in GetConnectionsForTable(tableName))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            messages.AddRange(QueryMessages(connection, tableName, sql, bind, cancellationToken));
+            var rows = QueryMessages(connection, tableName, sql, bind, cancellationToken);
+            messages.AddRange(rows);
+            if (rows.Count < pageSize)
+                continue;
+            var last = (rows[^1].MessageTime, rows[^1].RowId);
+            if (boundary is not { } current || IsBefore(last, current, descending))
+                boundary = last;
         }
 
         var ordered = descending
@@ -489,9 +498,17 @@ public sealed class AndroidMobileQQMessageReader : IQQDatabase
             : messages.OrderBy(static message => message.MessageTime).ThenBy(static message => message.RowId);
 
         return ordered
+            .Where(message => boundary is not { } limit || !IsBefore(limit, (message.MessageTime, message.RowId), descending))
             .DistinctBy(static message => (message.MessageTime, message.SenderUin, message.MsgSeq, message.ShMsgSeq, message.PreviewText))
             .Take(pageSize)
             .ToArray();
+    }
+
+    /// <summary>按分页的顺序 (<paramref name="descending"/> 时从新到旧) <paramref name="a"/> 是否排在 <paramref name="b"/> 前面</summary>
+    private static bool IsBefore((long Time, long RowId) a, (long Time, long RowId) b, bool descending)
+    {
+        var order = a.Time != b.Time ? a.Time.CompareTo(b.Time) : a.RowId.CompareTo(b.RowId);
+        return descending ? order > 0 : order < 0;
     }
 
     private IReadOnlyList<AndroidMobileQQMessageRecord> LoadSearchBatch(
